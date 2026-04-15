@@ -1,0 +1,73 @@
+import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
+
+/// Supported export formats for transcript data.
+enum ExportFormat: String, CaseIterable, Identifiable {
+    case markdown = "Markdown"
+    case plainText = "Plain Text"
+    case json = "JSON"
+
+    var id: String { rawValue }
+
+    /// The file extension used when saving to disk.
+    var fileExtension: String {
+        switch self {
+        case .markdown:  return "md"
+        case .plainText: return "txt"
+        case .json:      return "json"
+        }
+    }
+}
+
+/// Coordinates transcript export across the supported formats.
+struct ExportManager {
+
+    /// Exports a session and its segments in the requested format, returning the
+    /// formatted string.
+    static func export(session: Session, segments: [Segment], format: ExportFormat) -> String {
+        switch format {
+        case .markdown:
+            return exportToMarkdown(session: session, segments: segments)
+        case .plainText:
+            return exportToPlainText(session: session, segments: segments)
+        case .json:
+            return exportToJSON(session: session, segments: segments)
+        }
+    }
+
+    /// Returns a Markdown-formatted transcript.
+    static func exportToMarkdown(session: Session, segments: [Segment]) -> String {
+        MarkdownExporter.export(session: session, segments: segments)
+    }
+
+    /// Returns a plain-text transcript.
+    static func exportToPlainText(session: Session, segments: [Segment]) -> String {
+        PlainTextExporter.export(session: session, segments: segments)
+    }
+
+    /// Returns a JSON-encoded transcript.
+    static func exportToJSON(session: Session, segments: [Segment]) -> String {
+        JSONExporter.export(session: session, segments: segments)
+    }
+
+    /// Presents an NSSavePanel so the user can choose where to save the exported
+    /// content, then writes the file.
+    static func saveToFile(content: String, defaultName: String, fileExtension: String) {
+        #if canImport(AppKit)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(defaultName).\(fileExtension)"
+        panel.allowedContentTypes = [.data]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            NSLog("ExportManager: failed to write file – \(error.localizedDescription)")
+        }
+        #endif
+    }
+}
