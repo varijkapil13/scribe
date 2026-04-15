@@ -169,4 +169,301 @@ final class TranscriptStore {
         }
         return observation.publisher(in: db, scheduling: .immediate)
     }
+
+    // MARK: - Meeting Summaries
+
+    /// Saves a meeting summary to the database.
+    func saveSummary(_ summary: MeetingSummary) throws {
+        try db.write { database in
+            let iso8601 = ISO8601DateFormatter()
+            let keyDecisionsJSON = try String(data: JSONEncoder().encode(summary.keyDecisions), encoding: .utf8) ?? "[]"
+            let keyTopicsJSON = try String(data: JSONEncoder().encode(summary.keyTopics), encoding: .utf8) ?? "[]"
+            let followUpJSON = try String(data: JSONEncoder().encode(summary.followUpQuestions), encoding: .utf8) ?? "[]"
+
+            try database.execute(
+                sql: """
+                    INSERT OR REPLACE INTO meeting_summaries
+                        (id, session_id, summary, key_decisions, key_topics, follow_up_questions, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    summary.id.uuidString,
+                    summary.sessionId,
+                    summary.summary,
+                    keyDecisionsJSON,
+                    keyTopicsJSON,
+                    followUpJSON,
+                    iso8601.string(from: summary.createdAt)
+                ]
+            )
+
+            // Persist associated action items into the action_items table.
+            try saveActionItemsInTransaction(
+                database,
+                items: summary.actionItems,
+                sessionId: summary.sessionId,
+                summaryId: summary.id.uuidString
+            )
+        }
+    }
+
+    /// Fetches the summary for a session, if one exists.
+    func fetchSummary(sessionId: String) throws -> MeetingSummary? {
+        try db.read { database in
+            guard let row = try Row.fetchOne(
+                database,
+                sql: "SELECT * FROM meeting_summaries WHERE session_id = ?",
+                arguments: [sessionId]
+            ) else {
+                return nil
+            }
+
+            let iso8601 = ISO8601DateFormatter()
+            let decoder = JSONDecoder()
+
+            let summaryId: String = row["id"]
+            let summaryText: String = row["summary"]
+            let keyDecisionsStr: String = row["key_decisions"]
+            let keyTopicsStr: String = row["key_topics"]
+            let followUpStr: String = row["follow_up_questions"]
+            let createdAtStr: String = row["created_at"]
+
+            let keyDecisions = (try? decoder.decode([String].self, from: Data(keyDecisionsStr.utf8))) ?? []
+            let keyTopics = (try? decoder.decode([String].self, from: Data(keyTopicsStr.utf8))) ?? []
+            let followUpQuestions = (try? decoder.decode([String].self, from: Data(followUpStr.utf8))) ?? []
+            let createdAt = iso8601.date(from: createdAtStr) ?? Date()
+
+            // Fetch associated action items.
+            let actionItems = try fetchActionItemsFromDatabase(database, sessionId: sessionId)
+
+            guard let uuid = UUID(uuidString: summaryId) else { return nil }
+
+            return MeetingSummary(
+                id: uuid,
+                sessionId: sessionId,
+                summary: summaryText,
+                keyDecisions: keyDecisions,
+                actionItems: actionItems,
+                keyTopics: keyTopics,
+                followUpQuestions: followUpQuestions,
+                createdAt: createdAt
+            )
+        }
+    }
+
+    /// Deletes the summary for a session.
+    func deleteSummary(sessionId: String) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "DELETE FROM meeting_summaries WHERE session_id = ?",
+                arguments: [sessionId]
+            )
+        }
+    }
+
+    // MARK: - Action Items
+
+    /// Saves action items for a session.
+    func saveActionItems(_ items: [ActionItem], sessionId: String, summaryId: String?) throws {
+        try db.write { database in
+            try saveActionItemsInTransaction(database, items: items, sessionId: sessionId, summaryId: summaryId)
+        }
+    }
+
+    /// Fetches all action items for a session.
+    func fetchActionItems(sessionId: String) throws -> [ActionItem] {
+        try db.read { database in
+            try fetchActionItemsFromDatabase(database, sessionId: sessionId)
+        }
+    }
+
+    /// Fetches all incomplete action items across all sessions.
+    func fetchAllPendingActionItems() throws -> [(ActionItem, Session)] {
+        try db.read { database in
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT a.*, s.id AS s_id, s.title AS s_title, s.createdAt AS s_createdAt,
+                       s.endedAt AS s_endedAt, s.durationSeconds AS s_durationSeconds,
+                       s.language AS s_language, s.tags AS s_tags
+                FROM action_items a
+                JOIN sessions s ON s.id = a.session_id
+                WHERE a.is_completed = 0
+                ORDER BY a.priority ASC
+                """)
+
+            return rows.compactMap { row -> (ActionItem, Session)? in
+                guard let item = Self.actionItemFromRow(row),
+                      let session = Self.sessionFromPrefixedRow(row) else {
+                    return nil
+                }
+                return (item, session)
+            }
+        }
+    }
+
+    /// Toggles the completion state of an action item.
+    func toggleActionItemCompletion(id: String) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE action_items SET is_completed = CASE WHEN is_completed = 0 THEN 1 ELSE 0 END WHERE id = ?",
+                arguments: [id]
+            )
+        }
+    }
+
+    // MARK: - Extracted Entities
+
+    /// Saves extracted entities for a session (replaces existing).
+    func saveEntities(_ entities: [ExtractedEntity], sessionId: String) throws {
+        try db.write { database in
+            // Remove existing entities for this session.
+            try database.execute(
+                sql: "DELETE FROM extracted_entities WHERE session_id = ?",
+                arguments: [sessionId]
+            )
+
+            for entity in entities {
+                try database.execute(
+                    sql: """
+                        INSERT INTO extracted_entities (id, session_id, text, entity_type, count)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        entity.id.uuidString,
+                        sessionId,
+                        entity.text,
+                        entity.type.rawValue,
+                        1
+                    ]
+                )
+            }
+        }
+    }
+
+    /// Fetches cached entities for a session.
+    func fetchEntities(sessionId: String) throws -> [ExtractedEntity] {
+        try db.read { database in
+            let rows = try Row.fetchAll(
+                database,
+                sql: "SELECT * FROM extracted_entities WHERE session_id = ?",
+                arguments: [sessionId]
+            )
+
+            return rows.compactMap { row -> ExtractedEntity? in
+                guard let idStr: String = row["id"],
+                      let uuid = UUID(uuidString: idStr),
+                      let text: String = row["text"],
+                      let typeStr: String = row["entity_type"],
+                      let entityType = ExtractedEntity.EntityType(rawValue: typeStr) else {
+                    return nil
+                }
+                return ExtractedEntity(
+                    id: uuid,
+                    text: text,
+                    type: entityType,
+                    range: nil,
+                    segmentId: nil
+                )
+            }
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    /// Inserts action items within an existing database write transaction.
+    private func saveActionItemsInTransaction(
+        _ database: Database,
+        items: [ActionItem],
+        sessionId: String,
+        summaryId: String?
+    ) throws {
+        // Remove existing action items for this session + summary combination.
+        if let summaryId = summaryId {
+            try database.execute(
+                sql: "DELETE FROM action_items WHERE session_id = ? AND summary_id = ?",
+                arguments: [sessionId, summaryId]
+            )
+        } else {
+            try database.execute(
+                sql: "DELETE FROM action_items WHERE session_id = ? AND summary_id IS NULL",
+                arguments: [sessionId]
+            )
+        }
+
+        for item in items {
+            try database.execute(
+                sql: """
+                    INSERT INTO action_items
+                        (id, session_id, summary_id, description, assignee, deadline, priority, source_text, is_completed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                arguments: [
+                    item.id.uuidString,
+                    sessionId,
+                    summaryId,
+                    item.description,
+                    item.assignee,
+                    item.deadline,
+                    item.priority?.rawValue,
+                    item.sourceText
+                ]
+            )
+        }
+    }
+
+    /// Fetches action items for a session within an existing database read context.
+    private func fetchActionItemsFromDatabase(_ database: Database, sessionId: String) throws -> [ActionItem] {
+        let rows = try Row.fetchAll(
+            database,
+            sql: "SELECT * FROM action_items WHERE session_id = ? ORDER BY priority ASC",
+            arguments: [sessionId]
+        )
+        return rows.compactMap { Self.actionItemFromRow($0) }
+    }
+
+    /// Converts a database row into an ActionItem.
+    private static func actionItemFromRow(_ row: Row) -> ActionItem? {
+        guard let idStr: String = row["id"],
+              let uuid = UUID(uuidString: idStr),
+              let description: String = row["description"] else {
+            return nil
+        }
+        let assignee: String? = row["assignee"]
+        let deadline: String? = row["deadline"]
+        let priorityStr: String? = row["priority"]
+        let priority = priorityStr.flatMap { ActionItem.Priority(rawValue: $0) }
+        let sourceText: String = row["source_text"] ?? ""
+
+        return ActionItem(
+            id: uuid,
+            description: description,
+            assignee: assignee,
+            deadline: deadline,
+            priority: priority,
+            sourceText: sourceText
+        )
+    }
+
+    /// Builds a Session from a row with prefixed column names (s_id, s_title, etc.).
+    private static func sessionFromPrefixedRow(_ row: Row) -> Session? {
+        guard let id: String = row["s_id"],
+              let title: String = row["s_title"],
+              let createdAt: Date = row["s_createdAt"] else {
+            return nil
+        }
+        let endedAt: Date? = row["s_endedAt"]
+        let durationSeconds: Int? = row["s_durationSeconds"]
+        let language: String? = row["s_language"]
+        let tagsString: String = row["s_tags"] ?? "[]"
+        let tags = (try? JSONDecoder().decode([String].self, from: Data(tagsString.utf8))) ?? []
+
+        return Session(
+            id: id,
+            title: title,
+            createdAt: createdAt,
+            endedAt: endedAt,
+            durationSeconds: durationSeconds,
+            language: language,
+            tags: tags
+        )
+    }
 }

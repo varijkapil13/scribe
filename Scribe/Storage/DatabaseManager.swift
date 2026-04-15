@@ -99,6 +99,45 @@ final class DatabaseManager {
                 """)
         }
 
+        migrator.registerMigration("v2") { db in
+            // -- meeting_summaries --
+            try db.create(table: "meeting_summaries") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("session_id", .text).notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("summary", .text).notNull()
+                t.column("key_decisions", .text).notNull().defaults(to: "[]")
+                t.column("key_topics", .text).notNull().defaults(to: "[]")
+                t.column("follow_up_questions", .text).notNull().defaults(to: "[]")
+                t.column("created_at", .text).notNull()
+            }
+
+            // -- action_items --
+            try db.create(table: "action_items") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("session_id", .text).notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("summary_id", .text)
+                    .references("meeting_summaries", onDelete: .cascade)
+                t.column("description", .text).notNull()
+                t.column("assignee", .text)
+                t.column("deadline", .text)
+                t.column("priority", .text)
+                t.column("source_text", .text).notNull().defaults(to: "")
+                t.column("is_completed", .integer).notNull().defaults(to: 0)
+            }
+
+            // -- extracted_entities --
+            try db.create(table: "extracted_entities") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("session_id", .text).notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("text", .text).notNull()
+                t.column("entity_type", .text).notNull()
+                t.column("count", .integer).notNull().defaults(to: 1)
+            }
+        }
+
         try migrator.migrate(database)
     }
 }

@@ -18,6 +18,13 @@ struct SettingsView: View {
     @AppStorage("alwaysOnTop") var alwaysOnTop: Bool = true
     @AppStorage("retainAudio") var retainAudio: Bool = false
     @AppStorage("storageLocation") var storageLocation: String = ""
+    @AppStorage("transcriptionEngine") var transcriptionEngine: String = "whisper"
+    @AppStorage("autoSummarize") var autoSummarize: Bool = false
+    @AppStorage("autoExtractActions") var autoExtractActions: Bool = false
+    @AppStorage("autoAnalyze") var autoAnalyze: Bool = true
+    @AppStorage("extractEntities") var extractEntities: Bool = true
+    @AppStorage("detectLanguage") var detectLanguage: Bool = true
+    @AppStorage("analyzeSentiment") var analyzeSentiment: Bool = true
 
     @State private var showDeleteConfirmation: Bool = false
 
@@ -45,8 +52,10 @@ struct SettingsView: View {
                 .tabItem { Label("Storage", systemImage: "internaldrive") }
             shortcutsTab
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+            intelligenceTab
+                .tabItem { Label("Intelligence", systemImage: "sparkles") }
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 500, height: 450)
     }
 
     // MARK: - General Tab
@@ -69,6 +78,18 @@ struct SettingsView: View {
                     ForEach(sortedLanguageKeys, id: \.self) { key in
                         Text(supportedLanguages[key] ?? key).tag(key)
                     }
+                }
+
+                Picker("Transcription Engine", selection: $transcriptionEngine) {
+                    Text("Whisper (whisper.cpp)").tag("whisper")
+                    Text("Apple Speech (on-device)").tag("apple")
+                }
+                if transcriptionEngine == "apple" {
+                    Text("Uses Apple's built-in speech recognition. No model download needed.")
+                        .font(.caption).foregroundColor(.secondary)
+                } else {
+                    Text("Uses whisper.cpp with downloadable models. Better accuracy for multilingual audio.")
+                        .font(.caption).foregroundColor(.secondary)
                 }
             }
 
@@ -170,6 +191,46 @@ struct SettingsView: View {
                 Text("Configure global keyboard shortcut for Start/Stop Recording")
                     .foregroundColor(.secondary)
                 // KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
+            }
+        }
+    }
+
+    // MARK: - Intelligence Tab
+
+    private var intelligenceTab: some View {
+        Form {
+            Section("Apple Intelligence") {
+                // Show availability status
+                HStack {
+                    Image(systemName: MeetingSummarizer.isAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(MeetingSummarizer.isAvailable ? .green : .red)
+                    Text(MeetingSummarizer.isAvailable ? "Available on this Mac" : "Requires macOS 26+ with Apple Silicon")
+                }
+
+                if MeetingSummarizer.isAvailable {
+                    Toggle("Auto-summarize after recording", isOn: $autoSummarize)
+                    Toggle("Auto-extract action items", isOn: $autoExtractActions)
+                }
+            }
+
+            Section("Transcript Analysis") {
+                Text("NaturalLanguage framework features work on macOS 13+")
+                    .font(.caption).foregroundColor(.secondary)
+                Toggle("Auto-analyze transcripts", isOn: $autoAnalyze)
+                Toggle("Extract entities (people, places, orgs)", isOn: $extractEntities)
+                Toggle("Detect language", isOn: $detectLanguage)
+                Toggle("Analyze sentiment", isOn: $analyzeSentiment)
+            }
+
+            Section("Apple Speech Recognition") {
+                // Show SFSpeechRecognizer availability
+                HStack {
+                    Text("On-device speech recognition")
+                    Spacer()
+                    Text("Available").foregroundColor(.green).font(.caption)
+                }
+                Text("Select 'Apple Speech' as the transcription engine in the General tab to use this feature.")
+                    .font(.caption).foregroundColor(.secondary)
             }
         }
     }
