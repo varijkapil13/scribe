@@ -1,15 +1,14 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 
 import PackageDescription
 
 let package = Package(
     name: "Scribe",
     platforms: [
-        .macOS(.v13)
+        .macOS("26.0")
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
-        .package(url: "https://github.com/ggerganov/whisper.cpp", branch: "master"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0"),
     ],
     targets: [
@@ -17,7 +16,6 @@ let package = Package(
             name: "Scribe",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "whisper", package: "whisper.cpp"),
                 "KeyboardShortcuts",
             ],
             path: "Scribe"

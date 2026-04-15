@@ -136,7 +136,6 @@ struct TranscriptDetailView: View {
                     Task { await viewModel.generateSummary() }
                 }
                 .disabled(viewModel.isGeneratingSummary || viewModel.segments.isEmpty)
-                .opacity(MeetingSummarizer.isAvailable ? 1 : 0.5)
 
                 Button("Analyze") {
                     viewModel.runAnalysis()
@@ -228,16 +227,10 @@ struct TranscriptDetailView: View {
                     .foregroundColor(.secondary)
                 Text("No summary yet")
                     .font(.headline)
-                if MeetingSummarizer.isAvailable {
-                    Button("Generate Summary") {
-                        Task { await viewModel.generateSummary() }
-                    }
-                    .disabled(viewModel.segments.isEmpty)
-                } else {
-                    Text("Requires macOS 26+ with Apple Intelligence")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                Button("Generate Summary") {
+                    Task { await viewModel.generateSummary() }
                 }
+                .disabled(viewModel.segments.isEmpty)
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 40)
@@ -298,12 +291,10 @@ struct TranscriptDetailView: View {
                 Text("Generate a summary to extract action items")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                if MeetingSummarizer.isAvailable {
-                    Button("Generate Summary") {
-                        Task { await viewModel.generateSummary() }
-                    }
-                    .disabled(viewModel.segments.isEmpty)
+                Button("Generate Summary") {
+                    Task { await viewModel.generateSummary() }
                 }
+                .disabled(viewModel.segments.isEmpty)
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 40)

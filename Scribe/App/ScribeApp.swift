@@ -15,10 +15,7 @@ struct ScribeApp: App {
     var body: some Scene {
         // Settings window (opened via the app menu or Command+,)
         Settings {
-            SettingsView(
-                audioManager: appState.audioManager,
-                modelManager: appState.modelManager
-            )
+            SettingsView(audioManager: appState.audioManager)
         }
 
         // Transcript viewer window

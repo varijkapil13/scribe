@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 // MARK: - SmartSearchEngine
 
@@ -18,13 +16,10 @@ import FoundationModels
 ///   conflict.
 ///
 /// All processing happens on-device using Apple Intelligence — no data leaves
-/// the Mac. On systems running earlier macOS versions the engine reports itself
-/// as unavailable and every method throws ``IntelligenceError/notAvailable``.
+/// the Mac. Requires macOS 26+ with Apple Silicon.
 ///
 /// ## Example
 /// ```swift
-/// guard SmartSearchEngine.isAvailable else { return }
-///
 /// let results = try await SmartSearchEngine.search(
 ///     query: "What decisions were made about the launch date?",
 ///     transcripts: transcripts.map { ($0.session, $0.segments) }
@@ -76,19 +71,6 @@ struct SmartSearchEngine {
         }
     }
 
-    // MARK: - Availability
-
-    /// Whether Apple Intelligence smart search is available on this Mac.
-    ///
-    /// Returns `true` only when the host is running macOS 26 or later and the
-    /// Foundation Models framework is accessible.
-    static var isAvailable: Bool {
-        if #available(macOS 26, *) {
-            return true
-        }
-        return false
-    }
-
     // MARK: - Smart Search
 
     /// Search across multiple transcripts using natural language.
@@ -112,7 +94,7 @@ struct SmartSearchEngine {
         query: String,
         transcripts: [(session: Session, segments: [Segment])]
     ) async throws -> [SmartSearchResult] {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         var results: [SmartSearchResult] = []
 
@@ -185,7 +167,7 @@ struct SmartSearchEngine {
         session: Session,
         segments: [Segment]
     ) async throws -> String {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         let formattedTranscript = formatTranscriptForPrompt(segments: segments)
 
@@ -225,7 +207,7 @@ struct SmartSearchEngine {
         to sessionId: String,
         allSessions: [(Session, [Segment])]
     ) async throws -> [(Session, String)] {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         // Find the reference session and its segments.
         guard let reference = allSessions.first(where: { $0.0.id == sessionId }) else {
@@ -338,26 +320,13 @@ struct SmartSearchEngine {
     /// Send a prompt to the Foundation Models language model and return the
     /// generated text.
     ///
-    /// On macOS 26+ this creates a ``LanguageModelSession`` and calls its
-    /// `respond(to:)` method. On earlier systems this throws
-    /// ``IntelligenceError/notAvailable``.
+    /// Creates a ``LanguageModelSession`` and calls its `respond(to:)` method.
+    /// All processing happens on-device via Apple Intelligence.
     ///
     /// - Parameter prompt: The prompt string to send to the model.
     /// - Returns: The generated response text.
-    /// - Throws: ``IntelligenceError`` on failure or unavailability.
+    /// - Throws: ``IntelligenceError/generationFailed(_:)`` if the model fails.
     private static func generateResponse(prompt: String) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(macOS 26, *) {
-            return try await _generateResponseMacOS26(prompt: prompt)
-        }
-        #endif
-        throw IntelligenceError.notAvailable
-    }
-
-    /// macOS 26+ implementation that interacts with the Foundation Models framework.
-    #if canImport(FoundationModels)
-    @available(macOS 26, *)
-    private static func _generateResponseMacOS26(prompt: String) async throws -> String {
         let session = LanguageModelSession()
         do {
             let response = try await session.respond(to: prompt)
@@ -366,7 +335,6 @@ struct SmartSearchEngine {
             throw IntelligenceError.generationFailed(error.localizedDescription)
         }
     }
-    #endif
 
     // MARK: - Response Parsing
 

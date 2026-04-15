@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(AppKit)
 import AppKit
-#endif
 
 /// Supported export formats for transcript data.
 enum ExportFormat: String, CaseIterable, Identifiable {
@@ -55,7 +53,6 @@ struct ExportManager {
     /// Presents an NSSavePanel so the user can choose where to save the exported
     /// content, then writes the file.
     static func saveToFile(content: String, defaultName: String, fileExtension: String) {
-        #if canImport(AppKit)
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(defaultName).\(fileExtension)"
         panel.allowedContentTypes = [.data]
@@ -68,6 +65,5 @@ struct ExportManager {
         } catch {
             NSLog("ExportManager: failed to write file – \(error.localizedDescription)")
         }
-        #endif
     }
 }

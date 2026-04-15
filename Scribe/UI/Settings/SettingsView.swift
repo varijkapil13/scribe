@@ -1,15 +1,12 @@
 import SwiftUI
 import KeyboardShortcuts
-#if canImport(AppKit)
 import AppKit
-#endif
 import CoreAudio
 
 /// App-wide settings view presented as a tabbed window.
 struct SettingsView: View {
 
     @ObservedObject var audioManager: AudioSessionManager
-    @ObservedObject var modelManager: ModelManager
 
     @AppStorage("selectedMicrophoneID") var selectedMicID: String = ""
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
@@ -18,7 +15,6 @@ struct SettingsView: View {
     @AppStorage("alwaysOnTop") var alwaysOnTop: Bool = true
     @AppStorage("retainAudio") var retainAudio: Bool = false
     @AppStorage("storageLocation") var storageLocation: String = ""
-    @AppStorage("transcriptionEngine") var transcriptionEngine: String = "whisper"
     @AppStorage("autoSummarize") var autoSummarize: Bool = false
     @AppStorage("autoExtractActions") var autoExtractActions: Bool = false
     @AppStorage("autoAnalyze") var autoAnalyze: Bool = true
@@ -46,16 +42,14 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label("General", systemImage: "gear") }
-            modelsTab
-                .tabItem { Label("Models", systemImage: "cpu") }
+            intelligenceTab
+                .tabItem { Label("Intelligence", systemImage: "sparkles") }
             storageTab
                 .tabItem { Label("Storage", systemImage: "internaldrive") }
             shortcutsTab
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-            intelligenceTab
-                .tabItem { Label("Intelligence", systemImage: "sparkles") }
         }
-        .frame(width: 500, height: 450)
+        .frame(width: 500, height: 420)
     }
 
     // MARK: - General Tab
@@ -79,18 +73,8 @@ struct SettingsView: View {
                         Text(supportedLanguages[key] ?? key).tag(key)
                     }
                 }
-
-                Picker("Transcription Engine", selection: $transcriptionEngine) {
-                    Text("Whisper (whisper.cpp)").tag("whisper")
-                    Text("Apple Speech (on-device)").tag("apple")
-                }
-                if transcriptionEngine == "apple" {
-                    Text("Uses Apple's built-in speech recognition. No model download needed.")
-                        .font(.caption).foregroundColor(.secondary)
-                } else {
-                    Text("Uses whisper.cpp with downloadable models. Better accuracy for multilingual audio.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
+                Text("Powered by Apple Speech — on-device recognition with no model downloads required.")
+                    .font(.caption).foregroundColor(.secondary)
             }
 
             Section("Interface") {
@@ -100,48 +84,32 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Models Tab
+    // MARK: - Intelligence Tab
 
-    private var modelsTab: some View {
+    private var intelligenceTab: some View {
         Form {
-            Section("Whisper Models") {
-                ForEach(modelManager.availableModels) { model in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(model.displayName)
-                                .font(.headline)
-                            Text(model.estimatedSize)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Spacer()
-
-                        if modelManager.isModelDownloaded(model) {
-                            if modelManager.selectedModel == model {
-                                Text("Active")
-                                    .foregroundColor(.green)
-                            } else {
-                                Button("Select") {
-                                    modelManager.selectedModel = model
-                                }
-                            }
-                            Button("Delete") {
-                                try? modelManager.deleteModel(model)
-                            }
-                            .foregroundColor(.red)
-                        } else if modelManager.isDownloading {
-                            ProgressView(value: modelManager.downloadProgress)
-                                .frame(width: 100)
-                        } else {
-                            Button("Download") {
-                                Task {
-                                    try? await modelManager.downloadModel(model)
-                                }
-                            }
-                        }
-                    }
+            Section("Apple Intelligence") {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("Available on this Mac")
                 }
+
+                Toggle("Auto-summarize after recording", isOn: $autoSummarize)
+                Toggle("Auto-extract action items", isOn: $autoExtractActions)
+
+                Text("Summaries, action items, and smart search are powered by Apple Intelligence and run entirely on-device.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+
+            Section("Transcript Analysis") {
+                Toggle("Auto-analyze transcripts", isOn: $autoAnalyze)
+                Toggle("Extract entities (people, places, orgs)", isOn: $extractEntities)
+                Toggle("Detect language", isOn: $detectLanguage)
+                Toggle("Analyze sentiment", isOn: $analyzeSentiment)
+
+                Text("Analysis uses the NaturalLanguage framework — fast, local, and private.")
+                    .font(.caption).foregroundColor(.secondary)
             }
         }
     }
@@ -195,46 +163,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Intelligence Tab
-
-    private var intelligenceTab: some View {
-        Form {
-            Section("Apple Intelligence") {
-                // Show availability status
-                HStack {
-                    Image(systemName: MeetingSummarizer.isAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(MeetingSummarizer.isAvailable ? .green : .red)
-                    Text(MeetingSummarizer.isAvailable ? "Available on this Mac" : "Requires macOS 26+ with Apple Silicon")
-                }
-
-                if MeetingSummarizer.isAvailable {
-                    Toggle("Auto-summarize after recording", isOn: $autoSummarize)
-                    Toggle("Auto-extract action items", isOn: $autoExtractActions)
-                }
-            }
-
-            Section("Transcript Analysis") {
-                Text("NaturalLanguage framework features work on macOS 13+")
-                    .font(.caption).foregroundColor(.secondary)
-                Toggle("Auto-analyze transcripts", isOn: $autoAnalyze)
-                Toggle("Extract entities (people, places, orgs)", isOn: $extractEntities)
-                Toggle("Detect language", isOn: $detectLanguage)
-                Toggle("Analyze sentiment", isOn: $analyzeSentiment)
-            }
-
-            Section("Apple Speech Recognition") {
-                // Show SFSpeechRecognizer availability
-                HStack {
-                    Text("On-device speech recognition")
-                    Spacer()
-                    Text("Available").foregroundColor(.green).font(.caption)
-                }
-                Text("Select 'Apple Speech' as the transcription engine in the General tab to use this feature.")
-                    .font(.caption).foregroundColor(.secondary)
-            }
-        }
-    }
-
     // MARK: - Private Helpers
 
     /// Returns language keys sorted so "auto" comes first, then alphabetical
@@ -251,7 +179,6 @@ struct SettingsView: View {
 
     /// Presents an NSOpenPanel for the user to choose a storage directory.
     private func chooseStorageLocation() {
-        #if canImport(AppKit)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -261,7 +188,6 @@ struct SettingsView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         storageLocation = url.path
-        #endif
     }
 
     /// Deletes all transcription data from the store.

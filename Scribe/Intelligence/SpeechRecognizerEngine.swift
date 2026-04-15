@@ -3,54 +3,38 @@ import Speech
 import AVFoundation
 import Combine
 
-// MARK: - TranscriptionMode
+// MARK: - TranscriptionSegment
 
-/// Identifies which transcription backend is in use.
-///
-/// Both ``TranscriptionEngine`` (whisper.cpp) and ``SpeechRecognizerEngine``
-/// (Apple Speech) produce ``TranscriptionSegment`` values, so the app can
-/// switch between them at runtime.
-enum TranscriptionMode: String, CaseIterable, Identifiable {
-    case whisper = "Whisper (whisper.cpp)"
-    case apple  = "Apple Speech (on-device)"
-
-    var id: String { rawValue }
-
-    /// Short name suitable for menu items.
-    var displayName: String {
-        switch self {
-        case .whisper: return "Whisper"
-        case .apple:   return "Apple Speech"
-        }
-    }
-
-    /// User-facing explanation of the mode.
-    var description: String {
-        switch self {
-        case .whisper:
-            return "High-accuracy transcription powered by whisper.cpp. Requires a downloaded model."
-        case .apple:
-            return "On-device transcription using Apple's built-in speech recognition. No model download needed."
-        }
-    }
+/// A single transcribed segment with speaker and session-relative timing.
+struct TranscriptionSegment: Identifiable, Equatable {
+    let id: UUID
+    /// Offset in milliseconds from the start of the recording session.
+    let sessionOffsetMs: Int
+    /// Segment start time in milliseconds (relative to the audio chunk).
+    let startMs: Int
+    /// Segment end time in milliseconds (relative to the audio chunk).
+    let endMs: Int
+    /// Speaker label (e.g. "you", "remote").
+    let speaker: String
+    /// Transcribed text.
+    let text: String
 }
 
 // MARK: - SpeechRecognizerEngine
 
-/// Alternative transcription engine using Apple's `SFSpeechRecognizer` for
-/// on-device speech recognition. Requires no model download — uses the
-/// system's built-in speech recognition models.
+/// On-device transcription engine using Apple's `SFSpeechRecognizer`.
 ///
-/// Available on macOS 13+. Uses on-device recognition
-/// (`requiresOnDeviceRecognition = true`) to ensure no audio leaves the
-/// device, matching Scribe's privacy guarantees.
+/// This is Scribe's sole transcription backend. It requires no model download —
+/// speech recognition models are built into macOS. On-device recognition
+/// (`requiresOnDeviceRecognition = true`) ensures no audio leaves the device,
+/// matching Scribe's privacy guarantees.
 ///
 /// ## Streaming vs. Chunked
 ///
 /// `SFSpeechRecognizer` natively supports streaming audio through
 /// ``appendAudioBuffer(_:speaker:)``. The engine also exposes
-/// ``processAudioChunk(samples:speaker:chunkOffsetMs:)`` for backward
-/// compatibility with ``AudioBufferManager``'s chunk-based pipeline.
+/// ``processAudioChunk(samples:speaker:chunkOffsetMs:)`` for compatibility
+/// with ``AudioBufferManager``'s chunk-based pipeline.
 final class SpeechRecognizerEngine: ObservableObject {
 
     // MARK: - Published Properties
@@ -164,9 +148,7 @@ final class SpeechRecognizerEngine: ObservableObject {
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = true
 
-        if #available(macOS 15, *) {
-            request.addsPunctuation = true
-        }
+        request.addsPunctuation = true
 
         recognitionRequest = request
 

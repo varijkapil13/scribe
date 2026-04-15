@@ -3,7 +3,7 @@ name: Scribe
 options:
   bundleIdPrefix: com.varij
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "26.0"
 
 targets:
   Scribe:
@@ -18,9 +18,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
         INFOPLIST_FILE: Scribe/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Scribe/Resources/Scribe.entitlements
-        SWIFT_VERSION: "5.9"
+        SWIFT_VERSION: "6.0"
         PRODUCT_NAME: Scribe
-        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=macosx*]: x86_64
     scheme:
       run:
         config: Debug
@@ -33,9 +35,6 @@ packages:
   GRDB.swift:
     url: https://github.com/groue/GRDB.swift
     from: "6.24.0"
-  whisper.cpp:
-    url: https://github.com/ggerganov/whisper.cpp
-    branch: master
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     from: "2.0.0"

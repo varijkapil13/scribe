@@ -31,7 +31,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         setupMenuBar()
         registerKeyboardShortcuts()
-        checkForModels()
     }
 
     // MARK: - Menu Bar Setup
@@ -78,19 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 await self.toggleRecording()
-            }
-        }
-    }
-
-    // MARK: - Model Check
-
-    /// Checks whether at least one Whisper model is downloaded.
-    /// If none are available, opens the Settings window so the user can download one.
-    private func checkForModels() {
-        if appState.modelManager.downloadedModels.isEmpty {
-            // Give the UI a moment to finish launching before presenting Settings.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.openSettings()
             }
         }
     }
@@ -166,13 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     /// Opens the Settings window using the standard AppKit preferences action.
     func openSettings() {
-        // On macOS 13+, the SwiftUI Settings scene responds to this selector.
-        if #available(macOS 14, *) {
-            NSApp.mainMenu?.item(withTitle: "Scribe")?.submenu?.item(withTitle: "Settings…")?.performAction()
-                ?? NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+        NSApp.mainMenu?.item(withTitle: "Scribe")?.submenu?.item(withTitle: "Settings…")?.performAction()
+            ?? NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

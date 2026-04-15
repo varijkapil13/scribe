@@ -1,9 +1,7 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
-// MARK: - Data Models (always available)
+// MARK: - Data Models
 
 /// A structured meeting summary produced by on-device Apple Intelligence.
 ///
@@ -58,17 +56,14 @@ struct ActionItem: Codable, Equatable, Identifiable, Hashable {
 
 // MARK: - MeetingSummarizer
 
-/// Uses Apple's Foundation Models framework (macOS 26+) to generate meeting
-/// summaries, extract action items, and answer questions about transcripts.
+/// Uses Apple's Foundation Models framework to generate meeting summaries,
+/// extract action items, and answer questions about transcripts.
 ///
-/// All processing happens on-device using Apple Intelligence -- no data leaves
-/// the Mac. On systems running earlier macOS versions the summarizer reports
-/// itself as unavailable and every method throws ``IntelligenceError/notAvailable``.
+/// All processing happens on-device using Apple Intelligence — no data leaves
+/// the Mac. Requires macOS 26+ with Apple Silicon.
 ///
 /// ## Example
 /// ```swift
-/// guard MeetingSummarizer.isAvailable else { return }
-///
 /// let summary = try await MeetingSummarizer.summarize(
 ///     sessionId: session.id,
 ///     title: session.title,
@@ -76,19 +71,6 @@ struct ActionItem: Codable, Equatable, Identifiable, Hashable {
 /// )
 /// ```
 struct MeetingSummarizer {
-
-    // MARK: - Availability Check
-
-    /// Whether Apple Intelligence meeting summarization is available on this Mac.
-    ///
-    /// Returns `true` only when the host is running macOS 26 or later and the
-    /// Foundation Models framework is accessible.
-    static var isAvailable: Bool {
-        if #available(macOS 26, *) {
-            return true
-        }
-        return false
-    }
 
     // MARK: - Summarize Meeting
 
@@ -112,7 +94,7 @@ struct MeetingSummarizer {
         title: String,
         segments: [(speaker: String, text: String, timestamp: String)]
     ) async throws -> MeetingSummary {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         let transcript = formatTranscriptForPrompt(segments: segments)
 
@@ -155,7 +137,7 @@ struct MeetingSummarizer {
     static func extractActionItems(
         from segments: [(speaker: String, text: String, timestamp: String)]
     ) async throws -> [ActionItem] {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         let transcript = formatTranscriptForPrompt(segments: segments)
 
@@ -199,7 +181,7 @@ struct MeetingSummarizer {
         summary: MeetingSummary,
         recipientContext: String? = nil
     ) async throws -> String {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         let decisionsFormatted = summary.keyDecisions.enumerated()
             .map { "\($0.offset + 1). \($0.element)" }
@@ -266,7 +248,7 @@ struct MeetingSummarizer {
         _ question: String,
         segments: [(speaker: String, text: String, timestamp: String)]
     ) async throws -> String {
-        guard isAvailable else { throw IntelligenceError.notAvailable }
+
 
         let transcript = formatTranscriptForPrompt(segments: segments)
 
@@ -331,26 +313,13 @@ struct MeetingSummarizer {
     /// Send a prompt to the Foundation Models language model and return the
     /// generated text.
     ///
-    /// On macOS 26+ this creates a ``LanguageModelSession`` and calls its
-    /// `respond(to:)` method. On earlier systems this throws
-    /// ``IntelligenceError/notAvailable``.
+    /// Creates a ``LanguageModelSession`` and calls its `respond(to:)` method.
+    /// All processing happens on-device via Apple Intelligence.
     ///
     /// - Parameter prompt: The prompt string to send to the model.
     /// - Returns: The generated response text.
-    /// - Throws: ``IntelligenceError`` on failure or unavailability.
+    /// - Throws: ``IntelligenceError/generationFailed(_:)`` if the model fails.
     private static func generateResponse(prompt: String) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(macOS 26, *) {
-            return try await _generateResponseMacOS26(prompt: prompt)
-        }
-        #endif
-        throw IntelligenceError.notAvailable
-    }
-
-    /// macOS 26+ implementation that interacts with the Foundation Models framework.
-    #if canImport(FoundationModels)
-    @available(macOS 26, *)
-    private static func _generateResponseMacOS26(prompt: String) async throws -> String {
         let session = LanguageModelSession()
         do {
             let response = try await session.respond(to: prompt)
@@ -359,7 +328,6 @@ struct MeetingSummarizer {
             throw IntelligenceError.generationFailed(error.localizedDescription)
         }
     }
-    #endif
 
     // MARK: - Response Parsing
 
@@ -487,8 +455,6 @@ private struct RawActionItem: Decodable {
 /// Errors that can occur when using Apple Intelligence features.
 enum IntelligenceError: LocalizedError {
 
-    /// The Foundation Models framework is not available on this system.
-    case notAvailable
     /// The language model failed to generate a response.
     case generationFailed(String)
     /// The model's response could not be parsed into the expected format.
@@ -496,9 +462,6 @@ enum IntelligenceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notAvailable:
-            return "Apple Intelligence is not available on this Mac. "
-                + "macOS 26 or later with Apple Silicon is required."
         case .generationFailed(let detail):
             return "Generation failed: \(detail)"
         case .parsingFailed:

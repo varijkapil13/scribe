@@ -1,7 +1,5 @@
 import SwiftUI
-#if canImport(AppKit)
 import AppKit
-#endif
 
 /// Sheet view that lets the user choose an export format, preview the
 /// output, and save or copy the transcript.
@@ -46,11 +44,9 @@ struct ExportSheetView: View {
                 Spacer()
 
                 Button("Copy to Clipboard") {
-                    #if canImport(AppKit)
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     pasteboard.setString(preview, forType: .string)
-                    #endif
                 }
 
                 Button("Save File...") {
