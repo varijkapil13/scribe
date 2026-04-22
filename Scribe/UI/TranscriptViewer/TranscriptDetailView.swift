@@ -139,11 +139,15 @@ struct TranscriptDetailView: View {
                     .keyboardShortcut(.return, modifiers: [.command])
                 }
             } else {
+                Text("TRANSCRIPT")
+                    .eyebrowStyle()
+
                 HStack(alignment: .firstTextBaseline) {
                     Text(session.title.isEmpty ? "Untitled Session" : session.title)
-                        .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                        .font(DesignTokens.Typography.title1)
                         .foregroundStyle(.primary)
                         .lineLimit(2)
+                        .textSelection(.enabled)
 
                     Spacer()
 
@@ -162,6 +166,7 @@ struct TranscriptDetailView: View {
                     Label(formattedDate, systemImage: "calendar")
                     Text("·").foregroundStyle(.tertiary)
                     Label(viewModel.formattedDuration, systemImage: "waveform")
+                        .monospacedDigit()
                     if let lang = session.language?.uppercased(), !lang.isEmpty, lang != "AUTO" {
                         Text("·").foregroundStyle(.tertiary)
                         Label(lang, systemImage: "globe")
@@ -169,6 +174,7 @@ struct TranscriptDetailView: View {
                     if !viewModel.segments.isEmpty {
                         Text("·").foregroundStyle(.tertiary)
                         Label("\(viewModel.segments.count) segments", systemImage: "text.alignleft")
+                            .monospacedDigit()
                     }
                 }
                 .font(.callout)
@@ -198,14 +204,43 @@ struct TranscriptDetailView: View {
 
     // MARK: - Tab Picker
 
+    /// Editorial underlined tabs — feel closer to a magazine table-of-contents
+    /// than an iOS segmented control. The active tab's label is bolder and
+    /// backed by a thin moving underline that animates between positions.
     private var tabPicker: some View {
-        Picker("Tab", selection: $selectedTab) {
+        HStack(spacing: DesignTokens.Spacing.lg) {
             ForEach(DetailTab.allCases, id: \.self) { tab in
-                Label(tab.rawValue, systemImage: tab.systemImage).tag(tab)
+                tabButton(for: tab)
+            }
+            Spacer()
+        }
+    }
+
+    private func tabButton(for tab: DetailTab) -> some View {
+        let isSelected = selectedTab == tab
+        return Button {
+            withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
+                selectedTab = tab
+            }
+        } label: {
+            VStack(spacing: 6) {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Image(systemName: tab.systemImage)
+                        .font(.system(.caption, weight: .semibold))
+                    Text(tab.rawValue)
+                        .font(.system(.callout, weight: isSelected ? .semibold : .regular))
+                }
+                .foregroundStyle(isSelected ? Color.primary : .secondary)
+
+                Rectangle()
+                    .fill(isSelected ? Color.accentColor : .clear)
+                    .frame(height: 2)
+                    .clipShape(Capsule())
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     // MARK: - Transcript
@@ -519,9 +554,8 @@ private struct ActionItemRow: View {
                 }
             }
         }
-        .padding(DesignTokens.Spacing.md)
-        .background(DesignTokens.Palette.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        .cardStyle(padding: DesignTokens.Spacing.md, radius: DesignTokens.Radius.md)
+        .animation(.easeOut(duration: DesignTokens.Motion.fast), value: isCompleted)
     }
 }
 
@@ -534,26 +568,23 @@ private struct InsightCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(tint)
-                .frame(width: 3)
-                .opacity(0.9)
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                HStack(spacing: DesignTokens.Spacing.sm) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                ZStack {
+                    Circle()
+                        .fill(tint.opacity(0.14))
+                        .frame(width: 28, height: 28)
                     Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(tint)
-                    Text(title)
-                        .font(.system(.headline, weight: .semibold))
-                    Spacer()
                 }
-                content()
+                Text(title)
+                    .font(DesignTokens.Typography.section)
+                Spacer()
             }
-            .padding(DesignTokens.Spacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            content()
         }
-        .background(DesignTokens.Palette.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        .cardStyle(elevation: DesignTokens.Shadow.soft)
     }
 }
 

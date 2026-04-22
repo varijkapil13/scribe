@@ -11,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - Properties
 
-    private var overlayManager = OverlayManager()
     private var appState: AppState!
     private var cancellables = Set<AnyCancellable>()
 
@@ -21,9 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Register default values so UserDefaults queries return sensible results
         // before the user has visited Settings.
         UserDefaults.standard.register(defaults: [
-            "showOverlayOnRecord": true,
             "captureSystemAudio": true,
-            "alwaysOnTop": true,
             "selectedLanguage": "auto"
         ])
 
@@ -60,7 +57,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
             _ = semaphore.wait(timeout: .now() + 2)
         }
-        overlayManager.hideOverlay()
     }
 
     // MARK: - Window Close → Quit
@@ -165,29 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         do {
             try await appState.startSession()
-
-            // Show the floating overlay if the user has it enabled. Wire the
-            // overlay's transport buttons through the same paths so state
-            // stays consistent no matter where the user toggles it.
-            if UserDefaults.standard.bool(forKey: "showOverlayOnRecord") {
-                let overlayView = OverlayView(
-                    audioManager: appState.audioManager,
-                    appState: appState,
-                    speechEngine: appState.speechEngine,
-                    onPauseResume: { [weak self] in
-                        guard let self else { return }
-                        if self.appState.audioManager.isPaused {
-                            Task { @MainActor in await self.resumeRecording() }
-                        } else {
-                            self.pauseRecording()
-                        }
-                    },
-                    onStop: { [weak self] in
-                        Task { @MainActor in await self?.stopRecording() }
-                    }
-                )
-                overlayManager.showOverlay(with: overlayView)
-            }
+            // The main window's live view observes `appState.isTranscribing`
+            // and auto-navigates to the live transcript — no overlay needed.
         } catch {
             showPermissionAlert(
                 title: "Couldn't Start Recording",
@@ -307,10 +282,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    /// Stops the active transcription session and hides the overlay.
+    /// Stops the active transcription session. The main window observes
+    /// `appState.isTranscribing` and navigates to the newest transcript.
     func stopRecording() async {
         await appState.stopSession()
-        overlayManager.hideOverlay()
     }
 
     /// Pauses audio capture without ending the session.

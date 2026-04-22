@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// Destination a user can navigate to from the main window's sidebar. Combines
-/// transcript sessions with settings panes so Scribe has a single primary
-/// window.
+/// transcript sessions with settings panes and, while a session is running,
+/// the live-recording view so there's only ever one window to look at.
 enum MainSelection: Hashable {
+    case live
     case transcript(String) // session id
     case settings(SettingsPane)
 }
@@ -21,11 +22,20 @@ struct MainWindowView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             detail
         }
-        .frame(minWidth: 820, minHeight: 560)
+        .frame(minWidth: 920, minHeight: 620)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                RecordingStatusPill(audioManager: appState.audioManager, appState: appState)
+                    .onTapGesture {
+                        if appState.isTranscribing {
+                            selection = .live
+                        }
+                    }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 recordingToolbar
             }
@@ -33,13 +43,12 @@ struct MainWindowView: View {
         .onAppear {
             viewModel.loadSessions()
             if selection == nil {
-                // Default to the latest transcript, or General settings if
-                // the database is empty.
-                if let first = viewModel.filteredSessions.first {
+                if appState.isTranscribing {
+                    selection = .live
+                } else if let first = viewModel.filteredSessions.first {
                     selection = .transcript(first.id)
-                } else {
-                    selection = .settings(.general)
                 }
+                // Otherwise stay `.none` and show the Welcome hero.
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
@@ -47,12 +56,20 @@ struct MainWindowView: View {
             selection = .settings(pane)
         }
         .onChange(of: appState.isTranscribing) { _, isRecording in
-            // Once a session finishes we want its row to appear in the sidebar
-            // and be auto-selected, mirroring how most capture tools behave.
-            if !isRecording {
+            // Session started → flip to the inline live view so the user
+            // immediately sees the streaming transcript. Session ended → reload
+            // the list and select the just-finished transcript so the post-
+            // session summary/analysis flow is one click away.
+            if isRecording {
+                withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
+                    selection = .live
+                }
+            } else {
                 viewModel.loadSessions()
                 if let first = viewModel.filteredSessions.first {
-                    selection = .transcript(first.id)
+                    withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
+                        selection = .transcript(first.id)
+                    }
                 }
             }
         }
@@ -95,12 +112,23 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: $selection) {
-            Section("Transcripts") {
+            if appState.isTranscribing {
+                Section {
+                    NavigationLink(value: MainSelection.live) {
+                        LiveSidebarRow(
+                            isPaused: appState.audioManager.isPaused,
+                            duration: appState.audioManager.recordingDuration
+                        )
+                    }
+                } header: {
+                    Text("Now")
+                        .eyebrowStyle()
+                }
+            }
+
+            Section {
                 if viewModel.filteredSessions.isEmpty {
-                    Text("No transcripts yet")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, DesignTokens.Spacing.xs)
+                    sidebarEmptyHint
                 } else {
                     ForEach(viewModel.filteredSessions) { session in
                         NavigationLink(value: MainSelection.transcript(session.id)) {
@@ -118,21 +146,49 @@ struct MainWindowView: View {
                         }
                     }
                 }
+            } header: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Transcripts")
+                        .eyebrowStyle()
+                    Spacer()
+                    if !viewModel.filteredSessions.isEmpty {
+                        Text("\(viewModel.filteredSessions.count)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
 
-            Section("Settings") {
+            Section {
                 ForEach(SettingsPane.allCases) { pane in
                     NavigationLink(value: MainSelection.settings(pane)) {
                         Label(pane.title, systemImage: pane.systemImage)
                     }
                 }
+            } header: {
+                Text("Settings")
+                    .eyebrowStyle()
             }
         }
-        .searchable(text: $searchText)
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Search transcripts…")
         .onChange(of: searchText) { _, newValue in
             viewModel.search(query: newValue)
         }
         .navigationTitle("Scribe")
+    }
+
+    private var sidebarEmptyHint: some View {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: "waveform.badge.mic")
+                .foregroundStyle(.tertiary)
+                .font(.callout)
+                .padding(.top, 2)
+            Text("No transcripts yet. Start a recording to see it here.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, DesignTokens.Spacing.xs)
     }
 
     // MARK: - Detail
@@ -140,6 +196,8 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detail: some View {
         switch selection {
+        case .live:
+            LiveSessionView()
         case .transcript(let id):
             if let session = viewModel.filteredSessions.first(where: { $0.id == id }) {
                 TranscriptDetailView(session: session)
@@ -154,11 +212,150 @@ struct MainWindowView: View {
         case .settings(let pane):
             SettingsPaneView(pane: pane, audioManager: appState.audioManager)
         case .none:
-            EmptyStateView(
-                systemImage: "waveform",
-                title: "Welcome to Scribe",
-                message: "Hit the Record button in the toolbar to start a new session, or pick a past transcript from the sidebar."
+            WelcomeView(
+                isRecording: appState.isTranscribing,
+                onRecord: { Task { await appDelegate.toggleRecording() } }
             )
+        }
+    }
+}
+
+// MARK: - Live sidebar row
+
+/// Compact "Now Recording" entry shown at the top of the sidebar while a
+/// session is active. Pulses a recording dot and shows tabular elapsed time
+/// so the user can always jump back to the live view, no matter where they
+/// browsed off to.
+private struct LiveSidebarRow: View {
+    let isPaused: Bool
+    let duration: TimeInterval
+
+    @State private var pulse: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            ZStack {
+                Circle()
+                    .fill(tint.opacity(0.35))
+                    .frame(width: 14, height: 14)
+                    .scaleEffect(showHalo ? (0.9 + pulse * 0.5) : 0.6)
+                    .opacity(showHalo ? (0.6 - pulse * 0.6) : 0)
+                Circle()
+                    .fill(tint)
+                    .frame(width: 8, height: 8)
+            }
+            .frame(width: 14, height: 14)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(isPaused ? "Paused" : "Recording")
+                    .font(.system(.body, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text(formatted(duration))
+                    .font(.system(.caption, design: .monospaced).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, DesignTokens.Spacing.xs)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
+                pulse = 1
+            }
+        }
+    }
+
+    private var tint: Color {
+        isPaused ? DesignTokens.Palette.paused : DesignTokens.Palette.recording
+    }
+
+    private var showHalo: Bool { !isPaused && !reduceMotion }
+
+    private func formatted(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+}
+
+// MARK: - Welcome state
+
+/// First-run / empty-selection hero. Big serif headline, short supporting
+/// copy, one oversized capsule Record CTA, and a calm keyboard-shortcut
+/// hint — nothing else. No cards, no badges, no marketing chrome.
+private struct WelcomeView: View {
+
+    let isRecording: Bool
+    let onRecord: () -> Void
+
+    var body: some View {
+        VStack(spacing: DesignTokens.Spacing.xxl) {
+            Spacer()
+
+            VStack(spacing: DesignTokens.Spacing.lg) {
+                Text("SCRIBE")
+                    .eyebrowStyle()
+
+                Text(isRecording ? "Listening." : "Ready when you are.")
+                    .font(DesignTokens.Typography.display)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("On-device speech recognition for meetings, interviews, and anything else worth remembering. Nothing leaves your Mac.")
+                    .font(.system(.body))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HeroRecordButton(isRecording: isRecording, action: onRecord)
+
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Text("or press")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                KeyCapGroup(keys: ["⇧", "⌘", "R"])
+                Text("from anywhere")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(DesignTokens.Spacing.xxxl)
+        .background(DesignTokens.Palette.surface)
+    }
+}
+
+/// Tiny inline "keyboard key caps" renderer for shortcut hints.
+private struct KeyCapGroup: View {
+    let keys: [String]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(keys, id: \.self) { key in
+                Text(key)
+                    .font(.system(.caption2, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 18, minHeight: 18)
+                    .padding(.horizontal, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(DesignTokens.Palette.surfaceElevated)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                    )
+            }
         }
     }
 }

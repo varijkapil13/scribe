@@ -45,15 +45,18 @@ struct SettingsPaneView: View {
     }
 
     private var header: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
-            Image(systemName: pane.systemImage)
-                .font(.system(size: 22))
-                .foregroundStyle(.secondary)
-                .symbolRenderingMode(.hierarchical)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Image(systemName: pane.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("SETTINGS")
+                    .eyebrowStyle()
+            }
             Text(pane.title)
-                .font(.system(.largeTitle, design: .rounded, weight: .semibold))
-            Spacer()
+                .font(DesignTokens.Typography.title2)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DesignTokens.Spacing.xl)
         .padding(.top, DesignTokens.Spacing.xl)
         .padding(.bottom, DesignTokens.Spacing.lg)
@@ -78,8 +81,6 @@ private struct GeneralSettingsPane: View {
     @AppStorage("selectedMicrophoneID") var selectedMicID: String = ""
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
-    @AppStorage("showOverlayOnRecord") var showOverlay: Bool = true
-    @AppStorage("alwaysOnTop") var alwaysOnTop: Bool = true
 
     var body: some View {
         Form {
@@ -106,19 +107,6 @@ private struct GeneralSettingsPane: View {
                 Text("Powered by Apple Speech — on-device recognition with no model downloads required. Change applies live without a restart.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            Section("Overlay") {
-                toggleWithCaption(
-                    "Show overlay when recording starts",
-                    isOn: $showOverlay,
-                    caption: "Display a floating window with the live transcript during recording."
-                )
-                toggleWithCaption(
-                    "Keep overlay on top",
-                    isOn: $alwaysOnTop,
-                    caption: "Overlay stays above all other windows so you can see it during video calls."
-                )
             }
         }
         .formStyle(.grouped)
