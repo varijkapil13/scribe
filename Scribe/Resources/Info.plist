@@ -35,8 +35,6 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Varij. All rights reserved.</string>
 	<key>NSMicrophoneUsageDescription</key>

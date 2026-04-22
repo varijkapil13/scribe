@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import CoreAudio
 
 /// Central application state that coordinates audio capture, transcription, and storage.
 ///
@@ -29,6 +30,24 @@ final class AppState: ObservableObject {
     private var hasLoggedFirstMicBuffer = false
     private var hasLoggedFirstSystemBuffer = false
 
+    /// Accumulates consecutive same-speaker utterances into a single segment
+    /// so the UI doesn't fill up with 1–3-word fragments every time SFSpeech
+    /// detects an internal utterance boundary. Flushed when the speaker
+    /// changes, the time window elapses, or the session ends.
+    private struct PendingSegment {
+        let speaker: String
+        let startMs: Int
+        var endMs: Int
+        var text: String
+        let startedAt: Date
+    }
+    private var pendingSegment: PendingSegment?
+
+    /// Upper bound for a single coalesced segment, in seconds. Once exceeded,
+    /// the segment is flushed and a new one begins even if the speaker hasn't
+    /// changed — prevents 20-minute monologues from becoming one giant row.
+    private let coalesceWindow: TimeInterval = 60
+
     // MARK: - Singleton
 
     static let shared = AppState()
@@ -38,24 +57,106 @@ final class AppState: ObservableObject {
     init() {
         wireAudioPipeline()
         wireTranscriptionResults()
+        observeLanguagePreference()
+        observeSystemAudioPreference()
+        observeMicrophonePreference()
+    }
+
+    // MARK: - Microphone Preference
+
+    /// Applies the stored microphone selection (by CoreAudio device ID) and
+    /// reacts to live changes so switching mics in Settings or the overlay
+    /// takes effect immediately — even during a session.
+    private func observeMicrophonePreference() {
+        applyStoredMicrophoneDevice()
+
+        NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .compactMap { _ in UserDefaults.standard.string(forKey: "selectedMicrophoneID") }
+            .removeDuplicates()
+            .sink { [weak self] stored in
+                guard let self else { return }
+                let deviceID = Self.parseMicDeviceID(stored)
+                print("[AppState] Microphone preference changed → \(stored.isEmpty ? "System Default" : stored).")
+                self.audioManager.setInputDevice(deviceID)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyStoredMicrophoneDevice() {
+        let stored = UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? ""
+        audioManager.setInputDevice(Self.parseMicDeviceID(stored))
+    }
+
+    /// Parses the string-encoded `selectedMicrophoneID` UserDefault. Empty
+    /// string or unparseable value means "use the system default".
+    private static func parseMicDeviceID(_ stored: String) -> AudioDeviceID? {
+        guard !stored.isEmpty, let id = AudioDeviceID(stored) else { return nil }
+        return id
+    }
+
+    // MARK: - System Audio Preference
+
+    /// Starts/stops the ScreenCaptureKit stream live when the user flips the
+    /// "Capture system audio" toggle (in Settings or the overlay), without
+    /// interrupting microphone capture.
+    private func observeSystemAudioPreference() {
+        NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .compactMap { _ in UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool }
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                Task { @MainActor in
+                    await self.audioManager.setSystemAudioCaptureEnabled(enabled)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Language Preference
+
+    /// Applies the stored `selectedLanguage` preference immediately and keeps
+    /// the speech engine in sync with any future changes. `setLanguage`
+    /// hot-swaps the recognizer mid-session, so switching languages in
+    /// Settings takes effect without stopping or restarting Scribe.
+    private func observeLanguagePreference() {
+        // Apply whatever is currently stored (covers app launch).
+        applyStoredLanguage()
+
+        NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .compactMap { _ in UserDefaults.standard.string(forKey: "selectedLanguage") }
+            .removeDuplicates()
+            .sink { [weak self] newLanguage in
+                guard let self else { return }
+                if self.speechEngine.language != newLanguage {
+                    print("[AppState] Language preference changed → \(newLanguage). Re-tuning recogniser.")
+                    Task { @MainActor in
+                        await self.speechEngine.setLanguage(newLanguage)
+                    }
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyStoredLanguage() {
+        let stored = UserDefaults.standard.string(forKey: "selectedLanguage")
+        Task { @MainActor in
+            await speechEngine.setLanguage(stored)
+        }
     }
 
     // MARK: - Pipeline Wiring
 
-    /// Connects microphone audio directly to Apple Speech.
+    /// Connects microphone and system-audio buffers to Apple Speech.
     ///
-    /// SFSpeechRecognizer is a streaming API — it handles silence detection and
-    /// segmentation internally, so we bypass ``AudioBufferManager`` and append
-    /// every buffer as it arrives. This removes the 5-second initial delay
-    /// that the chunking introduced and lets partial results surface within
-    /// a few hundred milliseconds of speaking.
-    ///
-    /// System audio is captured but NOT fed into the same recognizer — a
-    /// single SFSpeech instance can't distinguish two speakers, and even
-    /// silent system-audio buffers would clobber the speaker label on mic
-    /// segments. Proper dual-speaker transcription requires two independent
-    /// SFSpeechRecognizer instances; for now we transcribe the user's mic
-    /// only.
+    /// Both streams are fed into a single `SFSpeechRecognizer` (Apple's API
+    /// doesn't support two simultaneous on-device recognition tasks reliably).
+    /// The engine only updates the "current speaker" label when a buffer has
+    /// actual audio content — silent buffers from the idle stream don't
+    /// clobber the label on the active stream, so mic utterances get tagged
+    /// "you" and remote utterances get tagged "remote" most of the time.
     private func wireAudioPipeline() {
         audioManager.onMicBuffer = { [weak self] buffer in
             guard let self else { return }
@@ -70,34 +171,107 @@ final class AppState: ObservableObject {
             guard let self else { return }
             if !self.hasLoggedFirstSystemBuffer {
                 self.hasLoggedFirstSystemBuffer = true
-                print("[AppState] First system audio buffer received — frames: \(buffer.frameLength) (not fed to recognizer)")
+                print("[AppState] First system audio buffer received — frames: \(buffer.frameLength), format: \(buffer.format)")
             }
-            // Intentionally not forwarded to speechEngine — see doc comment.
+            self.speechEngine.appendAudioBuffer(buffer, speaker: "remote")
         }
     }
 
-    /// Connects transcription engine output to storage and the overlay display.
+    /// Connects transcription engine output to coalescing + storage + overlay.
+    ///
+    /// Raw segments from SFSpeech are small (often 1–5 words) because the
+    /// recogniser resets its partial at every silence boundary. We group
+    /// consecutive same-speaker chunks into a single "coalesced" segment that
+    /// represents up to ``coalesceWindow`` seconds of continuous speech from
+    /// one person, so the UI shows meaningful paragraphs instead of a wall of
+    /// tiny fragments.
     private func wireTranscriptionResults() {
         speechEngine.onSegmentTranscribed = { [weak self] segment in
-            guard let self else { return }
-            // Persist the segment.
-            if let sessionId = self.currentSessionId {
-                try? self.transcriptStore.addSegment(
-                    sessionId: sessionId,
-                    startMs: segment.sessionOffsetMs,
-                    endMs: segment.sessionOffsetMs + (segment.endMs - segment.startMs),
-                    speaker: segment.speaker,
-                    text: segment.text
-                )
-            }
+            self?.ingestTranscribedSegment(segment)
+        }
+    }
 
-            // Update the overlay with recent segments (keep last 20 for performance).
-            self.overlaySegments.append(segment)
-            if self.overlaySegments.count > 20 {
-                self.overlaySegments.removeFirst(self.overlaySegments.count - 20)
+    /// Adds a raw SFSpeech segment to the current coalesce buffer, flushing it
+    /// first if the speaker changed or the time window has elapsed.
+    private func ingestTranscribedSegment(_ segment: TranscriptionSegment) {
+        let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let elapsedSessionMs = segment.sessionOffsetMs
+        let segmentLengthMs = max(0, segment.endMs - segment.startMs)
+
+        if var pending = pendingSegment {
+            let elapsed = -pending.startedAt.timeIntervalSinceNow
+            let sameSpeaker = pending.speaker == segment.speaker
+            if sameSpeaker && elapsed < coalesceWindow {
+                pending.text = pending.text.isEmpty ? text : "\(pending.text) \(text)"
+                pending.endMs = elapsedSessionMs + segmentLengthMs
+                pendingSegment = pending
+                refreshOverlayWithPending()
+                return
+            }
+            // Speaker changed or window exceeded — flush before starting fresh.
+            flushPendingSegment()
+        }
+
+        pendingSegment = PendingSegment(
+            speaker: segment.speaker,
+            startMs: elapsedSessionMs,
+            endMs: elapsedSessionMs + segmentLengthMs,
+            text: text,
+            startedAt: Date()
+        )
+        refreshOverlayWithPending()
+    }
+
+    /// Persists the current coalesced segment (if any) and drops it from the
+    /// live overlay slot. Called on speaker change, window expiry, and session
+    /// end.
+    private func flushPendingSegment() {
+        guard let pending = pendingSegment else { return }
+        pendingSegment = nil
+
+        guard let sessionId = currentSessionId else { return }
+        try? transcriptStore.addSegment(
+            sessionId: sessionId,
+            startMs: pending.startMs,
+            endMs: pending.endMs,
+            speaker: pending.speaker,
+            text: pending.text
+        )
+    }
+
+    /// Rebuilds ``overlaySegments`` to contain the persisted segments for this
+    /// session plus the in-progress pending segment so the overlay shows a
+    /// single growing row for the current utterance instead of 10 fragments.
+    private func refreshOverlayWithPending() {
+        guard let pending = pendingSegment else { return }
+        // Replace or append a synthetic segment representing the in-progress
+        // coalesced utterance. We mark it via a stable identifier so the view
+        // doesn't recreate the row every tick.
+        let liveId = pendingSegmentId
+        let liveSegment = TranscriptionSegment(
+            id: liveId,
+            sessionOffsetMs: pending.startMs,
+            startMs: pending.startMs,
+            endMs: pending.endMs,
+            speaker: pending.speaker,
+            text: pending.text
+        )
+
+        if let idx = overlaySegments.firstIndex(where: { $0.id == liveId }) {
+            overlaySegments[idx] = liveSegment
+        } else {
+            overlaySegments.append(liveSegment)
+            if overlaySegments.count > 20 {
+                overlaySegments.removeFirst(overlaySegments.count - 20)
             }
         }
     }
+
+    /// Stable identifier for the in-progress overlay row — re-using the same
+    /// UUID keeps SwiftUI's diff happy so the row animates rather than flickers.
+    private let pendingSegmentId = UUID()
 
     // MARK: - Session Lifecycle
 
@@ -113,18 +287,23 @@ final class AppState: ObservableObject {
         let session = try transcriptStore.createSession(title: title)
         currentSessionId = session.id
 
-        // Reset overlay and diagnostic flags.
+        // Reset overlay, coalesce buffer, and diagnostic flags.
         overlaySegments.removeAll()
+        pendingSegment = nil
         hasLoggedFirstMicBuffer = false
         hasLoggedFirstSystemBuffer = false
 
         // Reset audio buffers.
         audioBufferManager.reset()
 
-        // Start Apple Speech recognition FIRST so the recognition request is
-        // ready to accept buffers as soon as the audio engine starts producing
-        // them. (Reversed order previously dropped the first ~100 ms of audio.)
-        speechEngine.startSession()
+        // The language preference is kept in sync continuously via
+        // observeLanguagePreference() — no need to re-apply here.
+
+        // Start the parallel speech pipelines FIRST so they're ready to
+        // accept audio as soon as the engine starts producing it. This also
+        // triggers on-demand model download if the locale's model isn't
+        // installed yet — await handles that.
+        await speechEngine.startSession()
 
         // Start audio capture.
         try await audioManager.startRecording()
@@ -144,6 +323,10 @@ final class AppState: ObservableObject {
         // becomes a persisted segment before we clear `currentSessionId` (the
         // onSegmentTranscribed callback keys off it).
         await speechEngine.stopSession()
+
+        // Commit any in-progress coalesced segment BEFORE we clear
+        // `currentSessionId` — otherwise flushPendingSegment can't write it.
+        flushPendingSegment()
 
         // Store sessionId before clearing so post-session processing can use it.
         let finishedSessionId = currentSessionId

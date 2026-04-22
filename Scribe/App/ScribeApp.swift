@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Main entry point for the Scribe macOS meeting transcription application.
 ///
-/// Uses the SwiftUI App lifecycle with an `NSApplicationDelegateAdaptor` to bridge
-/// into AppKit for menu bar management and system-level event handling.
+/// Single primary window that combines the transcript library and all settings
+/// panes in one `NavigationSplitView`. Closing the window quits the app.
 @main
 struct ScribeApp: App {
 
@@ -13,21 +13,23 @@ struct ScribeApp: App {
     // MARK: - Scene
 
     var body: some Scene {
-        // Settings window (opened via the app menu or Command+,)
-        Settings {
-            SettingsView(audioManager: appState.audioManager)
-        }
-
-        // Transcript viewer window — opened via scribe://transcripts URL scheme
-        // from the menu bar's "View Transcripts" action.
-        Window("Transcripts", id: "transcripts") {
-            TranscriptListView()
+        Window("Scribe", id: "main") {
+            MainWindowView()
                 .environmentObject(appState)
-                .handlesExternalEvents(
-                    preferring: ["transcripts"],
-                    allowing: ["transcripts"]
-                )
+                .environmentObject(appDelegate)
         }
-        .handlesExternalEvents(matching: ["transcripts"])
+        .commands {
+            // Route the standard Settings… menu item (Cmd-,) to the Settings
+            // section of the main window instead of opening a separate scene.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    NotificationCenter.default.post(
+                        name: .openScribeSettings,
+                        object: SettingsPane.general
+                    )
+                }
+                .keyboardShortcut(",", modifiers: [.command])
+            }
+        }
     }
 }

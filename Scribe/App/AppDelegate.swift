@@ -4,14 +4,13 @@ import CoreGraphics
 import Speech
 import SwiftUI
 
-/// AppKit delegate that manages the menu bar status item, overlay panel,
-/// keyboard shortcuts, and coordinates high-level recording actions.
+/// AppKit delegate that coordinates high-level recording actions, the overlay
+/// panel, global keyboard shortcuts, and app-lifecycle policy.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - Properties
 
-    private var menuBarController: MenuBarController!
     private var overlayManager = OverlayManager()
     private var appState: AppState!
     private var cancellables = Set<AnyCancellable>()
@@ -31,8 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Use the shared singleton so every component references the same state.
         appState = AppState.shared
 
-        setupMenuBar()
         registerKeyboardShortcuts()
+        observeMainWindowClose()
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
@@ -50,40 +49,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    // MARK: - Menu Bar Setup
-
-    /// Configures the ``MenuBarController`` and wires its action callbacks
-    /// to the corresponding delegate methods.
-    private func setupMenuBar() {
-        menuBarController = MenuBarController()
-        menuBarController.setup()
-
-        menuBarController.onStartTranscription = { [weak self] in
-            guard let self else { return }
-            Task { await self.startRecording() }
+    func applicationWillTerminate(_ notification: Notification) {
+        // Make sure an active session is flushed to disk before the process
+        // dies — otherwise the last coalesced segment can be lost.
+        if appState?.isTranscribing == true {
+            let semaphore = DispatchSemaphore(value: 0)
+            Task { @MainActor in
+                await appState.stopSession()
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 2)
         }
+        overlayManager.hideOverlay()
+    }
 
-        menuBarController.onStopTranscription = { [weak self] in
-            guard let self else { return }
-            Task { await self.stopRecording() }
-        }
+    // MARK: - Window Close → Quit
 
-        menuBarController.onPauseTranscription = { [weak self] in
-            self?.pauseRecording()
-        }
-
-        menuBarController.onResumeTranscription = { [weak self] in
-            guard let self else { return }
-            Task { await self.resumeRecording() }
-        }
-
-        menuBarController.onViewTranscripts = { [weak self] in
-            self?.openTranscriptViewer()
-        }
-
-        menuBarController.onOpenSettings = { [weak self] in
-            self?.openSettings()
-        }
+    /// The user explicitly asked: closing the main window quits the app. We
+    /// observe ``NSWindow.willCloseNotification`` via Combine and terminate
+    /// when the SwiftUI `Window("Scribe", id: "main")` scene goes away. We
+    /// match on the window's identifier so alert, panel, and overlay closes
+    /// don't trigger quit.
+    private func observeMainWindowClose() {
+        NotificationCenter.default
+            .publisher(for: NSWindow.willCloseNotification)
+            .receive(on: RunLoop.main)
+            .sink { notification in
+                guard let window = notification.object as? NSWindow else { return }
+                guard window.identifier?.rawValue == "main" else { return }
+                NSApp.terminate(nil)
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Keyboard Shortcuts
@@ -101,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // MARK: - Recording Actions
 
     /// Toggles recording on or off depending on the current state.
-    private func toggleRecording() async {
+    func toggleRecording() async {
         if appState.isTranscribing {
             await stopRecording()
         } else {
@@ -109,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    /// Starts a new transcription session, updates the menu bar, and shows the overlay.
+    /// Starts a new transcription session and shows the overlay.
     func startRecording() async {
         // Verify permissions before touching audio hardware so we can show the
         // user a clear alert instead of silently failing.
@@ -170,15 +166,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         do {
             try await appState.startSession()
 
-            menuBarController.recordingState = .recording
-            menuBarController.startSessionTimer()
-
-            // Show the floating overlay if the user has it enabled.
+            // Show the floating overlay if the user has it enabled. Wire the
+            // overlay's transport buttons through the same paths so state
+            // stays consistent no matter where the user toggles it.
             if UserDefaults.standard.bool(forKey: "showOverlayOnRecord") {
                 let overlayView = OverlayView(
                     audioManager: appState.audioManager,
                     appState: appState,
-                    speechEngine: appState.speechEngine
+                    speechEngine: appState.speechEngine,
+                    onPauseResume: { [weak self] in
+                        guard let self else { return }
+                        if self.appState.audioManager.isPaused {
+                            Task { @MainActor in await self.resumeRecording() }
+                        } else {
+                            self.pauseRecording()
+                        }
+                    },
+                    onStop: { [weak self] in
+                        Task { @MainActor in await self?.stopRecording() }
+                    }
                 )
                 overlayManager.showOverlay(with: overlayView)
             }
@@ -199,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// of those toggles on. We detect that string and guide the user straight
     /// to the right System Settings pane.
     private func handleSpeechError(_ error: Error) {
-        // Also stop the session so the menu bar goes back to idle rather than
+        // Also stop the session so state goes back to idle rather than
         // claiming to still be recording.
         Task { @MainActor in
             await stopRecording()
@@ -301,58 +307,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    /// Stops the active transcription session, updates the menu bar, and hides the overlay.
+    /// Stops the active transcription session and hides the overlay.
     func stopRecording() async {
         await appState.stopSession()
-
-        menuBarController.recordingState = .idle
-        menuBarController.resetSessionTimer()
         overlayManager.hideOverlay()
     }
 
     /// Pauses audio capture without ending the session.
     func pauseRecording() {
         appState.pauseSession()
-
-        menuBarController.recordingState = .paused
-        menuBarController.pauseSessionTimer()
     }
 
     /// Resumes audio capture after a pause.
     func resumeRecording() async {
         do {
             try await appState.resumeSession()
-
-            menuBarController.recordingState = .recording
-            menuBarController.resumeSessionTimer()
         } catch {
             print("[AppDelegate] Failed to resume recording: \(error.localizedDescription)")
         }
-    }
-
-    // MARK: - Navigation Actions
-
-    /// Opens the transcript viewer window via its SwiftUI scene identifier.
-    func openTranscriptViewer() {
-        if let url = URL(string: "scribe://transcripts") {
-            NSWorkspace.shared.open(url)
-        }
-        // Bring the app to the foreground so the window is visible.
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    /// Opens the Settings window using the standard AppKit preferences action.
-    ///
-    /// macOS 13+ renames the action from `showPreferencesWindow:` to
-    /// `showSettingsWindow:`. Sending the action with `to: nil` lets the responder
-    /// chain route it to the SwiftUI `Settings` scene.
-    func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
-
-    /// Terminates the application.
-    func quitApp() {
-        NSApp.terminate(nil)
     }
 }

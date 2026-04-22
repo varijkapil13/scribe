@@ -2,12 +2,77 @@ import SwiftUI
 import KeyboardShortcuts
 import AppKit
 
-/// App-wide settings view presented as a tabbed window.
-///
-/// Styled to match macOS System Settings: each toggle is followed by a
-/// short caption describing what it does, and sections are clearly grouped.
-struct SettingsView: View {
+/// One of the four settings screens shown in the combined main window. Each
+/// pane is a standalone `View`, chosen from the sidebar.
+enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
+    case general
+    case intelligence
+    case storage
+    case shortcuts
 
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:      return "General"
+        case .intelligence: return "Intelligence"
+        case .storage:      return "Storage"
+        case .shortcuts:    return "Shortcuts"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general:      return "gear"
+        case .intelligence: return "sparkles"
+        case .storage:      return "internaldrive"
+        case .shortcuts:    return "keyboard"
+        }
+    }
+}
+
+/// Dispatches to the correct pane view based on the selected section.
+struct SettingsPaneView: View {
+    let pane: SettingsPane
+    @ObservedObject var audioManager: AudioSessionManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            content
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: DesignTokens.Spacing.md) {
+            Image(systemName: pane.systemImage)
+                .font(.system(size: 22))
+                .foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
+            Text(pane.title)
+                .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+            Spacer()
+        }
+        .padding(.horizontal, DesignTokens.Spacing.xl)
+        .padding(.top, DesignTokens.Spacing.xl)
+        .padding(.bottom, DesignTokens.Spacing.lg)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch pane {
+        case .general:      GeneralSettingsPane(audioManager: audioManager)
+        case .intelligence: IntelligenceSettingsPane()
+        case .storage:      StorageSettingsPane()
+        case .shortcuts:    ShortcutsSettingsPane()
+        }
+    }
+}
+
+// MARK: - General
+
+private struct GeneralSettingsPane: View {
     @ObservedObject var audioManager: AudioSessionManager
 
     @AppStorage("selectedMicrophoneID") var selectedMicID: String = ""
@@ -15,48 +80,8 @@ struct SettingsView: View {
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
     @AppStorage("showOverlayOnRecord") var showOverlay: Bool = true
     @AppStorage("alwaysOnTop") var alwaysOnTop: Bool = true
-    @AppStorage("retainAudio") var retainAudio: Bool = false
-    @AppStorage("storageLocation") var storageLocation: String = ""
-    @AppStorage("autoSummarize") var autoSummarize: Bool = false
-    @AppStorage("autoExtractActions") var autoExtractActions: Bool = false
-    @AppStorage("autoAnalyze") var autoAnalyze: Bool = true
-    @AppStorage("extractEntities") var extractEntities: Bool = true
-    @AppStorage("detectLanguage") var detectLanguage: Bool = true
-    @AppStorage("analyzeSentiment") var analyzeSentiment: Bool = true
-
-    @State private var showDeleteConfirmation: Bool = false
-
-    private let supportedLanguages: [String: String] = [
-        "auto": "Auto-detect",
-        "en": "English",
-        "de": "German",
-        "fr": "French",
-        "es": "Spanish",
-        "it": "Italian",
-        "pt": "Portuguese",
-        "nl": "Dutch",
-        "ja": "Japanese",
-        "zh": "Chinese",
-        "ko": "Korean"
-    ]
 
     var body: some View {
-        TabView {
-            generalTab
-                .tabItem { Label("General", systemImage: "gear") }
-            intelligenceTab
-                .tabItem { Label("Intelligence", systemImage: "sparkles") }
-            storageTab
-                .tabItem { Label("Storage", systemImage: "internaldrive") }
-            shortcutsTab
-                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-        }
-        .frame(width: 540, height: 460)
-    }
-
-    // MARK: - General Tab
-
-    private var generalTab: some View {
         Form {
             Section("Audio") {
                 Picker("Microphone", selection: $selectedMicID) {
@@ -65,7 +90,6 @@ struct SettingsView: View {
                         Text(mic.name).tag(String(mic.id))
                     }
                 }
-
                 toggleWithCaption(
                     "Capture system audio",
                     isOn: $captureSystemAudio,
@@ -75,11 +99,11 @@ struct SettingsView: View {
 
             Section("Transcription") {
                 Picker("Language", selection: $selectedLanguage) {
-                    ForEach(sortedLanguageKeys, id: \.self) { key in
-                        Text(supportedLanguages[key] ?? key).tag(key)
+                    ForEach(LanguageOptions.supported, id: \.code) { option in
+                        Text(option.name).tag(option.code)
                     }
                 }
-                Text("Powered by Apple Speech — on-device recognition with no model downloads required.")
+                Text("Powered by Apple Speech — on-device recognition with no model downloads required. Change applies live without a restart.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -99,10 +123,19 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
     }
+}
 
-    // MARK: - Intelligence Tab
+// MARK: - Intelligence
 
-    private var intelligenceTab: some View {
+private struct IntelligenceSettingsPane: View {
+    @AppStorage("autoSummarize") var autoSummarize: Bool = false
+    @AppStorage("autoExtractActions") var autoExtractActions: Bool = false
+    @AppStorage("autoAnalyze") var autoAnalyze: Bool = true
+    @AppStorage("extractEntities") var extractEntities: Bool = true
+    @AppStorage("detectLanguage") var detectLanguage: Bool = true
+    @AppStorage("analyzeSentiment") var analyzeSentiment: Bool = true
+
+    var body: some View {
         Form {
             Section {
                 HStack(spacing: 8) {
@@ -132,7 +165,7 @@ struct SettingsView: View {
                 )
             }
 
-            Section {
+            Section("Transcript Analysis") {
                 toggleWithCaption(
                     "Auto-analyze transcripts",
                     isOn: $autoAnalyze,
@@ -153,16 +186,20 @@ struct SettingsView: View {
                     isOn: $analyzeSentiment,
                     caption: "Score overall and per-speaker sentiment from -1.0 to +1.0."
                 )
-            } header: {
-                Text("Transcript Analysis")
             }
         }
         .formStyle(.grouped)
     }
+}
 
-    // MARK: - Storage Tab
+// MARK: - Storage
 
-    private var storageTab: some View {
+private struct StorageSettingsPane: View {
+    @AppStorage("retainAudio") var retainAudio: Bool = false
+    @AppStorage("storageLocation") var storageLocation: String = ""
+    @State private var showDeleteConfirmation: Bool = false
+
+    var body: some View {
         Form {
             Section("Storage") {
                 toggleWithCaption(
@@ -177,9 +214,7 @@ struct SettingsView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .foregroundStyle(.secondary)
-                        Button("Change…") {
-                            chooseStorageLocation()
-                        }
+                        Button("Change…", action: chooseStorageLocation)
                     }
                 }
             }
@@ -198,9 +233,7 @@ struct SettingsView: View {
                     isPresented: $showDeleteConfirmation,
                     titleVisibility: .visible
                 ) {
-                    Button("Delete All Data", role: .destructive) {
-                        deleteAllData()
-                    }
+                    Button("Delete All Data", role: .destructive, action: deleteAllData)
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("This permanently removes every session, segment, summary, and action item. This action cannot be undone.")
@@ -214,9 +247,26 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    // MARK: - Shortcuts Tab
+    private func chooseStorageLocation() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        storageLocation = url.path
+    }
 
-    private var shortcutsTab: some View {
+    private func deleteAllData() {
+        try? TranscriptStore().deleteAllData()
+    }
+}
+
+// MARK: - Shortcuts
+
+private struct ShortcutsSettingsPane: View {
+    var body: some View {
         Form {
             Section("Global Shortcuts") {
                 KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
@@ -227,48 +277,18 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
     }
+}
 
-    // MARK: - Components
+// MARK: - Shared helpers
 
-    /// A toggle styled like System Settings: leading title, trailing switch,
-    /// and a muted caption below explaining what the setting does.
-    @ViewBuilder
-    private func toggleWithCaption(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(title, isOn: isOn)
-            Text(caption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // MARK: - Private Helpers
-
-    private var sortedLanguageKeys: [String] {
-        var keys = Array(supportedLanguages.keys)
-        keys.sort { lhs, rhs in
-            if lhs == "auto" { return true }
-            if rhs == "auto" { return false }
-            return (supportedLanguages[lhs] ?? lhs) < (supportedLanguages[rhs] ?? rhs)
-        }
-        return keys
-    }
-
-    private func chooseStorageLocation() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        storageLocation = url.path
-    }
-
-    private func deleteAllData() {
-        let store = TranscriptStore()
-        try? store.deleteAllData()
+/// System-Settings-style toggle with a caption describing what it does.
+@ViewBuilder
+fileprivate func toggleWithCaption(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        Toggle(title, isOn: isOn)
+        Text(caption)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

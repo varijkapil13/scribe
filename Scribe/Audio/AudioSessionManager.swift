@@ -151,6 +151,55 @@ final class AudioSessionManager: ObservableObject {
         isPaused = true
     }
 
+    /// Hot-swaps the microphone input device. If a session is in progress the
+    /// mic tap is stopped, reconfigured for the new device, and restarted —
+    /// so the user can switch mics mid-call without losing the session.
+    /// Passing `nil` returns to the system default.
+    func setInputDevice(_ deviceID: AudioDeviceID?) {
+        if let deviceID {
+            micCapture.selectDevice(id: deviceID)
+        } else {
+            micCapture.selectedDeviceID = nil
+        }
+
+        guard isRecording, !isPaused else { return }
+
+        // Mid-session swap: tear down the current tap and restart with the
+        // new device. onAudioBuffer is a stored property on micCapture so the
+        // forwarding callback survives the restart.
+        micCapture.stopCapture()
+        do {
+            try micCapture.startCapture()
+        } catch {
+            print("[AudioSessionManager] Failed to switch mic device: \(error.localizedDescription)")
+        }
+    }
+
+    /// Turns system-audio capture on or off mid-session without interrupting
+    /// microphone capture. Called by ``AppState`` when the user flips the
+    /// "Capture system audio" toggle in Settings or the overlay.
+    func setSystemAudioCaptureEnabled(_ enabled: Bool) async {
+        shouldCaptureSystemAudio = enabled
+        guard isRecording, !isPaused else { return }
+
+        if enabled {
+            if !systemCapture.isCapturing {
+                systemCapture.onAudioBuffer = { [weak self] buffer, _ in
+                    self?.onSystemBuffer?(buffer)
+                }
+                do {
+                    try await systemCapture.startCapture()
+                } catch {
+                    print("[AudioSessionManager] Failed to start system audio mid-session: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            if systemCapture.isCapturing {
+                await systemCapture.stopCapture()
+            }
+        }
+    }
+
     /// Resumes a paused recording.
     func resumeRecording() async throws {
         guard isRecording, isPaused else { return }

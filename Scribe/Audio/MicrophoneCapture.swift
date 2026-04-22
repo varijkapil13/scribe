@@ -144,8 +144,36 @@ final class MicrophoneCapture: @unchecked Sendable {
 
         let bufferCapacity = AVAudioFrameCount(sampleRate * 0.1) // 100 ms output buffer
 
+        // One-shot log of the raw hardware format + first-buffer peak so we
+        // can distinguish "mic delivers silence" from "our converter loses
+        // the audio". Both symptoms produce 0.0 peaks downstream.
+        var diagnosticsPrinted = false
+        var rawTapCount = 0
+
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: hardwareFormat) { [weak self] buffer, time in
             guard let self, let callback = self.onAudioBuffer else { return }
+
+            // Measure the raw hardware buffer's peak before any conversion.
+            var rawPeak: Float = 0
+            if let ch = buffer.floatChannelData?[0] {
+                let n = Int(buffer.frameLength)
+                for i in 0..<n { let v = abs(ch[i]); if v > rawPeak { rawPeak = v } }
+            } else if let ch = buffer.int16ChannelData?[0] {
+                let n = Int(buffer.frameLength)
+                for i in 0..<n {
+                    let v = abs(Float(ch[i]) / 32768.0)
+                    if v > rawPeak { rawPeak = v }
+                }
+            }
+
+            if !diagnosticsPrinted {
+                diagnosticsPrinted = true
+                print("[MicrophoneCapture] Hardware tap installed — format: \(hardwareFormat); first raw buffer peak: \(String(format: "%.4f", rawPeak))")
+            }
+            rawTapCount += 1
+            if rawTapCount % 100 == 0 {
+                print("[MicrophoneCapture] Raw hardware peak after \(rawTapCount) taps: \(String(format: "%.4f", rawPeak))")
+            }
 
             guard let convertedBuffer = AVAudioPCMBuffer(
                 pcmFormat: targetFormat,
