@@ -1,9 +1,11 @@
 import SwiftUI
 import KeyboardShortcuts
 import AppKit
-import CoreAudio
 
 /// App-wide settings view presented as a tabbed window.
+///
+/// Styled to match macOS System Settings: each toggle is followed by a
+/// short caption describing what it does, and sections are clearly grouped.
 struct SettingsView: View {
 
     @ObservedObject var audioManager: AudioSessionManager
@@ -24,7 +26,7 @@ struct SettingsView: View {
 
     @State private var showDeleteConfirmation: Bool = false
 
-    let supportedLanguages: [String: String] = [
+    private let supportedLanguages: [String: String] = [
         "auto": "Auto-detect",
         "en": "English",
         "de": "German",
@@ -49,7 +51,7 @@ struct SettingsView: View {
             shortcutsTab
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
         }
-        .frame(width: 500, height: 420)
+        .frame(width: 540, height: 460)
     }
 
     // MARK: - General Tab
@@ -64,7 +66,11 @@ struct SettingsView: View {
                     }
                 }
 
-                Toggle("Capture system audio", isOn: $captureSystemAudio)
+                toggleWithCaption(
+                    "Capture system audio",
+                    isOn: $captureSystemAudio,
+                    caption: "Record remote participants via ScreenCaptureKit. Requires Screen Recording permission."
+                )
             }
 
             Section("Transcription") {
@@ -74,44 +80,84 @@ struct SettingsView: View {
                     }
                 }
                 Text("Powered by Apple Speech — on-device recognition with no model downloads required.")
-                    .font(.caption).foregroundColor(.secondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Interface") {
-                Toggle("Show overlay when recording starts", isOn: $showOverlay)
-                Toggle("Overlay always on top", isOn: $alwaysOnTop)
+            Section("Overlay") {
+                toggleWithCaption(
+                    "Show overlay when recording starts",
+                    isOn: $showOverlay,
+                    caption: "Display a floating window with the live transcript during recording."
+                )
+                toggleWithCaption(
+                    "Keep overlay on top",
+                    isOn: $alwaysOnTop,
+                    caption: "Overlay stays above all other windows so you can see it during video calls."
+                )
             }
         }
+        .formStyle(.grouped)
     }
 
     // MARK: - Intelligence Tab
 
     private var intelligenceTab: some View {
         Form {
-            Section("Apple Intelligence") {
-                HStack {
+            Section {
+                HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Available on this Mac")
+                        .foregroundStyle(.green)
+                    Text("Apple Intelligence is available on this Mac")
+                        .font(.callout)
                 }
-
-                Toggle("Auto-summarize after recording", isOn: $autoSummarize)
-                Toggle("Auto-extract action items", isOn: $autoExtractActions)
-
-                Text("Summaries, action items, and smart search are powered by Apple Intelligence and run entirely on-device.")
-                    .font(.caption).foregroundColor(.secondary)
+            } header: {
+                Text("Apple Intelligence")
+            } footer: {
+                Text("Summaries, action items, and smart search run entirely on-device. No audio or text ever leaves your Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Transcript Analysis") {
-                Toggle("Auto-analyze transcripts", isOn: $autoAnalyze)
-                Toggle("Extract entities (people, places, orgs)", isOn: $extractEntities)
-                Toggle("Detect language", isOn: $detectLanguage)
-                Toggle("Analyze sentiment", isOn: $analyzeSentiment)
+            Section("Automation") {
+                toggleWithCaption(
+                    "Auto-summarize after recording",
+                    isOn: $autoSummarize,
+                    caption: "Generate a meeting summary automatically when you stop recording."
+                )
+                toggleWithCaption(
+                    "Auto-extract action items",
+                    isOn: $autoExtractActions,
+                    caption: "Pull out commitments and follow-ups as part of the summary."
+                )
+            }
 
-                Text("Analysis uses the NaturalLanguage framework — fast, local, and private.")
-                    .font(.caption).foregroundColor(.secondary)
+            Section {
+                toggleWithCaption(
+                    "Auto-analyze transcripts",
+                    isOn: $autoAnalyze,
+                    caption: "Run on-device analysis when a recording ends. Fast and free — uses the NaturalLanguage framework."
+                )
+                toggleWithCaption(
+                    "Extract entities",
+                    isOn: $extractEntities,
+                    caption: "Identify people, organisations, and places mentioned in the meeting."
+                )
+                toggleWithCaption(
+                    "Detect language",
+                    isOn: $detectLanguage,
+                    caption: "Determine the primary and secondary languages spoken."
+                )
+                toggleWithCaption(
+                    "Analyze sentiment",
+                    isOn: $analyzeSentiment,
+                    caption: "Score overall and per-speaker sentiment from -1.0 to +1.0."
+                )
+            } header: {
+                Text("Transcript Analysis")
             }
         }
+        .formStyle(.grouped)
     }
 
     // MARK: - Storage Tab
@@ -119,14 +165,19 @@ struct SettingsView: View {
     private var storageTab: some View {
         Form {
             Section("Storage") {
-                Toggle("Retain raw audio recordings", isOn: $retainAudio)
+                toggleWithCaption(
+                    "Retain raw audio recordings",
+                    isOn: $retainAudio,
+                    caption: "Keep the original audio file alongside the transcript. Disabled by default to save disk space."
+                )
 
                 LabeledContent("Location") {
                     HStack {
                         Text(storageLocation.isEmpty ? "Default" : storageLocation)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Button("Change...") {
+                            .foregroundStyle(.secondary)
+                        Button("Change…") {
                             chooseStorageLocation()
                         }
                     }
@@ -134,11 +185,16 @@ struct SettingsView: View {
             }
 
             Section("Data") {
-                Button("Delete All Data...", role: .destructive) {
+                Button(role: .destructive) {
                     showDeleteConfirmation = true
+                } label: {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Delete All Transcripts…")
+                    }
                 }
                 .confirmationDialog(
-                    "Are you sure you want to delete all transcription data? This action cannot be undone.",
+                    "Delete all transcripts?",
                     isPresented: $showDeleteConfirmation,
                     titleVisibility: .visible
                 ) {
@@ -146,27 +202,49 @@ struct SettingsView: View {
                         deleteAllData()
                     }
                     Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This permanently removes every session, segment, summary, and action item. This action cannot be undone.")
                 }
+
+                Text("Scribe stores data at ~/Library/Application Support/Scribe/.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+        .formStyle(.grouped)
     }
 
     // MARK: - Shortcuts Tab
 
     private var shortcutsTab: some View {
         Form {
-            Section("Keyboard Shortcuts") {
-                Text("Configure global keyboard shortcut for Start/Stop Recording")
-                    .foregroundColor(.secondary)
-                // KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
+            Section("Global Shortcuts") {
+                KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
+                Text("Press this shortcut from any app to start or stop recording without opening Scribe.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: - Components
+
+    /// A toggle styled like System Settings: leading title, trailing switch,
+    /// and a muted caption below explaining what the setting does.
+    @ViewBuilder
+    private func toggleWithCaption(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(title, isOn: isOn)
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     // MARK: - Private Helpers
 
-    /// Returns language keys sorted so "auto" comes first, then alphabetical
-    /// by display name.
     private var sortedLanguageKeys: [String] {
         var keys = Array(supportedLanguages.keys)
         keys.sort { lhs, rhs in
@@ -177,7 +255,6 @@ struct SettingsView: View {
         return keys
     }
 
-    /// Presents an NSOpenPanel for the user to choose a storage directory.
     private func chooseStorageLocation() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -190,7 +267,6 @@ struct SettingsView: View {
         storageLocation = url.path
     }
 
-    /// Deletes all transcription data from the store.
     private func deleteAllData() {
         let store = TranscriptStore()
         try? store.deleteAllData()

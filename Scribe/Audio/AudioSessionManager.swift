@@ -65,9 +65,12 @@ final class AudioSessionManager: ObservableObject {
     /// - Parameters:
     ///   - micDeviceID: The CoreAudio device ID for the microphone. `nil` uses the system default.
     ///   - captureSystemAudio: Whether to capture system / desktop audio alongside the mic.
-    func startRecording(micDeviceID: AudioDeviceID? = nil, captureSystemAudio: Bool = true) async throws {
+    ///     Pass `nil` to use the value of ``shouldCaptureSystemAudio`` (defaults to `true`),
+    ///     allowing callers to toggle behavior via the property before starting.
+    func startRecording(micDeviceID: AudioDeviceID? = nil, captureSystemAudio: Bool? = nil) async throws {
         guard !isRecording else { return }
 
+        let captureSystemAudio = captureSystemAudio ?? shouldCaptureSystemAudio
         shouldCaptureSystemAudio = captureSystemAudio
 
         // Configure microphone capture.

@@ -20,19 +20,19 @@ struct TranscriptListView: View {
                 }
             }
             .searchable(text: $searchText)
-            .onChange(of: searchText) { newValue in
+            .onChange(of: searchText) { _, newValue in
                 viewModel.search(query: newValue)
             }
             .navigationTitle("Transcripts")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    EditButton()
-                }
-            }
         } detail: {
             if let sessionID = selectedSessionID,
                let session = viewModel.filteredSessions.first(where: { $0.id == sessionID }) {
+                // Bind view identity to session.id so SwiftUI creates a fresh
+                // TranscriptDetailViewModel (which is a @StateObject) when the
+                // user picks a different session — otherwise the first session
+                // viewed would be shown for every subsequent selection.
                 TranscriptDetailView(session: session)
+                    .id(session.id)
             } else {
                 Text("Select a transcript")
                     .foregroundColor(.secondary)

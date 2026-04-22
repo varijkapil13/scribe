@@ -23,7 +23,12 @@ enum MicrophoneCaptureError: LocalizedError {
 // MARK: - MicrophoneCapture
 
 /// Captures microphone input using AVAudioEngine, resampling to 16 kHz mono Float32.
-final class MicrophoneCapture {
+///
+/// Declared `@unchecked Sendable` so it can be held by a main-actor
+/// ``AudioSessionManager`` and still have its tap callbacks run on
+/// AVAudioEngine's internal rendering thread without triggering Swift 6
+/// sending-risks-data-race diagnostics.
+final class MicrophoneCapture: @unchecked Sendable {
 
     // MARK: - Properties
 

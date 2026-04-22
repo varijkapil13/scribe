@@ -64,7 +64,7 @@ struct ExportSheetView: View {
         }
         .padding()
         .frame(width: 600, height: 500)
-        .onChange(of: selectedFormat) { _ in
+        .onChange(of: selectedFormat) {
             updatePreview()
         }
         .onAppear {

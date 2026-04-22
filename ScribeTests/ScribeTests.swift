@@ -133,17 +133,7 @@ final class ScribeTests: XCTestCase {
         XCTAssertTrue(emitted)
     }
 
-    // MARK: - WhisperModel Tests
-
-    func testWhisperModelProperties() {
-        let medium = WhisperModel.medium
-        XCTAssertEqual(medium.fileName, "ggml-medium.bin")
-        XCTAssertTrue(medium.displayName.contains("Medium"))
-
-        let large = WhisperModel.largev3Turbo
-        XCTAssertEqual(large.fileName, "ggml-large-v3-turbo.bin")
-        XCTAssertTrue(large.displayName.contains("Large"))
-    }
+    // MARK: - ExportFormat Tests
 
     func testExportFormatFileExtensions() {
         XCTAssertEqual(ExportFormat.markdown.fileExtension, "md")

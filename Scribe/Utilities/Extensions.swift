@@ -88,7 +88,9 @@ extension Date {
         Self.iso8601Formatter.string(from: self)
     }
 
-    private static let iso8601Formatter: ISO8601DateFormatter = {
+    // `ISO8601DateFormatter` is documented as thread-safe for reads after its
+    // options are configured, so sharing a single instance is safe.
+    nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter

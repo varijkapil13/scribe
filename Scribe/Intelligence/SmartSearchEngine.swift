@@ -284,7 +284,8 @@ struct SmartSearchEngine {
     ///
     /// Each segment is formatted as `[HH:MM:SS] Speaker: text`. When the
     /// transcript exceeds the character budget the middle portion is truncated
-    /// and replaced with a note indicating omitted content.
+    /// on segment boundaries and replaced with a note indicating how many
+    /// segments were omitted.
     ///
     /// - Parameter segments: The segments to format.
     /// - Returns: A formatted transcript string suitable for inclusion in a prompt.
@@ -302,12 +303,32 @@ struct SmartSearchEngine {
         }
 
         // Keep the first and last portions so the model sees the opening and
-        // closing of the meeting while staying within budget.
+        // closing of the meeting while staying within budget. Truncate on
+        // segment boundaries so the omission count is accurate.
         let halfBudget = maxCharacters / 2
-        let prefix = String(fullText.prefix(halfBudget))
-        let suffix = String(fullText.suffix(halfBudget))
 
-        let omittedSegments = max(0, segments.count - formatted.count)
+        var prefixLines: [String] = []
+        var prefixLength = 0
+        for line in formatted {
+            let added = line.count + (prefixLines.isEmpty ? 0 : 1)
+            if prefixLength + added > halfBudget { break }
+            prefixLines.append(line)
+            prefixLength += added
+        }
+
+        var suffixLines: [String] = []
+        var suffixLength = 0
+        for line in formatted.reversed() {
+            let added = line.count + (suffixLines.isEmpty ? 0 : 1)
+            if suffixLength + added > halfBudget { break }
+            suffixLines.insert(line, at: 0)
+            suffixLength += added
+        }
+
+        let omittedSegments = max(0, segments.count - prefixLines.count - suffixLines.count)
+        let prefix = prefixLines.joined(separator: "\n")
+        let suffix = suffixLines.joined(separator: "\n")
+
         return """
         \(prefix)
 
@@ -325,8 +346,17 @@ struct SmartSearchEngine {
     ///
     /// - Parameter prompt: The prompt string to send to the model.
     /// - Returns: The generated response text.
-    /// - Throws: ``IntelligenceError/generationFailed(_:)`` if the model fails.
+    /// - Throws: ``IntelligenceError/notAvailable(reason:)`` if Apple
+    ///   Intelligence is not available on this device, or
+    ///   ``IntelligenceError/generationFailed(_:)`` if the model fails.
     private static func generateResponse(prompt: String) async throws -> String {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            break
+        case .unavailable(let reason):
+            throw IntelligenceError.notAvailable(reason: String(describing: reason))
+        }
+
         let session = LanguageModelSession()
         do {
             let response = try await session.respond(to: prompt)

@@ -51,7 +51,9 @@ struct ExportManager {
     }
 
     /// Presents an NSSavePanel so the user can choose where to save the exported
-    /// content, then writes the file.
+    /// content, then writes the file. Must be called on the main actor because
+    /// NSSavePanel is main-actor-isolated.
+    @MainActor
     static func saveToFile(content: String, defaultName: String, fileExtension: String) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(defaultName).\(fileExtension)"

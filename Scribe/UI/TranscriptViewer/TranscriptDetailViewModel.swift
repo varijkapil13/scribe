@@ -2,6 +2,10 @@ import Foundation
 import Combine
 
 /// ViewModel that loads and manages data for a single transcript session.
+///
+/// `@MainActor` matches the rest of the UI layer and allows published property
+/// updates to happen without explicit actor hops from async contexts.
+@MainActor
 final class TranscriptDetailViewModel: ObservableObject {
 
     // MARK: - Published Properties
@@ -73,9 +77,11 @@ final class TranscriptDetailViewModel: ObservableObject {
 
     // MARK: - Intelligence Methods
 
-    /// Loads a previously generated summary from the store.
+    /// Loads a previously generated summary from the store and hydrates the
+    /// completion state of its action items.
     func loadSummary() {
         meetingSummary = try? store.fetchSummary(sessionId: session.id)
+        completedActionItems = (try? store.fetchCompletedActionItemIds(sessionId: session.id)) ?? []
     }
 
     /// Generates an AI-powered meeting summary using on-device Apple Intelligence.
@@ -106,13 +112,16 @@ final class TranscriptDetailViewModel: ObservableObject {
     /// on the transcript segments.
     func runAnalysis() {
         isAnalyzing = true
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let analysis = TranscriptAnalyzer.analyzeTranscript(segments: segments)
-            try? store.saveEntities(analysis.entities, sessionId: session.id)
-            DispatchQueue.main.async {
-                self.transcriptAnalysis = analysis
-                self.isAnalyzing = false
-            }
+        let capturedSegments = segments
+        let sessionId = session.id
+        Task {
+            let analysis = await Task.detached(priority: .userInitiated) {
+                TranscriptAnalyzer.analyzeTranscript(segments: capturedSegments)
+            }.value
+
+            try? store.saveEntities(analysis.entities, sessionId: sessionId)
+            transcriptAnalysis = analysis
+            isAnalyzing = false
         }
     }
 

@@ -275,7 +275,7 @@ struct MeetingSummarizer {
     ///
     /// Each segment is formatted as `[timestamp] Speaker: text`. When the
     /// transcript exceeds the length threshold, the middle portion is truncated
-    /// and replaced with a note indicating omitted content.
+    /// and replaced with a note indicating how many segments were omitted.
     ///
     /// - Parameter segments: The segments to format.
     /// - Returns: A formatted transcript string suitable for inclusion in a prompt.
@@ -295,12 +295,32 @@ struct MeetingSummarizer {
         }
 
         // Keep the first and last portions so the model sees the opening and
-        // closing of the meeting while staying within budget.
+        // closing of the meeting while staying within budget. Truncate on
+        // segment boundaries so the omission count is accurate.
         let halfBudget = maxCharacters / 2
-        let prefix = String(fullText.prefix(halfBudget))
-        let suffix = String(fullText.suffix(halfBudget))
 
-        let omittedCount = segments.count - (formatted.count)
+        var prefixLines: [String] = []
+        var prefixLength = 0
+        for line in formatted {
+            let added = line.count + (prefixLines.isEmpty ? 0 : 1)  // +1 for newline
+            if prefixLength + added > halfBudget { break }
+            prefixLines.append(line)
+            prefixLength += added
+        }
+
+        var suffixLines: [String] = []
+        var suffixLength = 0
+        for line in formatted.reversed() {
+            let added = line.count + (suffixLines.isEmpty ? 0 : 1)
+            if suffixLength + added > halfBudget { break }
+            suffixLines.insert(line, at: 0)
+            suffixLength += added
+        }
+
+        let omittedCount = max(0, segments.count - prefixLines.count - suffixLines.count)
+        let prefix = prefixLines.joined(separator: "\n")
+        let suffix = suffixLines.joined(separator: "\n")
+
         return """
         \(prefix)
 
@@ -318,14 +338,28 @@ struct MeetingSummarizer {
     ///
     /// - Parameter prompt: The prompt string to send to the model.
     /// - Returns: The generated response text.
-    /// - Throws: ``IntelligenceError/generationFailed(_:)`` if the model fails.
+    /// - Throws: ``IntelligenceError/notAvailable(reason:)`` if Apple
+    ///   Intelligence is not available on this device, or
+    ///   ``IntelligenceError/generationFailed(_:)`` if the model fails.
     private static func generateResponse(prompt: String) async throws -> String {
+        try checkAvailability()
         let session = LanguageModelSession()
         do {
             let response = try await session.respond(to: prompt)
             return response.content
         } catch {
             throw IntelligenceError.generationFailed(error.localizedDescription)
+        }
+    }
+
+    /// Verifies that the system language model is available, throwing
+    /// ``IntelligenceError/notAvailable(reason:)`` otherwise.
+    private static func checkAvailability() throws {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return
+        case .unavailable(let reason):
+            throw IntelligenceError.notAvailable(reason: String(describing: reason))
         }
     }
 
@@ -455,6 +489,12 @@ private struct RawActionItem: Decodable {
 /// Errors that can occur when using Apple Intelligence features.
 enum IntelligenceError: LocalizedError {
 
+    /// Apple Intelligence / Foundation Models is not available on this device.
+    ///
+    /// This can happen when the Mac is not eligible, Apple Intelligence is
+    /// disabled in System Settings, or the model has not yet finished
+    /// downloading.
+    case notAvailable(reason: String)
     /// The language model failed to generate a response.
     case generationFailed(String)
     /// The model's response could not be parsed into the expected format.
@@ -462,6 +502,8 @@ enum IntelligenceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .notAvailable(let reason):
+            return "Apple Intelligence is not available: \(reason)"
         case .generationFailed(let detail):
             return "Generation failed: \(detail)"
         case .parsingFailed:

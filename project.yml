@@ -13,6 +13,10 @@ targets:
       - path: Scribe/
     resources:
       - path: Scribe/Resources/
+    dependencies:
+      - package: GRDB.swift
+        product: GRDB
+      - package: KeyboardShortcuts
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
@@ -23,6 +27,10 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "26.0"
         ARCHS: arm64
         EXCLUDED_ARCHS[sdk=macosx*]: x86_64
+        # Stable code signing so macOS TCC remembers granted permissions
+        # (Microphone, Speech Recognition, Screen Recording) across rebuilds.
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
     scheme:
       run:
         config: Debug

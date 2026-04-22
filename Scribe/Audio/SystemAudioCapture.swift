@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import ScreenCaptureKit
 
@@ -29,7 +30,12 @@ enum SystemAudioCaptureError: LocalizedError {
 /// Captures system / desktop audio using ScreenCaptureKit (macOS 13+).
 ///
 /// Audio is delivered through the ``onAudioBuffer`` callback as 16 kHz mono Float32 buffers.
-final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
+///
+/// Declared `@unchecked Sendable` so it can be used across actor boundaries.
+/// Callers are expected to configure the capture from a single actor and the
+/// SCStreamOutput callbacks run on a dedicated serial queue supplied at
+/// `addStreamOutput` time.
+final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unchecked Sendable {
 
     // MARK: - Properties
 
@@ -46,15 +52,11 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
 
     // MARK: - Permission
 
-    /// Checks whether the app has permission to capture screen content (which includes system audio).
+    /// Checks whether the app has permission to capture screen content (which
+    /// includes system audio). Uses CoreGraphics' TCC preflight — the same
+    /// signal ScreenCaptureKit consults — and never triggers a prompt or I/O.
     func checkPermission() async -> Bool {
-        do {
-            // Requesting shareable content implicitly checks permission.
-            _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            return true
-        } catch {
-            return false
-        }
+        CGPreflightScreenCaptureAccess()
     }
 
     // MARK: - Capture Control
@@ -77,17 +79,24 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         }
         let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
 
-        // Configure the stream for audio-only capture.
+        // Configure the stream for audio-focused capture. We can't fully
+        // disable video, but we can throttle it to near-zero cost and drop the
+        // frames with a no-op output so the framework doesn't spam
+        // "stream output NOT found" for every dropped frame.
         let config = SCStreamConfiguration()
-        // Minimum pixel dimensions are required even though we only want audio.
         config.width = 2
         config.height = 2
         config.capturesAudio = true
         config.sampleRate = Int(sampleRate)
         config.channelCount = 1
+        // Effectively 1 frame per minute — we discard them anyway.
+        config.minimumFrameInterval = CMTime(seconds: 60, preferredTimescale: 600)
 
         let captureStream = SCStream(filter: filter, configuration: config, delegate: self)
         try captureStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
+        // Register a no-op screen output so SCStream doesn't log an error for
+        // every video frame it produces internally.
+        try captureStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .utility))
         try await captureStream.startCapture()
 
         outputFormat = AVAudioFormat(
@@ -143,7 +152,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             return nil
         }
 
-        let sourceFormat = AVAudioFormat(streamDescription: streamDescription.pointee)
+        let sourceFormat = AVAudioFormat(streamDescription: streamDescription)
 
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
         guard frameCount > 0, let sourceFormat else { return nil }
@@ -181,11 +190,11 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             var consumed = false
             converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
                 if consumed {
-                    outStatus.pointee = .noDataNow
+                    outStatus.pointee = AVAudioConverterInputStatus.noDataNow
                     return nil
                 }
                 consumed = true
-                outStatus.pointee = .haveData
+                outStatus.pointee = AVAudioConverterInputStatus.haveData
                 return sourceBuffer
             }
             guard error == nil, convertedBuffer.frameLength > 0 else { return nil }

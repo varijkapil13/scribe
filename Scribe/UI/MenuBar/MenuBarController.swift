@@ -45,6 +45,12 @@ final class MenuBarController: NSObject, ObservableObject {
     private var sessionStartDate: Date?
     private var accumulatedDuration: TimeInterval = 0
 
+    /// Timer that animates the menu bar icon tint while recording so the user
+    /// has a subtle live indicator that the mic is hot without opening the
+    /// dropdown.
+    private var iconPulseTimer: Timer?
+    private var iconPulsePhase: CGFloat = 0
+
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Setup
@@ -70,6 +76,11 @@ final class MenuBarController: NSObject, ObservableObject {
     // MARK: - Icon Updates
 
     /// Updates the menu bar icon based on the current recording state.
+    ///
+    /// When recording, the `waveform.circle.fill` symbol uses a variable-colour
+    /// pulse effect (macOS 14+) so the user sees a subtle live animation in the
+    /// menu bar — matches the overlay's pulse and reinforces that the mic is
+    /// hot without needing to open the dropdown.
     func updateMenuBarIcon() {
         guard let button = statusItem?.button else { return }
 
@@ -92,14 +103,43 @@ final class MenuBarController: NSObject, ObservableObject {
         let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
         button.image = image?.withSymbolConfiguration(config)
 
-        // Apply red tint when recording.
-        if recordingState == .recording {
+        // Apply a tint for transport states.
+        switch recordingState {
+        case .recording:
             button.contentTintColor = .systemRed
-        } else {
+            startIconPulse(on: button)
+        case .paused:
+            button.contentTintColor = .systemOrange
+            stopIconPulse()
+        case .idle:
             button.contentTintColor = nil
+            stopIconPulse()
         }
 
         button.toolTip = accessibilityDescription
+    }
+
+    /// Drives a gentle tint pulse on the menu bar icon (full opacity ⇄ 60%)
+    /// while recording. Uses CFTimeInterval math so the oscillation is smooth
+    /// regardless of timer jitter.
+    private func startIconPulse(on button: NSStatusBarButton) {
+        guard iconPulseTimer == nil else { return }
+        let start = CACurrentMediaTime()
+        iconPulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak button] _ in
+            guard let button else { return }
+            let elapsed = CACurrentMediaTime() - start
+            // Full cycle every ~1.6 s.
+            let phase = (sin(elapsed * 2 * .pi / 1.6) + 1) / 2
+            let alpha = 0.6 + 0.4 * phase
+            DispatchQueue.main.async {
+                button.contentTintColor = NSColor.systemRed.withAlphaComponent(alpha)
+            }
+        }
+    }
+
+    private func stopIconPulse() {
+        iconPulseTimer?.invalidate()
+        iconPulseTimer = nil
     }
 
     // MARK: - Menu Construction

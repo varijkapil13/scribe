@@ -2,7 +2,10 @@ import Foundation
 import GRDB
 
 /// Manages the SQLite database used by Scribe, including setup and migrations.
-final class DatabaseManager {
+///
+/// Conforms to `@unchecked Sendable` because its only mutable state is the
+/// GRDB `DatabaseQueue`, which serializes access internally.
+final class DatabaseManager: @unchecked Sendable {
 
     // MARK: - Singleton
 

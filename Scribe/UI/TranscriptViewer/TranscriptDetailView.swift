@@ -18,6 +18,15 @@ struct TranscriptDetailView: View {
         case summary = "Summary"
         case actionItems = "Action Items"
         case insights = "Insights"
+
+        var systemImage: String {
+            switch self {
+            case .transcript:  return "text.alignleft"
+            case .summary:     return "sparkles"
+            case .actionItems: return "checklist"
+            case .insights:    return "chart.bar.xaxis"
+            }
+        }
     }
 
     // MARK: - Initializer
@@ -30,36 +39,59 @@ struct TranscriptDetailView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerSection.padding()
+        VStack(alignment: .leading, spacing: 0) {
+            headerSection
+                .padding(.horizontal, DesignTokens.Spacing.xl)
+                .padding(.top, DesignTokens.Spacing.xl)
+                .padding(.bottom, DesignTokens.Spacing.lg)
+
             Divider()
 
-            // Tab picker
-            Picker("", selection: $selectedTab) {
-                ForEach(DetailTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.vertical, 8)
+            tabPicker
+                .padding(.horizontal, DesignTokens.Spacing.xl)
+                .padding(.vertical, DesignTokens.Spacing.md)
 
-            // Tab content
             ScrollView {
-                switch selectedTab {
-                case .transcript:
-                    segmentsSection.padding()
-                case .summary:
-                    summarySection.padding()
-                case .actionItems:
-                    actionItemsSection.padding()
-                case .insights:
-                    insightsSection.padding()
+                Group {
+                    switch selectedTab {
+                    case .transcript:  transcriptSection
+                    case .summary:     summarySection
+                    case .actionItems: actionItemsSection
+                    case .insights:    insightsSection
+                    }
                 }
+                .padding(DesignTokens.Spacing.xl)
             }
         }
+        .frame(minWidth: 600, minHeight: 480)
         .sheet(isPresented: $showExportSheet) {
             ExportSheetView(session: session, segments: viewModel.segments)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showExportSheet = true
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .help("Export transcript to Markdown, plain text, or JSON")
+
+                Button {
+                    Task { await viewModel.generateSummary() }
+                } label: {
+                    Label("Summarize", systemImage: "sparkles")
+                }
+                .disabled(viewModel.isGeneratingSummary || viewModel.segments.isEmpty)
+                .help("Generate an AI summary with Apple Intelligence")
+
+                Button {
+                    viewModel.runAnalysis()
+                } label: {
+                    Label("Analyze", systemImage: "chart.bar.xaxis")
+                }
+                .disabled(viewModel.isAnalyzing || viewModel.segments.isEmpty)
+                .help("Extract entities, topics, and sentiment")
+            }
         }
         .onAppear {
             viewModel.loadSegments()
@@ -74,431 +106,524 @@ struct TranscriptDetailView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                if isEditing {
-                    TextField("Title", text: $editedTitle)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Tags (comma-separated)", text: $editedTags)
-                        .textFieldStyle(.roundedBorder)
-                } else {
-                    Text(session.title)
-                        .font(.title)
-                        .bold()
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+            if isEditing {
+                TextField("Title", text: $editedTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.title2, weight: .semibold))
 
-                    if !session.tags.isEmpty {
-                        HStack(spacing: 6) {
-                            ForEach(session.tags, id: \.self) { tag in
-                                Text(tag)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(.secondary.opacity(0.2))
-                                    .cornerRadius(4)
-                                    .font(.caption)
-                            }
-                        }
+                TextField("Tags (comma-separated)", text: $editedTags)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout)
+
+                HStack {
+                    Button("Cancel") {
+                        editedTitle = session.title
+                        editedTags = session.tags.joined(separator: ", ")
+                        isEditing = false
                     }
-                }
+                    .keyboardShortcut(.escape, modifiers: [])
 
-                HStack(spacing: 4) {
-                    Text(session.createdAt, style: .date)
-                    Text("\u{00b7}")
-                    Text(viewModel.formattedDuration)
-                    if let lang = session.language {
-                        Text("\u{00b7}")
-                        Text(lang.uppercased())
-                    }
-                }
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            }
+                    Spacer()
 
-            Spacer()
-
-            VStack(spacing: 8) {
-                Button(isEditing ? "Done" : "Edit") {
-                    if isEditing {
+                    Button("Save") {
                         viewModel.updateSessionTitle(editedTitle)
                         let tags = editedTags
                             .split(separator: ",")
                             .map { $0.trimmingCharacters(in: .whitespaces) }
                             .filter { !$0.isEmpty }
                         viewModel.updateSessionTags(tags)
+                        isEditing = false
                     }
-                    isEditing.toggle()
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: [.command])
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(session.title.isEmpty ? "Untitled Session" : session.title)
+                        .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    Spacer()
+
+                    Button {
+                        isEditing = true
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Rename session and edit tags")
                 }
 
-                Button("Export") {
-                    showExportSheet = true
+                HStack(spacing: DesignTokens.Spacing.md) {
+                    Label(formattedDate, systemImage: "calendar")
+                    Text("·").foregroundStyle(.tertiary)
+                    Label(viewModel.formattedDuration, systemImage: "waveform")
+                    if let lang = session.language?.uppercased(), !lang.isEmpty, lang != "AUTO" {
+                        Text("·").foregroundStyle(.tertiary)
+                        Label(lang, systemImage: "globe")
+                    }
+                    if !viewModel.segments.isEmpty {
+                        Text("·").foregroundStyle(.tertiary)
+                        Label("\(viewModel.segments.count) segments", systemImage: "text.alignleft")
+                    }
                 }
+                .font(.callout)
+                .foregroundStyle(.secondary)
 
-                Button("Summarize") {
-                    Task { await viewModel.generateSummary() }
+                if !session.tags.isEmpty {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        ForEach(session.tags, id: \.self) { tag in
+                            TagChip(text: tag, tint: .secondary)
+                        }
+                    }
                 }
-                .disabled(viewModel.isGeneratingSummary || viewModel.segments.isEmpty)
-
-                Button("Analyze") {
-                    viewModel.runAnalysis()
-                }
-                .disabled(viewModel.isAnalyzing || viewModel.segments.isEmpty)
             }
         }
     }
 
-    // MARK: - Segments
+    private var formattedDate: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(session.createdAt) {
+            return "Today at " + session.createdAt.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.isDateInYesterday(session.createdAt) {
+            return "Yesterday at " + session.createdAt.formatted(date: .omitted, time: .shortened)
+        }
+        return session.createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    // MARK: - Tab Picker
+
+    private var tabPicker: some View {
+        Picker("Tab", selection: $selectedTab) {
+            ForEach(DetailTab.allCases, id: \.self) { tab in
+                Label(tab.rawValue, systemImage: tab.systemImage).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+
+    // MARK: - Transcript
 
     @ViewBuilder
-    private var segmentsSection: some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
-            ForEach(viewModel.segments) { segment in
-                SegmentView(segment: segment)
+    private var transcriptSection: some View {
+        if viewModel.segments.isEmpty {
+            EmptyStateView(
+                systemImage: "text.alignleft",
+                title: "No transcript yet",
+                message: "This session didn't capture any speech. Start a new recording to see segments here."
+            )
+            .frame(minHeight: 280)
+        } else {
+            LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                ForEach(viewModel.segments) { segment in
+                    SegmentView(segment: segment)
+                        .padding(.vertical, DesignTokens.Spacing.xs)
+                }
             }
         }
     }
 
-    // MARK: - Summary Section
+    // MARK: - Summary
 
     @ViewBuilder
     private var summarySection: some View {
         if viewModel.isGeneratingSummary {
-            ProgressView("Generating summary...")
-                .frame(maxWidth: .infinity)
-                .padding(.top, 40)
+            VStack(spacing: DesignTokens.Spacing.md) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Generating summary with Apple Intelligence…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 280)
         } else if let summary = viewModel.meetingSummary {
-            VStack(alignment: .leading, spacing: 16) {
-                // Executive Summary
-                GroupBox("Summary") {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    Text("Executive Summary")
+                        .font(.system(.headline, weight: .semibold))
                     Text(summary.summary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
                 }
+                .accentCard(tint: .accentColor)
 
-                // Key Decisions
                 if !summary.keyDecisions.isEmpty {
-                    GroupBox("Key Decisions") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(summary.keyDecisions, id: \.self) { decision in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Text("\u{2022}")
-                                    Text(decision)
-                                }
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        Text("Key Decisions")
+                            .font(.system(.headline, weight: .semibold))
+                        ForEach(summary.keyDecisions, id: \.self) { decision in
+                            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                                    .padding(.top, 3)
+                                Text(decision)
+                                    .textSelection(.enabled)
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .accentCard(tint: .green)
                 }
 
-                // Key Topics
                 if !summary.keyTopics.isEmpty {
-                    GroupBox("Topics") {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        Text("Topics Discussed")
+                            .font(.system(.headline, weight: .semibold))
                         FlowLayoutView(items: summary.keyTopics) { topic in
-                            Text(topic)
-                                .font(.caption)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color.accentColor.opacity(0.15))
-                                .clipShape(Capsule())
+                            TagChip(text: topic, tint: .accentColor)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .accentCard(tint: .purple)
                 }
 
-                // Follow-up Questions
                 if !summary.followUpQuestions.isEmpty {
-                    GroupBox("Follow-up Questions") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(summary.followUpQuestions, id: \.self) { question in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Text("?")
-                                        .foregroundColor(.orange)
-                                        .fontWeight(.bold)
-                                    Text(question)
-                                }
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        Text("Follow-Up Questions")
+                            .font(.system(.headline, weight: .semibold))
+                        ForEach(summary.followUpQuestions, id: \.self) { question in
+                            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+                                Image(systemName: "questionmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .padding(.top, 3)
+                                Text(question)
+                                    .textSelection(.enabled)
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .accentCard(tint: .orange)
                 }
             }
         } else {
-            // Empty state
-            VStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.largeTitle)
-                    .foregroundColor(.secondary)
-                Text("No summary yet")
-                    .font(.headline)
-                Button("Generate Summary") {
-                    Task { await viewModel.generateSummary() }
-                }
-                .disabled(viewModel.segments.isEmpty)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 40)
+            EmptyStateView(
+                systemImage: "sparkles",
+                title: "No summary yet",
+                message: "Generate an AI summary to see the executive overview, key decisions, and follow-up questions.",
+                actionTitle: viewModel.segments.isEmpty ? nil : "Generate Summary",
+                action: viewModel.segments.isEmpty ? nil : { Task { await viewModel.generateSummary() } }
+            )
+            .frame(minHeight: 280)
         }
     }
 
-    // MARK: - Action Items Section
+    // MARK: - Action Items
 
     @ViewBuilder
     private var actionItemsSection: some View {
         if let summary = viewModel.meetingSummary, !summary.actionItems.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                Text("\(summary.actionItems.count) action item\(summary.actionItems.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, DesignTokens.Spacing.xs)
+
                 ForEach(summary.actionItems) { item in
-                    HStack(alignment: .top, spacing: 12) {
-                        // Checkbox (toggle completion)
-                        Image(systemName: viewModel.completedActionItems.contains(item.id)
-                              ? "checkmark.circle.fill" : "circle")
-                            .foregroundColor(viewModel.completedActionItems.contains(item.id)
-                                             ? .green : .secondary)
-                            .onTapGesture { viewModel.toggleActionItem(item.id) }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.description)
-                                .strikethrough(viewModel.completedActionItems.contains(item.id))
-
-                            HStack(spacing: 8) {
-                                if let assignee = item.assignee {
-                                    Label(assignee, systemImage: "person")
-                                        .font(.caption)
-                                }
-                                if let deadline = item.deadline {
-                                    Label(deadline, systemImage: "calendar")
-                                        .font(.caption)
-                                }
-                                if let priority = item.priority {
-                                    Text(priority.rawValue)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(priorityColor(priority).opacity(0.2))
-                                        .cornerRadius(4)
-                                }
-                            }
-                            .foregroundColor(.secondary)
-                        }
-                    }
-                    Divider()
+                    ActionItemRow(
+                        item: item,
+                        isCompleted: viewModel.completedActionItems.contains(item.id),
+                        onToggle: { viewModel.toggleActionItem(item.id) }
+                    )
                 }
             }
         } else {
-            // Empty state
-            VStack(spacing: 12) {
-                Image(systemName: "checklist")
-                    .font(.largeTitle)
-                    .foregroundColor(.secondary)
-                Text("No action items yet")
-                    .font(.headline)
-                Text("Generate a summary to extract action items")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Button("Generate Summary") {
-                    Task { await viewModel.generateSummary() }
-                }
-                .disabled(viewModel.segments.isEmpty)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 40)
+            EmptyStateView(
+                systemImage: "checklist",
+                title: "No action items yet",
+                message: "Action items are extracted when you generate a summary. They'll appear here with assignees, deadlines, and priority.",
+                actionTitle: viewModel.segments.isEmpty ? nil : "Generate Summary",
+                action: viewModel.segments.isEmpty ? nil : { Task { await viewModel.generateSummary() } }
+            )
+            .frame(minHeight: 280)
         }
     }
 
-    // MARK: - Insights Section
+    // MARK: - Insights
 
     @ViewBuilder
     private var insightsSection: some View {
         if viewModel.isAnalyzing {
-            ProgressView("Analyzing transcript...")
-                .frame(maxWidth: .infinity)
-                .padding(.top, 40)
+            VStack(spacing: DesignTokens.Spacing.md) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Analyzing transcript…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 280)
         } else if let analysis = viewModel.transcriptAnalysis {
-            VStack(alignment: .leading, spacing: 16) {
-                // Language
-                GroupBox("Language") {
-                    HStack {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+                InsightCard(
+                    tint: .blue,
+                    icon: "globe",
+                    title: "Language"
+                ) {
+                    HStack(alignment: .firstTextBaseline) {
                         Text(analysis.language.primaryLanguageName)
-                            .font(.headline)
-                        Text("(\(Int(analysis.language.confidence * 100))% confidence)")
-                            .foregroundColor(.secondary)
+                            .font(.system(.title3, weight: .semibold))
+                        Text("\(Int(analysis.language.confidence * 100))% confidence")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                // Sentiment
-                GroupBox("Sentiment") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(analysis.sentiment.label)
-                                .font(.headline)
-                                .foregroundColor(sentimentColor(analysis.sentiment.overallScore))
-                            Text(String(format: "%.2f", analysis.sentiment.overallScore))
-                                .foregroundColor(.secondary)
-                        }
-                        if !analysis.sentiment.perSpeaker.isEmpty {
-                            Divider()
-                            ForEach(Array(analysis.sentiment.perSpeaker.keys.sorted()), id: \.self) { speaker in
-                                HStack {
-                                    Text(speaker.capitalized)
-                                    Spacer()
-                                    Text(String(format: "%.2f", analysis.sentiment.perSpeaker[speaker]!))
-                                        .foregroundColor(.secondary)
-                                }
+                InsightCard(
+                    tint: sentimentTint(analysis.sentiment.overallScore),
+                    icon: "heart.text.square",
+                    title: "Sentiment"
+                ) {
+                    HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+                        Text(analysis.sentiment.label)
+                            .font(.system(.title3, weight: .semibold))
+                            .foregroundStyle(sentimentTint(analysis.sentiment.overallScore))
+                        Text(String(format: "%.2f", analysis.sentiment.overallScore))
+                            .font(.system(.callout, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    if !analysis.sentiment.perSpeaker.isEmpty {
+                        Divider().padding(.vertical, DesignTokens.Spacing.xs)
+                        ForEach(Array(analysis.sentiment.perSpeaker.keys.sorted()), id: \.self) { speaker in
+                            HStack {
+                                SpeakerChip(speaker: speaker)
+                                Spacer()
+                                Text(String(format: "%.2f", analysis.sentiment.perSpeaker[speaker] ?? 0))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                // Entities
                 if !analysis.entities.isEmpty {
-                    GroupBox("People & Organizations") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(ExtractedEntity.EntityType.allCases) { type in
-                                let filtered = analysis.entities.filter { $0.type == type }
-                                if !filtered.isEmpty {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(type.rawValue)
+                    InsightCard(
+                        tint: .indigo,
+                        icon: "person.2",
+                        title: "People, Organizations & Places"
+                    ) {
+                        ForEach(ExtractedEntity.EntityType.allCases) { type in
+                            let filtered = analysis.entities.filter { $0.type == type }
+                            if !filtered.isEmpty {
+                                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                                    Text(type.rawValue.uppercased())
+                                        .font(.system(.caption2, weight: .semibold))
+                                        .tracking(0.5)
+                                        .foregroundStyle(.tertiary)
+                                    FlowLayoutView(items: filtered) { entity in
+                                        Label(entity.text, systemImage: type.systemImage)
                                             .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .textCase(.uppercase)
-                                        ForEach(filtered) { entity in
-                                            Label(entity.text, systemImage: entity.type.systemImage)
-                                        }
+                                            .padding(.horizontal, DesignTokens.Spacing.sm)
+                                            .padding(.vertical, DesignTokens.Spacing.xs)
+                                            .background(
+                                                Capsule().fill(Color.secondary.opacity(0.12))
+                                            )
                                     }
                                 }
+                                .padding(.vertical, DesignTokens.Spacing.xs)
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
-                // Topics
                 if !analysis.topics.topics.isEmpty {
-                    GroupBox("Key Topics") {
+                    InsightCard(tint: .purple, icon: "tag", title: "Key Topics") {
                         FlowLayoutView(items: analysis.topics.topics) { topic in
-                            Text(topic)
-                                .font(.caption)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.15))
-                                .clipShape(Capsule())
+                            TagChip(text: topic, tint: .purple)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
-                // Key Phrases
                 if !analysis.keyPhrases.isEmpty {
-                    GroupBox("Key Phrases") {
-                        VStack(alignment: .leading, spacing: 4) {
+                    InsightCard(tint: .pink, icon: "quote.bubble", title: "Key Phrases") {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                             ForEach(analysis.keyPhrases, id: \.self) { phrase in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Text("\u{2022}")
+                                HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+                                    Image(systemName: "circle.fill")
+                                        .font(.system(size: 4))
+                                        .foregroundStyle(.tertiary)
+                                        .padding(.top, 7)
                                     Text(phrase)
+                                        .textSelection(.enabled)
                                 }
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
         } else {
-            // Empty state
-            VStack(spacing: 12) {
-                Image(systemName: "text.magnifyingglass")
-                    .font(.largeTitle)
-                    .foregroundColor(.secondary)
-                Text("No analysis yet")
-                    .font(.headline)
-                Button("Analyze Transcript") {
-                    viewModel.runAnalysis()
-                }
-                .disabled(viewModel.segments.isEmpty)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 40)
+            EmptyStateView(
+                systemImage: "chart.bar.xaxis",
+                title: "No analysis yet",
+                message: "Run analysis to extract entities, detect language, and score sentiment across speakers.",
+                actionTitle: viewModel.segments.isEmpty ? nil : "Analyze Transcript",
+                action: viewModel.segments.isEmpty ? nil : { viewModel.runAnalysis() }
+            )
+            .frame(minHeight: 280)
         }
     }
 
     // MARK: - Helpers
 
-    /// Returns a color representing the priority level.
-    private func priorityColor(_ priority: ActionItem.Priority) -> Color {
-        switch priority {
-        case .high:   return .red
-        case .medium: return .orange
-        case .low:    return .blue
-        }
+    private func sentimentTint(_ score: Double) -> Color {
+        if score > 0.1 { return .green }
+        if score < -0.1 { return .red }
+        return .secondary
     }
+}
 
-    /// Returns a color representing the sentiment score.
-    private func sentimentColor(_ score: Double) -> Color {
-        if score > 0.1 {
-            return .green
-        } else if score < -0.1 {
-            return .red
-        } else {
-            return .primary
+// MARK: - ActionItemRow
+
+private struct ActionItemRow: View {
+    let item: ActionItem
+    let isCompleted: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
+            Button(action: onToggle) {
+                Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isCompleted ? Color.green : Color.secondary)
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                Text(item.description)
+                    .font(.body)
+                    .strikethrough(isCompleted, color: .secondary)
+                    .foregroundStyle(isCompleted ? .secondary : .primary)
+                    .textSelection(.enabled)
+
+                HStack(spacing: DesignTokens.Spacing.md) {
+                    if let assignee = item.assignee, !assignee.isEmpty {
+                        Label(assignee, systemImage: "person.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let deadline = item.deadline, !deadline.isEmpty {
+                        Label(deadline, systemImage: "calendar")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if let priority = item.priority {
+                        PriorityBadge(priority: priority)
+                    }
+                }
+            }
         }
+        .padding(DesignTokens.Spacing.md)
+        .background(DesignTokens.Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+    }
+}
+
+// MARK: - InsightCard
+
+private struct InsightCard<Content: View>: View {
+    let tint: Color
+    let icon: String
+    let title: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(tint)
+                .frame(width: 3)
+                .opacity(0.9)
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: icon)
+                        .foregroundStyle(tint)
+                    Text(title)
+                        .font(.system(.headline, weight: .semibold))
+                    Spacer()
+                }
+                content()
+            }
+            .padding(DesignTokens.Spacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(DesignTokens.Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
     }
 }
 
 // MARK: - FlowLayoutView
 
-/// A simple wrapping layout that arranges items horizontally and wraps to the
-/// next line when the available width is exceeded.
-private struct FlowLayoutView<Item: Hashable, Content: View>: View {
+/// A wrapping horizontal layout built on SwiftUI's `Layout` protocol.
+/// Replaces the older `GeometryReader` + `DispatchQueue.main.async` approach,
+/// which AppKit flags with `_NSDetectedLayoutRecursion` because it mutates
+/// state while a layout pass is already in flight.
+struct FlowLayoutView<Item: Hashable, Content: View>: View {
     let items: [Item]
     let content: (Item) -> Content
 
-    @State private var totalHeight: CGFloat = .zero
-
     var body: some View {
-        GeometryReader { geometry in
-            self.generateContent(in: geometry)
-        }
-        .frame(height: totalHeight)
-    }
-
-    private func generateContent(in geometry: GeometryProxy) -> some View {
-        var width = CGFloat.zero
-        var height = CGFloat.zero
-
-        return ZStack(alignment: .topLeading) {
+        WrappingHStack(spacing: 6) {
             ForEach(items, id: \.self) { item in
                 content(item)
-                    .padding(.trailing, 4)
-                    .padding(.bottom, 4)
-                    .alignmentGuide(.leading) { dimension in
-                        if abs(width - dimension.width) > geometry.size.width {
-                            width = 0
-                            height -= dimension.height
-                        }
-                        let result = width
-                        if item == items.last {
-                            width = 0
-                        } else {
-                            width -= dimension.width
-                        }
-                        return result
-                    }
-                    .alignmentGuide(.top) { _ in
-                        let result = height
-                        if item == items.last {
-                            height = 0
-                        }
-                        return result
-                    }
             }
         }
-        .background(viewHeightReader($totalHeight))
+    }
+}
+
+/// Horizontal layout that wraps its children onto new lines when they exceed
+/// the proposed width. Pure `Layout` conformance — no GeometryReader, no
+/// mutable state, no recursion warnings.
+private struct WrappingHStack: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var widestRow: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth > 0 && rowWidth + size.width + spacing > maxWidth {
+                widestRow = max(widestRow, rowWidth)
+                totalHeight += rowHeight + spacing
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                if rowWidth > 0 { rowWidth += spacing }
+                rowWidth += size.width
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
+        widestRow = max(widestRow, rowWidth)
+        totalHeight += rowHeight
+
+        let finalWidth = maxWidth == .infinity ? widestRow : maxWidth
+        return CGSize(width: finalWidth, height: totalHeight)
     }
 
-    private func viewHeightReader(_ binding: Binding<CGFloat>) -> some View {
-        GeometryReader { geometry -> Color in
-            let rect = geometry.frame(in: .local)
-            DispatchQueue.main.async {
-                binding.wrappedValue = rect.size.height
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
             }
-            return .clear
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

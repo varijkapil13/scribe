@@ -8,7 +8,7 @@ import SwiftUI
 struct ScribeApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject var appState = AppState()
+    @StateObject var appState = AppState.shared
 
     // MARK: - Scene
 
@@ -18,10 +18,16 @@ struct ScribeApp: App {
             SettingsView(audioManager: appState.audioManager)
         }
 
-        // Transcript viewer window
+        // Transcript viewer window — opened via scribe://transcripts URL scheme
+        // from the menu bar's "View Transcripts" action.
         Window("Transcripts", id: "transcripts") {
             TranscriptListView()
                 .environmentObject(appState)
+                .handlesExternalEvents(
+                    preferring: ["transcripts"],
+                    allowing: ["transcripts"]
+                )
         }
+        .handlesExternalEvents(matching: ["transcripts"])
     }
 }

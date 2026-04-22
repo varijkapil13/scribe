@@ -310,6 +310,24 @@ final class TranscriptStore {
         }
     }
 
+    /// Returns the identifiers of action items marked as completed for a session.
+    ///
+    /// The detail view uses this to hydrate its local completion-state set so
+    /// checkmarks persist across reopens.
+    func fetchCompletedActionItemIds(sessionId: String) throws -> Set<UUID> {
+        try db.read { database in
+            let rows = try Row.fetchAll(
+                database,
+                sql: "SELECT id FROM action_items WHERE session_id = ? AND is_completed = 1",
+                arguments: [sessionId]
+            )
+            return Set(rows.compactMap { row -> UUID? in
+                guard let idStr: String = row["id"] else { return nil }
+                return UUID(uuidString: idStr)
+            })
+        }
+    }
+
     // MARK: - Extracted Entities
 
     /// Saves extracted entities for a session (replaces existing).

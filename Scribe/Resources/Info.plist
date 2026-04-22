@@ -20,6 +20,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.varij.scribe</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>scribe</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -32,6 +43,8 @@
 	<string>Scribe needs microphone access to transcribe your voice during meetings.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Scribe needs screen recording permission to capture system audio from meeting applications. Only audio is captured — no video or screen content is recorded.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Scribe uses Apple's on-device speech recognition to transcribe audio. No audio ever leaves your Mac.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

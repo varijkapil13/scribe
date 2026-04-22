@@ -1,4 +1,5 @@
-# Xcode
+# Xcode — the .xcodeproj is regenerated from project.yml via xcodegen
+Scribe.xcodeproj/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 DerivedData/

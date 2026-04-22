@@ -1,56 +1,48 @@
 import SwiftUI
 
-/// View for rendering a single transcript segment with timestamp,
-/// speaker label, and text.
+/// Renders a single transcript segment as a chat-style row: speaker chip + timestamp
+/// on one line, the transcribed text below with a tinted vertical accent bar on the
+/// leading edge. The accent colour matches the speaker (`You` vs `Remote`).
 struct SegmentView: View {
 
     let segment: Segment
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Text(segment.formattedTimestamp)
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundColor(.secondary)
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
+            // Vertical accent bar keyed to the speaker.
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Color.speakerTint(for: segment.speaker))
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
+                .opacity(0.85)
 
-                Text(speakerDisplayName)
-                    .font(.caption)
-                    .bold()
-                    .foregroundColor(speakerColor)
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    SpeakerChip(speaker: segment.speaker)
+                    Text(segment.formattedTimestamp)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+
+                Text(segment.text)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text(segment.text)
-                .font(.body)
-                .textSelection(.enabled)
+            .padding(.vertical, DesignTokens.Spacing.xs)
         }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(speakerDisplayName) at \(segment.formattedTimestamp): \(segment.text)")
     }
 
-    // MARK: - Computed Properties
-
-    /// Capitalizes known speaker labels for display.
     private var speakerDisplayName: String {
         switch segment.speaker.lowercased() {
-        case "you":
-            return "You"
-        case "remote":
-            return "Remote"
-        default:
-            return segment.speaker
-        }
-    }
-
-    /// Returns a distinct color for known speaker roles.
-    private var speakerColor: Color {
-        switch segment.speaker.lowercased() {
-        case "you":
-            return .blue
-        case "remote":
-            return .green
-        default:
-            return .orange
+        case "you":    return "You"
+        case "remote": return "Remote"
+        default:       return segment.speaker
         }
     }
 }

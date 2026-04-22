@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import ScreenCaptureKit
 import AppKit
 
@@ -50,20 +51,32 @@ struct Permissions {
 
     // MARK: - Screen Capture
 
-    /// Checks whether the app has permission to capture screen content.
+    /// Checks whether the app has screen-recording permission by asking
+    /// CoreGraphics directly (the underlying TCC API). If the permission has
+    /// not yet been requested, this triggers the system prompt.
     ///
-    /// ScreenCaptureKit does not offer a dedicated authorization-status API.
-    /// Instead, we attempt to retrieve the shareable content and treat any thrown
-    /// error as a denial.
+    /// - Note: macOS does not hot-reload screen-recording permission into a
+    ///   running process. When a user toggles it on in System Settings, the
+    ///   app must be fully quit and relaunched before ScreenCaptureKit calls
+    ///   will succeed.
     ///
-    /// - Returns: `true` if screen capture permission is available.
+    /// - Returns: `true` if the current process has screen-recording access
+    ///   according to TCC.
     static func checkScreenCapturePermission() async -> Bool {
-        do {
-            _ = try await SCShareableContent.current
+        if CGPreflightScreenCaptureAccess() {
             return true
-        } catch {
-            return false
         }
+        // Trigger the system prompt. The return value reflects only the
+        // pre-prompt state; the user's response takes effect after relaunch.
+        return CGRequestScreenCaptureAccess()
+    }
+
+    /// Returns `true` when the OS has granted screen-recording access to this
+    /// process. Unlike ``checkScreenCapturePermission()`` this never prompts
+    /// and never performs I/O — use it for UI that decides whether to show
+    /// a "relaunch required" hint.
+    static func hasScreenCapturePermission() -> Bool {
+        CGPreflightScreenCaptureAccess()
     }
 
     // MARK: - System Preferences
