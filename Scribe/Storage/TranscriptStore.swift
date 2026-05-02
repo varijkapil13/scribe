@@ -146,6 +146,51 @@ final class TranscriptStore {
         }
     }
 
+    // MARK: - Crash Recovery
+
+    /// Finalises any sessions left with `endedAt == nil` (a prior process
+    /// crashed mid-recording). Sets `endedAt` to the latest segment's `endMs`
+    /// (relative to `createdAt`) when segments exist, otherwise to `createdAt`
+    /// — and recomputes `durationSeconds`.
+    ///
+    /// Returns the number of sessions that were recovered, so callers can log
+    /// or surface the action.
+    @discardableResult
+    func recoverIncompleteSessions() throws -> Int {
+        try db.write { database in
+            let dangling = try Session
+                .filter(Column("endedAt") == nil)
+                .fetchAll(database)
+
+            for var session in dangling {
+                let lastEndMs = try Segment
+                    .filter(Column("sessionId") == session.id)
+                    .order(Column("endMs").desc)
+                    .fetchOne(database)?
+                    .endMs
+
+                let endedAt: Date
+                let duration: Int
+                if let lastEndMs {
+                    endedAt = session.createdAt.addingTimeInterval(TimeInterval(lastEndMs) / 1000)
+                    duration = lastEndMs / 1000
+                } else {
+                    // No segments captured before the crash. Mark the session
+                    // as zero-length and ended at its creation time so the UI
+                    // still has a valid record to show.
+                    endedAt = session.createdAt
+                    duration = 0
+                }
+
+                session.endedAt = endedAt
+                session.durationSeconds = duration
+                try session.update(database)
+            }
+
+            return dangling.count
+        }
+    }
+
     // MARK: - Bulk Operations
 
     /// Deletes all sessions and segments from the database.
@@ -179,6 +224,16 @@ final class TranscriptStore {
             let keyDecisionsJSON = try String(data: JSONEncoder().encode(summary.keyDecisions), encoding: .utf8) ?? "[]"
             let keyTopicsJSON = try String(data: JSONEncoder().encode(summary.keyTopics), encoding: .utf8) ?? "[]"
             let followUpJSON = try String(data: JSONEncoder().encode(summary.followUpQuestions), encoding: .utf8) ?? "[]"
+
+            // INSERT OR REPLACE keys on `id` (the primary key), so calling
+            // `saveSummary` twice with different summary ids would otherwise
+            // leave duplicate rows for the same session. Clear any existing
+            // summary for this session first so the API contract — one summary
+            // per session — holds.
+            try database.execute(
+                sql: "DELETE FROM meeting_summaries WHERE session_id = ?",
+                arguments: [summary.sessionId]
+            )
 
             try database.execute(
                 sql: """

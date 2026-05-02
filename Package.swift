@@ -22,7 +22,10 @@ let package = Package(
         ),
         .testTarget(
             name: "ScribeTests",
-            dependencies: ["Scribe"],
+            dependencies: [
+                "Scribe",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
             path: "ScribeTests"
         ),
     ]

@@ -42,8 +42,8 @@ final class SpeechRecognizerEngine: ObservableObject {
     @Published var isProcessing: Bool = false
 
     /// The resolved locale identifier currently used by the pipelines
-    /// (e.g. `"en-US"`). Presented in the overlay header so the user can see
-    /// which model is live.
+    /// (e.g. `"en-US"`). Presented in the live view header so the user can
+    /// see which model is live.
     @Published var currentLanguage: String?
 
     /// Whether the speech subsystem is usable at all on this device. In the
@@ -52,8 +52,13 @@ final class SpeechRecognizerEngine: ObservableObject {
     @Published var isAvailable: Bool = true
 
     /// Latest volatile (partial) transcription text, reconstructed from both
-    /// pipelines for display in the overlay.
+    /// pipelines for display in the live view.
     @Published var partialResult: String = ""
+
+    /// True while the on-device speech model is being installed for a session.
+    /// First-recording UX uses this to show "Downloading speech model…" instead
+    /// of an empty waveform animation.
+    @Published var isDownloadingModel: Bool = false
 
     // MARK: - Callbacks
 
@@ -61,7 +66,7 @@ final class SpeechRecognizerEngine: ObservableObject {
     var onSegmentTranscribed: ((TranscriptionSegment) -> Void)?
 
     /// Fired on the main queue when a partial result arrives. Useful for
-    /// driving live text in the overlay.
+    /// driving live text in the UI.
     var onPartialResult: ((String) -> Void)?
 
     /// Fired on the main queue when a pipeline errors out during a session.
@@ -80,8 +85,8 @@ final class SpeechRecognizerEngine: ObservableObject {
     private var micPipeline: TranscriptionPipeline?
     private var remotePipeline: TranscriptionPipeline?
 
-    /// The most recent per-pipeline volatile text, so the overlay can show
-    /// whichever speaker is currently mid-utterance.
+    /// The most recent per-pipeline volatile text, so the live view can
+    /// show whichever speaker is currently mid-utterance.
     private var micPartial: String = ""
     private var remotePartial: String = ""
 
@@ -126,7 +131,7 @@ final class SpeechRecognizerEngine: ObservableObject {
         do {
             try await ensureModelInstalled(for: locale)
         } catch {
-            print("[SpeechRecognizerEngine] Model install failed: \(error.localizedDescription)")
+            Log.speech.error("Engine model install failed: \(error.localizedDescription, privacy: .private)")
             onSessionError?(error)
             return
         }
@@ -141,7 +146,7 @@ final class SpeechRecognizerEngine: ObservableObject {
             async let remoteStart: Void = remote.start(locale: locale)
             _ = try await (micStart, remoteStart)
         } catch {
-            print("[SpeechRecognizerEngine] Failed to start pipelines: \(error.localizedDescription)")
+            Log.speech.error("Engine failed to start pipelines: \(error.localizedDescription, privacy: .private)")
             onSessionError?(error)
             await mic.stop()
             await remote.stop()
@@ -151,7 +156,7 @@ final class SpeechRecognizerEngine: ObservableObject {
         self.micPipeline = mic
         self.remotePipeline = remote
         self.isProcessing = true
-        print("[SpeechRecognizerEngine] Session started (parallel pipelines, locale \(locale.identifier))")
+        Log.speech.info("Engine session started (parallel pipelines, locale \(locale.identifier, privacy: .public))")
     }
 
     /// Idempotent, single-threaded asset install for a given locale. Called
@@ -159,16 +164,18 @@ final class SpeechRecognizerEngine: ObservableObject {
     private func ensureModelInstalled(for locale: Locale) async throws {
         let probe = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
         let status = await AssetInventory.status(forModules: [probe])
-        print("[SpeechRecognizerEngine] Model status for \(locale.identifier): \(status)")
+        Log.speech.info("Engine model status for \(locale.identifier, privacy: .public): \(String(describing: status), privacy: .public)")
 
         switch status {
         case .installed, .downloading:
             return
         case .supported:
             if let request = try await AssetInventory.assetInstallationRequest(supporting: [probe]) {
-                print("[SpeechRecognizerEngine] Downloading model for \(locale.identifier)…")
+                Log.speech.info("Engine downloading model for \(locale.identifier, privacy: .public)…")
+                isDownloadingModel = true
+                defer { isDownloadingModel = false }
                 try await request.downloadAndInstall()
-                print("[SpeechRecognizerEngine] Model installed for \(locale.identifier).")
+                Log.speech.info("Engine model installed for \(locale.identifier, privacy: .public).")
             }
         case .unsupported:
             throw NSError(

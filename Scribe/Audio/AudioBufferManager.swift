@@ -5,7 +5,7 @@ import Foundation
 /// Each chunk contains ``chunkDurationSeconds`` worth of audio. When a chunk is emitted the last
 /// ``overlapDurationSeconds`` of samples are kept so consecutive chunks share a small overlap,
 /// which helps the transcription model maintain context across boundaries.
-final class AudioBufferManager {
+final class AudioBufferManager: @unchecked Sendable {
 
     // MARK: - Configuration
 

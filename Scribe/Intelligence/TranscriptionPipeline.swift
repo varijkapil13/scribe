@@ -34,7 +34,7 @@ final class TranscriptionPipeline {
     var onSegment: ((TranscriptionSegment) -> Void)?
 
     /// Fired on the main queue for live volatile results (partial, evolving
-    /// text). Use this to drive an "as-you-speak" overlay.
+    /// text). Use this to drive an "as-you-speak" live view.
     var onPartialUpdate: ((String) -> Void)?
 
     /// Fired on the main queue when the analyzer errors out. The pipeline is
@@ -100,7 +100,7 @@ final class TranscriptionPipeline {
         // on the first buffer.
         if let best = try await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) {
             self.analyzerFormat = best
-            print("[TranscriptionPipeline \(speaker)] Analyzer format: \(best)")
+            Log.speech.info("Pipeline[\(self.speaker, privacy: .public)] analyzer format: \(String(describing: best), privacy: .public)")
         }
 
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
@@ -130,7 +130,7 @@ final class TranscriptionPipeline {
         self.sessionStart = Date()
         self.locale = locale
         self.isRunning = true
-        print("[TranscriptionPipeline \(speaker)] Started — locale: \(locale.identifier)")
+        Log.speech.info("Pipeline[\(self.speaker, privacy: .public)] started — locale: \(locale.identifier, privacy: .public)")
     }
 
     /// Ensures the speech model for this transcriber's locale is downloaded
@@ -138,15 +138,15 @@ final class TranscriptionPipeline {
     /// off the download and await completion.
     private func ensureAssetsInstalled(for transcriber: SpeechTranscriber) async throws {
         let status = await AssetInventory.status(forModules: [transcriber])
-        print("[TranscriptionPipeline \(speaker)] Asset status: \(status)")
+        Log.speech.info("Pipeline[\(self.speaker, privacy: .public)] asset status: \(String(describing: status), privacy: .public)")
         switch status {
         case .installed, .downloading:
             return
         case .supported:
             if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-                print("[TranscriptionPipeline \(speaker)] Downloading speech model…")
+                Log.speech.info("Pipeline[\(self.speaker, privacy: .public)] downloading speech model…")
                 try await request.downloadAndInstall()
-                print("[TranscriptionPipeline \(speaker)] Speech model installed.")
+                Log.speech.info("Pipeline[\(self.speaker, privacy: .public)] speech model installed.")
             }
         case .unsupported:
             throw NSError(
@@ -241,7 +241,7 @@ final class TranscriptionPipeline {
             do {
                 try await analyzer.finalizeAndFinishThroughEndOfInput()
             } catch {
-                print("[TranscriptionPipeline \(speaker)] finalize error: \(error.localizedDescription)")
+                Log.speech.error("Pipeline[\(self.speaker, privacy: .public)] finalize error: \(error.localizedDescription, privacy: .private)")
             }
         }
 
@@ -266,7 +266,7 @@ final class TranscriptionPipeline {
         let isVolatile = isResultVolatile(result)
 
         if isVolatile {
-            // Partial / evolving — do not persist. Just update overlay.
+            // Partial / evolving — do not persist. Just update live view.
             onPartialUpdate?(trimmed)
             return
         }

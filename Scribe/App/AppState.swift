@@ -15,10 +15,13 @@ final class AppState: ObservableObject {
 
     @Published var audioManager = AudioSessionManager()
     @Published var speechEngine = SpeechRecognizerEngine()
-    @Published var transcriptStore = TranscriptStore()
+    @Published var transcriptStore: TranscriptStore
     @Published var overlaySegments: [TranscriptionSegment] = []
     @Published var currentSessionId: String?
     @Published var isTranscribing: Bool = false
+    /// Surfaces the most recent error from the recording / transcription / persistence
+    /// pipelines so the UI can show a banner. `nil` means "nothing wrong right now".
+    @Published var lastError: String?
 
     // MARK: - Private Properties
 
@@ -54,7 +57,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Initialization
 
-    init() {
+    /// - Parameter transcriptStore: Inject a custom store for tests. Defaults to
+    ///   the shared on-disk store backing the running app.
+    init(transcriptStore: TranscriptStore = TranscriptStore()) {
+        self.transcriptStore = transcriptStore
         wireAudioPipeline()
         wireTranscriptionResults()
         observeLanguagePreference()
@@ -65,7 +71,7 @@ final class AppState: ObservableObject {
     // MARK: - Microphone Preference
 
     /// Applies the stored microphone selection (by CoreAudio device ID) and
-    /// reacts to live changes so switching mics in Settings or the overlay
+    /// reacts to live changes so switching mics in Settings or the live view
     /// takes effect immediately — even during a session.
     private func observeMicrophonePreference() {
         applyStoredMicrophoneDevice()
@@ -77,7 +83,8 @@ final class AppState: ObservableObject {
             .sink { [weak self] stored in
                 guard let self else { return }
                 let deviceID = Self.parseMicDeviceID(stored)
-                print("[AppState] Microphone preference changed → \(stored.isEmpty ? "System Default" : stored).")
+                let label = stored.isEmpty ? "System Default" : stored
+                Log.audio.info("Microphone preference changed → \(label, privacy: .public).")
                 self.audioManager.setInputDevice(deviceID)
             }
             .store(in: &cancellables)
@@ -98,7 +105,7 @@ final class AppState: ObservableObject {
     // MARK: - System Audio Preference
 
     /// Starts/stops the ScreenCaptureKit stream live when the user flips the
-    /// "Capture system audio" toggle (in Settings or the overlay), without
+    /// "Capture system audio" toggle (in Settings or the live view), without
     /// interrupting microphone capture.
     private func observeSystemAudioPreference() {
         NotificationCenter.default
@@ -131,7 +138,7 @@ final class AppState: ObservableObject {
             .sink { [weak self] newLanguage in
                 guard let self else { return }
                 if self.speechEngine.language != newLanguage {
-                    print("[AppState] Language preference changed → \(newLanguage). Re-tuning recogniser.")
+                    Log.app.info("Language preference changed → \(newLanguage, privacy: .public). Re-tuning recogniser.")
                     Task { @MainActor in
                         await self.speechEngine.setLanguage(newLanguage)
                     }
@@ -162,7 +169,7 @@ final class AppState: ObservableObject {
             guard let self else { return }
             if !self.hasLoggedFirstMicBuffer {
                 self.hasLoggedFirstMicBuffer = true
-                print("[AppState] First mic buffer received — frames: \(buffer.frameLength), format: \(buffer.format)")
+                Log.audio.debug("First mic buffer received — frames: \(buffer.frameLength), format: \(String(describing: buffer.format), privacy: .public)")
             }
             self.speechEngine.appendAudioBuffer(buffer, speaker: "you")
         }
@@ -171,13 +178,13 @@ final class AppState: ObservableObject {
             guard let self else { return }
             if !self.hasLoggedFirstSystemBuffer {
                 self.hasLoggedFirstSystemBuffer = true
-                print("[AppState] First system audio buffer received — frames: \(buffer.frameLength), format: \(buffer.format)")
+                Log.audio.debug("First system audio buffer received — frames: \(buffer.frameLength), format: \(String(describing: buffer.format), privacy: .public)")
             }
             self.speechEngine.appendAudioBuffer(buffer, speaker: "remote")
         }
     }
 
-    /// Connects transcription engine output to coalescing + storage + overlay.
+    /// Connects transcription engine output to coalescing + storage + live view.
     ///
     /// Raw segments from SFSpeech are small (often 1–5 words) because the
     /// recogniser resets its partial at every silence boundary. We group
@@ -189,11 +196,15 @@ final class AppState: ObservableObject {
         speechEngine.onSegmentTranscribed = { [weak self] segment in
             self?.ingestTranscribedSegment(segment)
         }
+        speechEngine.onSessionError = { [weak self] error in
+            self?.lastError = error.localizedDescription
+        }
     }
 
     /// Adds a raw SFSpeech segment to the current coalesce buffer, flushing it
     /// first if the speaker changed or the time window has elapsed.
-    private func ingestTranscribedSegment(_ segment: TranscriptionSegment) {
+    /// Internal (not private) so tests can drive the coalescing logic directly.
+    func ingestTranscribedSegment(_ segment: TranscriptionSegment) {
         let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
@@ -225,24 +236,30 @@ final class AppState: ObservableObject {
     }
 
     /// Persists the current coalesced segment (if any) and drops it from the
-    /// live overlay slot. Called on speaker change, window expiry, and session
-    /// end.
-    private func flushPendingSegment() {
+    /// live view's pending slot. Called on speaker change, window expiry, and
+    /// session end. Internal so tests can drive flush behavior.
+    func flushPendingSegment() {
         guard let pending = pendingSegment else { return }
         pendingSegment = nil
 
         guard let sessionId = currentSessionId else { return }
-        try? transcriptStore.addSegment(
-            sessionId: sessionId,
-            startMs: pending.startMs,
-            endMs: pending.endMs,
-            speaker: pending.speaker,
-            text: pending.text
-        )
+        do {
+            try transcriptStore.addSegment(
+                sessionId: sessionId,
+                startMs: pending.startMs,
+                endMs: pending.endMs,
+                speaker: pending.speaker,
+                text: pending.text
+            )
+        } catch {
+            // Surface the failure (e.g. disk full) instead of silently dropping
+            // the segment. The UI listens to `lastError` and shows a banner.
+            lastError = "Failed to save segment: \(error.localizedDescription)"
+        }
     }
 
     /// Rebuilds ``overlaySegments`` to contain the persisted segments for this
-    /// session plus the in-progress pending segment so the overlay shows a
+    /// session plus the in-progress pending segment so the live view shows a
     /// single growing row for the current utterance instead of 10 fragments.
     private func refreshOverlayWithPending() {
         guard let pending = pendingSegment else { return }
@@ -269,7 +286,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Stable identifier for the in-progress overlay row — re-using the same
+    /// Stable identifier for the in-progress live row — re-using the same
     /// UUID keeps SwiftUI's diff happy so the row animates rather than flickers.
     private let pendingSegmentId = UUID()
 
@@ -287,7 +304,7 @@ final class AppState: ObservableObject {
         let session = try transcriptStore.createSession(title: title)
         currentSessionId = session.id
 
-        // Reset overlay, coalesce buffer, and diagnostic flags.
+        // Reset live view buffer, coalesce buffer, and diagnostic flags.
         overlaySegments.removeAll()
         pendingSegment = nil
         hasLoggedFirstMicBuffer = false
@@ -309,7 +326,7 @@ final class AppState: ObservableObject {
         try await audioManager.startRecording()
 
         isTranscribing = true
-        print("[AppState] Session started — id: \(session.id), language: \(speechEngine.currentLanguage ?? "system default")")
+        Log.app.info("Session started — id: \(session.id, privacy: .public), language: \(self.speechEngine.currentLanguage ?? "system default", privacy: .public)")
     }
 
     /// Stops the current transcription session.

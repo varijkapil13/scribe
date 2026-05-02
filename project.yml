@@ -31,6 +31,13 @@ targets:
         # (Microphone, Speech Recognition, Screen Recording) across rebuilds.
         DEVELOPMENT_TEAM: U8A3QH6Y84
         CODE_SIGN_STYLE: Automatic
+        # Hardened Runtime is required for notarization. Sandbox is intentionally
+        # off (see Scribe.entitlements), but we still enable Hardened Runtime so
+        # notarytool accepts the build.
+        ENABLE_HARDENED_RUNTIME: "YES"
+        # Disable JIT / executable memory pages by default; nothing in Scribe
+        # needs them, and removing them shrinks the attack surface.
+        OTHER_CODE_SIGN_FLAGS: "--options=runtime"
     scheme:
       run:
         config: Debug

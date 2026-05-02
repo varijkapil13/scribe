@@ -171,13 +171,13 @@ final class AudioSessionManager: ObservableObject {
         do {
             try micCapture.startCapture()
         } catch {
-            print("[AudioSessionManager] Failed to switch mic device: \(error.localizedDescription)")
+            Log.audio.error("Failed to switch mic device: \(error.localizedDescription, privacy: .private)")
         }
     }
 
     /// Turns system-audio capture on or off mid-session without interrupting
     /// microphone capture. Called by ``AppState`` when the user flips the
-    /// "Capture system audio" toggle in Settings or the overlay.
+    /// "Capture system audio" toggle in Settings or the live view.
     func setSystemAudioCaptureEnabled(_ enabled: Bool) async {
         shouldCaptureSystemAudio = enabled
         guard isRecording, !isPaused else { return }
@@ -190,7 +190,7 @@ final class AudioSessionManager: ObservableObject {
                 do {
                     try await systemCapture.startCapture()
                 } catch {
-                    print("[AudioSessionManager] Failed to start system audio mid-session: \(error.localizedDescription)")
+                    Log.audio.error("Failed to start system audio mid-session: \(error.localizedDescription, privacy: .private)")
                 }
             }
         } else {

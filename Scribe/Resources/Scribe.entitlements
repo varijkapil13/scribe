@@ -2,11 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  App Sandbox is intentionally OFF.
+	  ScreenCaptureKit-driven system-audio capture (the whole point of Scribe)
+	  works best on Developer-ID-signed but unsandboxed builds. Flipping this
+	  to <true/> means also adding the screen-capture entitlement and possibly
+	  resigning under a sandbox-compatible profile — see README.md before
+	  changing.
+	-->
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+
+	<!-- Microphone capture via AVCaptureDevice. -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
-	<key>com.apple.security.temporary-exception.audio-unit-host</key>
+
+	<!-- Read/write access to user-selected files (NSSavePanel for export). -->
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+
+	<!--
+	  audio-unit-host is a sandbox-only temporary exception. With
+	  app-sandbox=false above, it has no effect and is intentionally omitted.
+	  Re-add (and bump it to a non-temporary entitlement) if/when sandbox is
+	  flipped on.
+	-->
+
 </dict>
 </plist>

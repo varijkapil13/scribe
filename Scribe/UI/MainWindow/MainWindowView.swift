@@ -25,6 +25,7 @@ struct MainWindowView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             detail
+                .errorBanner(appState)
         }
         .frame(minWidth: 920, minHeight: 620)
         .toolbar {

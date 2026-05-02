@@ -323,19 +323,22 @@ struct LiveSessionView: View {
 
     private var listeningState: some View {
         VStack(spacing: DesignTokens.Spacing.md) {
-            Image(systemName: appState.isTranscribing ? "waveform" : "mic.slash")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(.tertiary)
-                .symbolRenderingMode(.hierarchical)
-                .symbolEffect(.variableColor.iterative, isActive: appState.isTranscribing)
+            if appState.speechEngine.isDownloadingModel {
+                ProgressView()
+                    .controlSize(.large)
+            } else {
+                Image(systemName: appState.isTranscribing ? "waveform" : "mic.slash")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(.tertiary)
+                    .symbolRenderingMode(.hierarchical)
+                    .symbolEffect(.variableColor.iterative, isActive: appState.isTranscribing)
+            }
 
             VStack(spacing: DesignTokens.Spacing.xs) {
-                Text(appState.isTranscribing ? "Listening…" : "Ready to record")
+                Text(listeningHeadline)
                     .font(DesignTokens.Typography.section)
                     .foregroundStyle(.primary)
-                Text(appState.isTranscribing
-                     ? "Transcribed segments will appear here as you speak."
-                     : "Start a session to see the live transcript.")
+                Text(listeningSubtitle)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -345,6 +348,22 @@ struct LiveSessionView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, DesignTokens.Spacing.xxl)
+    }
+
+    private var listeningHeadline: String {
+        if appState.speechEngine.isDownloadingModel { return "Downloading speech model…" }
+        if appState.isTranscribing { return "Listening…" }
+        return "Ready to record"
+    }
+
+    private var listeningSubtitle: String {
+        if appState.speechEngine.isDownloadingModel {
+            return "First-time setup for this language. This usually takes under a minute."
+        }
+        if appState.isTranscribing {
+            return "Transcribed segments will appear here as you speak."
+        }
+        return "Start a session to see the live transcript."
     }
 
     // MARK: - Helpers

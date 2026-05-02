@@ -9,6 +9,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case intelligence
     case storage
     case shortcuts
+    case about
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "Intelligence"
         case .storage:      return "Storage"
         case .shortcuts:    return "Shortcuts"
+        case .about:        return "About"
         }
     }
 
@@ -27,6 +29,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "sparkles"
         case .storage:      return "internaldrive"
         case .shortcuts:    return "keyboard"
+        case .about:        return "info.circle"
         }
     }
 }
@@ -69,6 +72,7 @@ struct SettingsPaneView: View {
         case .intelligence: IntelligenceSettingsPane()
         case .storage:      StorageSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
+        case .about:        AboutSettingsPane()
         }
     }
 }
@@ -261,6 +265,56 @@ private struct ShortcutsSettingsPane: View {
                 Text("Press this shortcut from any app to start or stop recording without opening Scribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - About
+
+private struct AboutSettingsPane: View {
+
+    private var appVersion: String {
+        let bundle = Bundle.main
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "\(version) (\(build))"
+    }
+
+    private var copyright: String {
+        Bundle.main.object(forInfoDictionaryKey: "NSHumanReadableCopyright") as? String
+            ?? "© Varij. All rights reserved."
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Version", value: appVersion)
+                LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "—")
+                LabeledContent("Minimum macOS", value: "26.0")
+                LabeledContent("Architecture", value: "Apple Silicon")
+            } header: {
+                Text("Scribe")
+            } footer: {
+                Text("On-device meeting transcription for macOS. Built on Apple Speech, Apple Intelligence, and SwiftUI. No telemetry, no analytics, no audio uploads.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Privacy") {
+                Label("All audio is processed on-device.", systemImage: "lock.shield")
+                Label("No network calls during recording or analysis.", systemImage: "network.slash")
+                Label("Recordings live at ~/Library/Application Support/Scribe.", systemImage: "folder")
+            }
+
+            Section("Acknowledgements") {
+                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, and FoundationModels.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(copyright)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)

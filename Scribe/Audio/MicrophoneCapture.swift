@@ -168,11 +168,11 @@ final class MicrophoneCapture: @unchecked Sendable {
 
             if !diagnosticsPrinted {
                 diagnosticsPrinted = true
-                print("[MicrophoneCapture] Hardware tap installed — format: \(hardwareFormat); first raw buffer peak: \(String(format: "%.4f", rawPeak))")
+                Log.audio.info("Mic hardware tap installed — format: \(String(describing: hardwareFormat), privacy: .public); first raw buffer peak: \(String(format: "%.4f", rawPeak), privacy: .public)")
             }
             rawTapCount += 1
             if rawTapCount % 100 == 0 {
-                print("[MicrophoneCapture] Raw hardware peak after \(rawTapCount) taps: \(String(format: "%.4f", rawPeak))")
+                Log.audio.debug("Mic raw hardware peak after \(rawTapCount) taps: \(String(format: "%.4f", rawPeak), privacy: .public)")
             }
 
             guard let convertedBuffer = AVAudioPCMBuffer(

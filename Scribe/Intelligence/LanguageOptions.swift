@@ -1,14 +1,14 @@
 import Foundation
 
 /// Shared list of recognition languages supported by Scribe. Used by both
-/// the Settings picker and the Overlay quick-switcher so the two UIs stay in
-/// sync automatically.
+/// the Settings picker and the live view's quick-switcher so the two UIs
+/// stay in sync automatically.
 enum LanguageOptions {
 
     /// The BCP-47-ish short codes Scribe exposes to users, in display order.
     /// `"auto"` is surfaced first as "Auto-detect" (falls back to the system
     /// default locale). Currently scoped to English, German, and Hindi; add
-    /// new entries here and they appear in Settings + the overlay picker
+    /// new entries here and they appear in Settings + the live view picker
     /// automatically.
     static let supported: [(code: String, name: String)] = [
         ("auto", "Auto-detect (system)"),
@@ -23,8 +23,8 @@ enum LanguageOptions {
         supported.first(where: { $0.code == code })?.name ?? code
     }
 
-    /// Short two-letter code for a given stored value — used in the overlay
-    /// status line where space is tight.
+    /// Short two-letter code for a given stored value — used in the live
+    /// view's status line where space is tight.
     static func shortLabel(for code: String) -> String {
         if code.isEmpty || code.lowercased() == "auto" { return "AUTO" }
         if code.contains("-") {

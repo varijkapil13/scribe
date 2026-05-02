@@ -4,8 +4,8 @@ import CoreGraphics
 import Speech
 import SwiftUI
 
-/// AppKit delegate that coordinates high-level recording actions, the overlay
-/// panel, global keyboard shortcuts, and app-lifecycle policy.
+/// AppKit delegate that coordinates high-level recording actions, global
+/// keyboard shortcuts, and app-lifecycle policy.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
@@ -27,8 +27,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Use the shared singleton so every component references the same state.
         appState = AppState.shared
 
+        // Recover any sessions left dangling by a previous crash. Setting their
+        // endedAt + duration here means the sidebar doesn't show a permanent
+        // "Now" entry for an extinct recording.
+        do {
+            let recovered = try appState.transcriptStore.recoverIncompleteSessions()
+            if recovered > 0 {
+                Log.app.info("Recovered \(recovered) incomplete session(s) from prior crash.")
+            }
+        } catch {
+            Log.app.error("Crash recovery sweep failed: \(error.localizedDescription, privacy: .private)")
+        }
+
         registerKeyboardShortcuts()
         observeMainWindowClose()
+        observeSpeechErrors()
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
@@ -64,8 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// The user explicitly asked: closing the main window quits the app. We
     /// observe ``NSWindow.willCloseNotification`` via Combine and terminate
     /// when the SwiftUI `Window("Scribe", id: "main")` scene goes away. We
-    /// match on the window's identifier so alert, panel, and overlay closes
-    /// don't trigger quit.
+    /// match on the window's identifier so alert and panel closes don't
+    /// trigger quit.
     private func observeMainWindowClose() {
         NotificationCenter.default
             .publisher(for: NSWindow.willCloseNotification)
@@ -101,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    /// Starts a new transcription session and shows the overlay.
+    /// Starts a new transcription session.
     func startRecording() async {
         // Verify permissions before touching audio hardware so we can show the
         // user a clear alert instead of silently failing.
@@ -152,17 +165,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         appState.audioManager.shouldCaptureSystemAudio = captureSystemAudio
 
-        // Wire the recognition-error alert BEFORE starting the session —
-        // SFSpeech can deliver the first error almost immediately (e.g. when
-        // Siri & Dictation are disabled) and we'd miss it otherwise.
-        appState.speechEngine.onSessionError = { [weak self] error in
-            self?.handleSpeechError(error)
-        }
-
         do {
             try await appState.startSession()
             // The main window's live view observes `appState.isTranscribing`
-            // and auto-navigates to the live transcript — no overlay needed.
+            // and auto-navigates to the live transcript.
         } catch {
             showPermissionAlert(
                 title: "Couldn't Start Recording",
@@ -174,45 +180,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - Speech Errors
 
-    /// Handles a speech-recognition error by surfacing a targeted alert. The
-    /// most common user-fixable cause on macOS is "Siri and Dictation are
-    /// disabled" — on-device recognition won't initialize without at least one
-    /// of those toggles on. We detect that string and guide the user straight
-    /// to the right System Settings pane.
+    /// Observes speech-recognition failures via Combine on the speech engine's
+    /// `onSessionError` callback. AppState already mirrors these into
+    /// `lastError` for the banner; this delegate adds the bits the banner
+    /// can't do — stop the session and, for the actionable
+    /// "Siri & Dictation disabled" case, show a modal with a settings link.
+    private func observeSpeechErrors() {
+        // Wrap, don't replace: AppState's `wireTranscriptionResults` set its
+        // own `onSessionError` to populate `lastError`. Calling that handler
+        // here keeps the banner working alongside our delegate behavior.
+        let stateHandler = appState.speechEngine.onSessionError
+        appState.speechEngine.onSessionError = { [weak self] error in
+            stateHandler?(error)
+            self?.handleSpeechError(error)
+        }
+    }
+
+    /// Handles a speech-recognition error: stops the session so state goes
+    /// back to idle, and — for the user-actionable Siri/Dictation case —
+    /// shows a guided modal alert. All other errors flow through the banner
+    /// via `AppState.lastError`.
     private func handleSpeechError(_ error: Error) {
-        // Also stop the session so state goes back to idle rather than
-        // claiming to still be recording.
         Task { @MainActor in
             await stopRecording()
         }
 
-        let message = error.localizedDescription
-        let lowercased = message.lowercased()
-        if lowercased.contains("siri") && lowercased.contains("dictation") {
-            let alert = NSAlert()
-            alert.messageText = "Enable Dictation to Use Scribe"
-            alert.informativeText = """
-            Scribe uses Apple's on-device speech recognizer, which requires either Siri or Dictation to be turned on.
-
-            Open System Settings → Keyboard → Dictation and flip the switch. You only need to do this once. Then launch Scribe again and hit Record.
-            """
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Open Dictation Settings")
-            alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Dictation") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
+        guard SpeechErrorClassifier.category(for: error) == .siriOrDictationDisabled else {
             return
         }
 
-        showPermissionAlert(
-            title: "Transcription Stopped",
-            message: message,
-            panel: nil
-        )
+        let alert = NSAlert()
+        alert.messageText = "Enable Dictation to Use Scribe"
+        alert.informativeText = """
+        Scribe uses Apple's on-device speech recognizer, which requires either Siri or Dictation to be turned on.
+
+        Open System Settings → Keyboard → Dictation and flip the switch. You only need to do this once. Then launch Scribe again and hit Record.
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Dictation Settings")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Dictation") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     // MARK: - Alerts
@@ -298,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         do {
             try await appState.resumeSession()
         } catch {
-            print("[AppDelegate] Failed to resume recording: \(error.localizedDescription)")
+            Log.app.error("Failed to resume recording: \(error.localizedDescription, privacy: .private)")
         }
     }
 }
