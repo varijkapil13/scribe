@@ -31,8 +31,9 @@ struct TaskListView: View {
         .navigationTitle(headerTitle)
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
-        // Filter switches are handled by .id(filter) in MainWindowView, which tears down and
-        // recreates this view (and its @StateObject) — no onChange needed here.
+        .onChange(of: filter) { _, newFilter in
+            viewModel.switchFilter(to: newFilter)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .scribeFocusQuickAdd)) { _ in
             quickAddFocused = true
         }
@@ -120,6 +121,7 @@ struct TaskListView: View {
             ForEach(tasks) { task in
                 TaskRowView(
                     task: task,
+                    isRecentlyCompleted: viewModel.recentlyCompletedRecurring.contains(task.id),
                     onToggle: { viewModel.toggleCompleted(task) },
                     onOpen: { editingTask = task }
                 )
@@ -147,6 +149,7 @@ struct TaskListView: View {
 /// the checkbox toggle stays separate so it can't accidentally launch a sheet.
 struct TaskRowView: View {
     let task: TodoTask
+    let isRecentlyCompleted: Bool
     let onToggle: () -> Void
     let onOpen: () -> Void
 
@@ -185,8 +188,8 @@ struct TaskRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.system(.body))
-                    .strikethrough(task.isCompleted, color: .secondary)
-                    .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                    .strikethrough(task.isCompleted || isRecentlyCompleted, color: .secondary)
+                    .foregroundStyle(task.isCompleted || isRecentlyCompleted ? .secondary : .primary)
                 if !task.notes.isEmpty {
                     Text(task.notes)
                         .font(.caption)

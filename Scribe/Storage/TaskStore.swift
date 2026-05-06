@@ -2,6 +2,17 @@ import Foundation
 import GRDB
 import Combine
 
+enum TaskStoreError: LocalizedError {
+    case recurringTaskRequiresDueDate
+
+    var errorDescription: String? {
+        switch self {
+        case .recurringTaskRequiresDueDate:
+            return "A recurring task must have a due date."
+        }
+    }
+}
+
 /// High-level query interface for Scribe's task layer.
 ///
 /// Mirrors the design of `TranscriptStore`: a thin wrapper around a GRDB
@@ -85,7 +96,8 @@ final class TaskStore {
         sourceActionItemId: String? = nil,
         tags: [String] = []
     ) throws -> TodoTask {
-        try db.write { database in
+        try validateRecurrence(rule: recurrenceRule, dueAt: dueAt)
+        return try db.write { database in
             let nextOrder = try Int.fetchOne(database,
                 sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
                 arguments: [projectId]) ?? 0
@@ -119,6 +131,7 @@ final class TaskStore {
     func updateTask(_ task: TodoTask) throws {
         var copy = task
         copy.updatedAt = Date()
+        try validateRecurrence(rule: copy.recurrenceRule, dueAt: copy.dueAt)
         try db.write { try copy.update($0) }
     }
 
@@ -126,16 +139,25 @@ final class TaskStore {
         try db.write { _ = try TodoTask.deleteOne($0, key: id) }
     }
 
-    /// Marks a task complete. For recurring tasks, the next occurrence is
-    /// scheduled via `RecurrenceEngine` (added in slice 7); slice 1 simply
-    /// records the completion timestamp.
+    /// Marks a task complete. For recurring tasks, advances `dueAt` to the
+    /// next occurrence and clears `completedAt`; for one-off tasks, sets
+    /// `completedAt`. Either way a `task_completions` history row is written.
     func completeTask(id: String, at date: Date = Date()) throws {
         try db.write { database in
             guard var task = try TodoTask.fetchOne(database, key: id) else { return }
-            task.completedAt = date
+            try TaskCompletion(taskId: id, completedAt: date).insert(database)
+
+            if let ruleStr = task.recurrenceRule,
+               let due = task.dueAt {
+                let rule = try RecurrenceRule.parse(ruleStr)
+                task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule)
+                task.completedAt = nil
+            } else {
+                task.completedAt = date
+            }
+
             task.updatedAt = date
             try task.update(database)
-            try TaskCompletion(taskId: id, completedAt: date).insert(database)
         }
     }
 
@@ -295,6 +317,12 @@ final class TaskStore {
             out.append(trimmed)
         }
         return out
+    }
+
+    private func validateRecurrence(rule: String?, dueAt: Date?) throws {
+        guard let ruleStr = rule else { return }
+        if dueAt == nil { throw TaskStoreError.recurringTaskRequiresDueDate }
+        _ = try RecurrenceRule.parse(ruleStr)
     }
 }
 

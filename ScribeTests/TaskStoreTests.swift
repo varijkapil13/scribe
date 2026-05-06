@@ -195,6 +195,86 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
+    // MARK: - Recurrence
+
+    func testCreateRecurringTaskWithoutDueDateThrows() throws {
+        XCTAssertThrowsError(
+            try store.createTask(title: "Daily standup", recurrenceRule: "FREQ=DAILY")
+        ) { error in
+            guard case TaskStoreError.recurringTaskRequiresDueDate = error else {
+                XCTFail("Expected TaskStoreError.recurringTaskRequiresDueDate, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testUpdateTaskAddingRecurrenceWithoutDueDateThrows() throws {
+        var task = try store.createTask(title: "No due date task")
+        task.recurrenceRule = "FREQ=WEEKLY"
+        XCTAssertThrowsError(try store.updateTask(task)) { error in
+            guard case TaskStoreError.recurringTaskRequiresDueDate = error else {
+                XCTFail("Expected TaskStoreError.recurringTaskRequiresDueDate, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testCompleteRecurringTaskAdvancesDueDateAndClearsCompletedAt() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        let task = try store.createTask(
+            title: "Daily standup",
+            dueAt: due,
+            recurrenceRule: "FREQ=DAILY"
+        )
+        try store.completeTask(id: task.id, at: due)
+
+        let updated = try XCTUnwrap(store.fetchTask(id: task.id))
+        XCTAssertNil(updated.completedAt)
+        let expectedDue = Calendar.utcCalendar.date(byAdding: .day, value: 1, to: due)!
+        XCTAssertEqual(updated.dueAt, expectedDue)
+    }
+
+    func testCompleteRecurringTaskInsertsHistoryRow() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        let task = try store.createTask(
+            title: "Weekly review",
+            dueAt: due,
+            recurrenceRule: "FREQ=WEEKLY"
+        )
+        try store.completeTask(id: task.id, at: due)
+
+        let count = try manager.database.read { db in
+            try Int.fetchOne(db,
+                sql: "SELECT COUNT(*) FROM task_completions WHERE taskId = ?",
+                arguments: [task.id])
+        }
+        XCTAssertEqual(count, 1)
+    }
+
+    func testCreateTaskWithMalformedRuleThrows() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertThrowsError(
+            try store.createTask(title: "Bad rule", dueAt: due, recurrenceRule: "FREQ=YEARLY")
+        ) { error in
+            guard case RecurrenceError.invalidRule = error else {
+                XCTFail("Expected RecurrenceError.invalidRule, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testUpdateTaskWithMalformedRuleThrows() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        var task = try store.createTask(title: "Good task", dueAt: due, recurrenceRule: "FREQ=DAILY")
+        task.recurrenceRule = "NOT_A_RULE"
+        XCTAssertThrowsError(try store.updateTask(task)) { error in
+            guard case RecurrenceError.invalidRule = error else {
+                XCTFail("Expected RecurrenceError.invalidRule, got \(error)")
+                return
+            }
+        }
+    }
+
     // MARK: - Source links
 
     func testTaskCanLinkToSessionAndActionItem() throws {
