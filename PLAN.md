@@ -69,13 +69,16 @@ sessions — update it as decisions land or scope changes.
       Upcoming / All / Completed / project / tag). Tests: 11 cases via
       `swift test`. PR #2.
 
-- [ ] **Slice 2 — Sidebar + minimal task list.** Extend `MainSelection` with
+- [~] **Slice 2 — Sidebar + minimal task list.** Extend `MainSelection` with
       `.tasks(TaskStore.Filter)`. New sidebar section "Tasks": Inbox,
-      Today, Upcoming, All. Detail pane = vertical list grouped by date
-      (Today / Tomorrow / This week / Later / No date). Each row is a
-      checkbox + title + due date. Quick-add field at the top creates an
-      Inbox task on Cmd-N or Return. ViewModel `TaskListViewModel` observes
-      `TaskStore.observeTasks(filter:)`.
+      Today, Upcoming, All, Completed. Detail pane = vertical list grouped by
+      date (Overdue / Today / Tomorrow / This week / Later / No date /
+      Completed). Each row is a checkbox + title + due date chip with
+      overdue tint. Quick-add field at the top creates an Inbox task on
+      Return. ViewModel `TaskListViewModel` observes
+      `TaskStore.observeTasks(filter:)`. Cmd-N focus + grouped-list
+      keyboard shortcuts land in slice 8. PR open as
+      `feat/tasks-slice-2-list-ui`.
 
 - [ ] **Slice 3 — Task editor pane.** Right-side detail (or inline expand)
       to set priority, due date (date picker), project, notes, tags. Save

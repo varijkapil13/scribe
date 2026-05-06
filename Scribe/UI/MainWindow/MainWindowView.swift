@@ -6,6 +6,7 @@ import SwiftUI
 enum MainSelection: Hashable {
     case live
     case transcript(String) // session id
+    case tasks(TaskStore.Filter)
     case settings(SettingsPane)
 }
 
@@ -164,6 +165,17 @@ struct MainWindowView: View {
             }
 
             Section {
+                ForEach(TaskSidebarItem.smartFilters) { item in
+                    NavigationLink(value: MainSelection.tasks(item.filter)) {
+                        Label(item.title, systemImage: item.systemImage)
+                    }
+                }
+            } header: {
+                Text("Tasks")
+                    .eyebrowStyle()
+            }
+
+            Section {
                 ForEach(SettingsPane.allCases) { pane in
                     NavigationLink(value: MainSelection.settings(pane)) {
                         Label(pane.title, systemImage: pane.systemImage)
@@ -213,6 +225,9 @@ struct MainWindowView: View {
                     message: "The selected session is no longer available."
                 )
             }
+        case .tasks(let filter):
+            TaskListView(filter: filter)
+                .id(filter)
         case .settings(let pane):
             SettingsPaneView(pane: pane, audioManager: appState.audioManager)
         case .none:
@@ -369,4 +384,23 @@ private struct KeyCapGroup: View {
 extension Notification.Name {
     static let openScribeSettings = Notification.Name("scribe.openSettings")
     static let scribeSessionUpdated = Notification.Name("scribe.sessionUpdated")
+}
+
+// MARK: - Task sidebar items
+
+/// Smart filters shown under the "Tasks" sidebar header: Inbox, Today, Upcoming, All, Completed.
+/// Project rows ship in slice 4.
+struct TaskSidebarItem: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let systemImage: String
+    let filter: TaskStore.Filter
+
+    static let smartFilters: [TaskSidebarItem] = [
+        .init(id: "inbox",    title: "Inbox",    systemImage: "tray",            filter: .inbox),
+        .init(id: "today",    title: "Today",    systemImage: "sun.max",         filter: .today),
+        .init(id: "upcoming", title: "Upcoming", systemImage: "calendar",        filter: .upcoming),
+        .init(id: "all",      title: "All",      systemImage: "list.bullet",     filter: .all),
+        .init(id: "completed", title: "Completed", systemImage: "checkmark.circle", filter: .completed)
+    ]
 }
