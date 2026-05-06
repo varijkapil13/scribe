@@ -44,15 +44,19 @@ final class TaskListViewModel: ObservableObject {
     // MARK: - Properties
 
     private let store: TaskStore
+    private let reminderScheduler: TaskReminderScheduling
     private var cancellable: AnyCancellable?
     private(set) var filter: TaskStore.Filter
     private var recurringClearTasks: [String: Task<Void, Never>] = [:]
 
     // MARK: - Initializer
 
-    init(filter: TaskStore.Filter, store: TaskStore = TaskStore()) {
+    init(filter: TaskStore.Filter,
+         store: TaskStore = TaskStore(),
+         reminderScheduler: TaskReminderScheduling = TaskReminderScheduler.shared) {
         self.filter = filter
         self.store = store
+        self.reminderScheduler = reminderScheduler
     }
 
     // MARK: - Subscription lifecycle
@@ -104,6 +108,11 @@ final class TaskListViewModel: ObservableObject {
         do {
             if task.isCompleted {
                 try store.uncompleteTask(id: task.id)
+                // Re-schedule any reminder the user already set on the task
+                // (the helper short-circuits when remindAt is nil/past).
+                if let refreshed = try store.fetchTask(id: task.id) {
+                    Task { await reminderScheduler.schedule(refreshed) }
+                }
             } else {
                 try store.completeTask(id: task.id)
                 if task.recurrenceRule != nil {
@@ -116,6 +125,16 @@ final class TaskListViewModel: ObservableObject {
                         self?.recurringClearTasks.removeValue(forKey: task.id)
                     }
                 }
+                // Recurring tasks now have a fresh `dueAt` — re-arm the
+                // reminder against the next occurrence; one-off tasks just
+                // get their pending reminder cleared.
+                if let refreshed = try store.fetchTask(id: task.id) {
+                    if refreshed.isCompleted {
+                        Task { await reminderScheduler.cancel(taskId: task.id) }
+                    } else {
+                        Task { await reminderScheduler.schedule(refreshed) }
+                    }
+                }
             }
         } catch {
             Log.ui.error("TaskListViewModel.toggleCompleted failed: \(error.localizedDescription, privacy: .public)")
@@ -125,6 +144,7 @@ final class TaskListViewModel: ObservableObject {
     func delete(_ task: TodoTask) {
         do {
             try store.deleteTask(id: task.id)
+            Task { await reminderScheduler.cancel(taskId: task.id) }
         } catch {
             Log.ui.error("TaskListViewModel.delete failed: \(error.localizedDescription, privacy: .public)")
         }

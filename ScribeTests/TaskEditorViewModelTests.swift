@@ -30,7 +30,7 @@ final class TaskEditorViewModelTests: XCTestCase {
         let project = try store.createProject(name: "Work")
         let original = try store.createTask(title: "Original", tags: ["old"])
 
-        let vm = TaskEditorViewModel(task: original, store: store)
+        let vm = TaskEditorViewModel(task: original, store: store, reminderScheduler: NoOpTaskReminderScheduler())
         vm.title = "Renamed"
         vm.notes = "Some notes"
         vm.projectId = project.id
@@ -57,7 +57,7 @@ final class TaskEditorViewModelTests: XCTestCase {
         let store = TaskStore(databaseManager: manager)
         let task = try store.createTask(title: "Keep me")
 
-        let vm = TaskEditorViewModel(task: task, store: store)
+        let vm = TaskEditorViewModel(task: task, store: store, reminderScheduler: NoOpTaskReminderScheduler())
         vm.title = "   "
         XCTAssertFalse(vm.save())
         XCTAssertEqual(vm.saveError, "Title can't be empty.")
@@ -73,7 +73,7 @@ final class TaskEditorViewModelTests: XCTestCase {
         let store = TaskStore(databaseManager: manager)
         let original = try store.createTask(title: "Dup me", tags: ["work"])
 
-        let vm = TaskEditorViewModel(task: original, store: store)
+        let vm = TaskEditorViewModel(task: original, store: store, reminderScheduler: NoOpTaskReminderScheduler())
         let copy = try XCTUnwrap(vm.duplicate())
         XCTAssertNotEqual(copy.id, original.id)
         XCTAssertEqual(copy.title, "Dup me")
@@ -86,7 +86,7 @@ final class TaskEditorViewModelTests: XCTestCase {
         let store = TaskStore(databaseManager: manager)
         let task = try store.createTask(title: "Bye")
 
-        let vm = TaskEditorViewModel(task: task, store: store)
+        let vm = TaskEditorViewModel(task: task, store: store, reminderScheduler: NoOpTaskReminderScheduler())
         vm.delete()
         XCTAssertNil(try store.fetchTask(id: task.id))
     }

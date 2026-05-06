@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         registerKeyboardShortcuts()
         observeMainWindowClose()
         observeSpeechErrors()
+        // Reminder category + delegate. Authorization is requested lazily the
+        // first time a task with `remindAt` is saved, not here — that keeps
+        // first-launch silent for users who don't use the task layer.
+        TaskReminderScheduler.shared.registerCategory()
+        TaskReminderScheduler.shared.installDelegate()
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
