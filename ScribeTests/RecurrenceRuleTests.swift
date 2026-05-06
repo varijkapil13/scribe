@@ -10,7 +10,7 @@ final class RecurrenceRuleTests: XCTestCase {
         XCTAssertEqual(rule.frequency, .daily)
         XCTAssertEqual(rule.interval, 1)
         XCTAssertTrue(rule.byDay.isEmpty)
-        XCTAssertNil(rule.byMonthDay)
+        XCTAssertNil(rule.byOrdinalWeekday)
     }
 
     func testParseDailyWithInterval() throws {
@@ -23,21 +23,21 @@ final class RecurrenceRuleTests: XCTestCase {
         let rule = try RecurrenceRule.parse("FREQ=WEEKLY;BYDAY=MO,WE,FR")
         XCTAssertEqual(rule.frequency, .weekly)
         XCTAssertEqual(rule.byDay, [.mo, .we, .fr])
-        XCTAssertNil(rule.byMonthDay)
+        XCTAssertNil(rule.byOrdinalWeekday)
     }
 
     func testParseMonthlyOrdinalPositive() throws {
         let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=2MO")
         XCTAssertEqual(rule.frequency, .monthly)
-        XCTAssertEqual(rule.byMonthDay?.ordinal, 2)
-        XCTAssertEqual(rule.byMonthDay?.weekday, .mo)
+        XCTAssertEqual(rule.byOrdinalWeekday?.ordinal, 2)
+        XCTAssertEqual(rule.byOrdinalWeekday?.weekday, .mo)
         XCTAssertTrue(rule.byDay.isEmpty)
     }
 
     func testParseMonthlyOrdinalNegative() throws {
         let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=-1FR")
-        XCTAssertEqual(rule.byMonthDay?.ordinal, -1)
-        XCTAssertEqual(rule.byMonthDay?.weekday, .fr)
+        XCTAssertEqual(rule.byOrdinalWeekday?.ordinal, -1)
+        XCTAssertEqual(rule.byOrdinalWeekday?.weekday, .fr)
     }
 
     func testParseUnknownKeysIgnored() throws {

@@ -1,6 +1,6 @@
 import Foundation
 
-enum RecurrenceError: LocalizedError {
+enum RecurrenceError: LocalizedError, Sendable {
     case invalidRule(String)
 
     var errorDescription: String? {
@@ -9,15 +9,15 @@ enum RecurrenceError: LocalizedError {
     }
 }
 
-struct RecurrenceRule: Equatable {
+struct RecurrenceRule: Equatable, Sendable {
 
-    enum Frequency: String {
+    enum Frequency: String, Sendable {
         case daily   = "DAILY"
         case weekly  = "WEEKLY"
         case monthly = "MONTHLY"
     }
 
-    enum Weekday: String, CaseIterable, Equatable {
+    enum Weekday: String, CaseIterable, Equatable, Sendable {
         case mo = "MO", tu = "TU", we = "WE", th = "TH"
         case fr = "FR", sa = "SA", su = "SU"
 
@@ -35,22 +35,22 @@ struct RecurrenceRule: Equatable {
         }
     }
 
-    struct OrdinalWeekday: Equatable {
+    struct OrdinalWeekday: Equatable, Sendable {
         let ordinal: Int    // 1…5 = Nth; -1 = last
         let weekday: Weekday
     }
 
     let frequency: Frequency
-    let interval: Int                   // ≥ 1; default 1
-    let byDay: [Weekday]                // WEEKLY multi-day list
-    let byMonthDay: OrdinalWeekday?     // MONTHLY ordinal weekday
+    let interval: Int                       // ≥ 1; default 1
+    let byDay: [Weekday]                    // WEEKLY multi-day list
+    let byOrdinalWeekday: OrdinalWeekday?   // MONTHLY ordinal weekday
 
     // MARK: - Serialisation
 
     var rruleString: String {
         var parts = ["FREQ=\(frequency.rawValue)"]
         if interval != 1 { parts.append("INTERVAL=\(interval)") }
-        if let ord = byMonthDay {
+        if let ord = byOrdinalWeekday {
             parts.append("BYDAY=\(ord.ordinal)\(ord.weekday.rawValue)")
         } else if !byDay.isEmpty {
             parts.append("BYDAY=\(byDay.map(\.rawValue).joined(separator: ","))")
@@ -59,6 +59,8 @@ struct RecurrenceRule: Equatable {
     }
 
     // MARK: - Parsing
+
+    private static let ordinalPattern = try! NSRegularExpression(pattern: #"^(-?[1-5])([A-Z]{2})$"#)
 
     static func parse(_ rrule: String) throws -> RecurrenceRule {
         var pairs: [String: String] = [:]
@@ -81,19 +83,18 @@ struct RecurrenceRule: Equatable {
         }
 
         var byDay: [Weekday] = []
-        var byMonthDay: OrdinalWeekday? = nil
+        var byOrdinalWeekday: OrdinalWeekday? = nil
 
         if let bydayStr = pairs["BYDAY"] {
-            let pattern = try! NSRegularExpression(pattern: #"^(-?[1-5])([A-Z]{2})$"#)
             let nsStr = bydayStr as NSString
             let range = NSRange(location: 0, length: nsStr.length)
-            if let match = pattern.firstMatch(in: bydayStr, range: range) {
+            if let match = Self.ordinalPattern.firstMatch(in: bydayStr, range: range) {
                 let ordStr = nsStr.substring(with: match.range(at: 1))
                 let wdStr  = nsStr.substring(with: match.range(at: 2))
                 guard let ordinal = Int(ordStr), let weekday = Weekday(rawValue: wdStr) else {
                     throw RecurrenceError.invalidRule(rrule)
                 }
-                byMonthDay = OrdinalWeekday(ordinal: ordinal, weekday: weekday)
+                byOrdinalWeekday = OrdinalWeekday(ordinal: ordinal, weekday: weekday)
             } else {
                 for raw in bydayStr.split(separator: ",") {
                     guard let wd = Weekday(rawValue: String(raw)) else {
@@ -108,7 +109,7 @@ struct RecurrenceRule: Equatable {
             frequency: frequency,
             interval: interval,
             byDay: byDay,
-            byMonthDay: byMonthDay
+            byOrdinalWeekday: byOrdinalWeekday
         )
     }
 }
