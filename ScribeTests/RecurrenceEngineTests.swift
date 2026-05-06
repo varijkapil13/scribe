@@ -95,4 +95,55 @@ final class RecurrenceEngineTests: XCTestCase {
         let next = RecurrenceEngine.nextDate(after: utc(2026, 10, 31, hour: 1), rule: rule)
         XCTAssertEqual(next, utc(2026, 11, 7, hour: 1))
     }
+
+    // MARK: - MONTHLY
+
+    func testMonthlyDayOfMonthAdvancesByOneMonth() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY")
+        // 2026-01-15 → 2026-02-15
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 15), rule: rule)
+        XCTAssertEqual(next, utc(2026, 2, 15))
+    }
+
+    func testMonthlyDayOfMonthIntervalTwo() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;INTERVAL=2")
+        // 2026-01-15 → 2026-03-15
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 15), rule: rule)
+        XCTAssertEqual(next, utc(2026, 3, 15))
+    }
+
+    func testMonthlyOrdinalSecondMonday() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=2MO")
+        // Jan 2026: 2nd Monday = Jan 12. From Jan 12 → Feb 2026 2nd Monday = Feb 9.
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 12), rule: rule)
+        XCTAssertEqual(next, utc(2026, 2, 9))
+    }
+
+    func testMonthlyOrdinalFirstWednesday() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=1WE")
+        // Feb 2026: 1st Wednesday = Feb 4. From Feb 4 → Mar 4 (1st Wed of March).
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 2, 4), rule: rule)
+        XCTAssertEqual(next, utc(2026, 3, 4))
+    }
+
+    func testMonthlyOrdinalLastFriday() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=-1FR")
+        // Jan 2026 last Friday = Jan 30. → Feb 2026 last Friday = Feb 27.
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 30), rule: rule)
+        XCTAssertEqual(next, utc(2026, 2, 27))
+    }
+
+    func testMonthlyOrdinalLastFridayFebruaryToMarch() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=-1FR")
+        // Feb 2026 last Friday = Feb 27 → Mar 2026 last Friday = Mar 27.
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 2, 27), rule: rule)
+        XCTAssertEqual(next, utc(2026, 3, 27))
+    }
+
+    func testMonthlyIntervalTwoOrdinal() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;INTERVAL=2;BYDAY=1MO")
+        // Jan 2026 1st Monday = Jan 5 → skip Feb → Mar 2 (1st Mon of March).
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 5), rule: rule)
+        XCTAssertEqual(next, utc(2026, 3, 2))
+    }
 }
