@@ -38,6 +38,7 @@ final class TaskListViewModel: ObservableObject {
 
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
     @Published var quickAddText: String = ""
+    @Published private(set) var recentlyCompletedRecurring: Set<String> = []
 
     // MARK: - Properties
 
@@ -95,6 +96,13 @@ final class TaskListViewModel: ObservableObject {
                 try store.uncompleteTask(id: task.id)
             } else {
                 try store.completeTask(id: task.id)
+                if task.recurrenceRule != nil {
+                    recentlyCompletedRecurring.insert(task.id)
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(1.5))
+                        self?.recentlyCompletedRecurring.remove(task.id)
+                    }
+                }
             }
         } catch {
             Log.ui.error("TaskListViewModel.toggleCompleted failed: \(error.localizedDescription, privacy: .public)")
