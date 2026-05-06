@@ -31,8 +31,9 @@ struct TaskListView: View {
         .navigationTitle(headerTitle)
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
-        // Filter switches are handled by .id(filter) in MainWindowView, which tears down and
-        // recreates this view (and its @StateObject) — no onChange needed here.
+        .onChange(of: filter) { _, newFilter in
+            viewModel.switchFilter(to: newFilter)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .scribeFocusQuickAdd)) { _ in
             quickAddFocused = true
         }

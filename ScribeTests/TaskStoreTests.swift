@@ -251,6 +251,30 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertEqual(count, 1)
     }
 
+    func testCreateTaskWithMalformedRuleThrows() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertThrowsError(
+            try store.createTask(title: "Bad rule", dueAt: due, recurrenceRule: "FREQ=YEARLY")
+        ) { error in
+            guard case RecurrenceError.invalidRule = error else {
+                XCTFail("Expected RecurrenceError.invalidRule, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testUpdateTaskWithMalformedRuleThrows() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        var task = try store.createTask(title: "Good task", dueAt: due, recurrenceRule: "FREQ=DAILY")
+        task.recurrenceRule = "NOT_A_RULE"
+        XCTAssertThrowsError(try store.updateTask(task)) { error in
+            guard case RecurrenceError.invalidRule = error else {
+                XCTFail("Expected RecurrenceError.invalidRule, got \(error)")
+                return
+            }
+        }
+    }
+
     // MARK: - Source links
 
     func testTaskCanLinkToSessionAndActionItem() throws {

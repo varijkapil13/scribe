@@ -45,6 +45,7 @@ final class TaskListViewModel: ObservableObject {
     private let store: TaskStore
     private var cancellable: AnyCancellable?
     private(set) var filter: TaskStore.Filter
+    private var recurringClearTasks: [String: Task<Void, Never>] = [:]
 
     // MARK: - Initializer
 
@@ -69,6 +70,13 @@ final class TaskListViewModel: ObservableObject {
     func stop() {
         cancellable?.cancel()
         cancellable = nil
+    }
+
+    func switchFilter(to newFilter: TaskStore.Filter) {
+        guard newFilter != filter else { return }
+        filter = newFilter
+        stop()
+        start()
     }
 
     // MARK: - Quick add
@@ -98,9 +106,12 @@ final class TaskListViewModel: ObservableObject {
                 try store.completeTask(id: task.id)
                 if task.recurrenceRule != nil {
                     recentlyCompletedRecurring.insert(task.id)
-                    Task { @MainActor [weak self] in
+                    recurringClearTasks[task.id]?.cancel()
+                    recurringClearTasks[task.id] = Task { @MainActor [weak self] in
                         try? await Task.sleep(for: .seconds(1.5))
+                        guard !Task.isCancelled else { return }
                         self?.recentlyCompletedRecurring.remove(task.id)
+                        self?.recurringClearTasks.removeValue(forKey: task.id)
                     }
                 }
             }

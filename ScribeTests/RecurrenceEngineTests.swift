@@ -146,4 +146,24 @@ final class RecurrenceEngineTests: XCTestCase {
         let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 5), rule: rule)
         XCTAssertEqual(next, utc(2026, 3, 2))
     }
+
+    func testMonthlyFifthWeekdaySkipsMonthsWithoutIt() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=5MO")
+        // Jan 2026 has 5 Mondays (Jan 5, 12, 19, 26 — wait, need to verify)
+        // Jan 2026: Mon 5, 12, 19, 26 — only 4 Mondays. So from Jan 26 we need
+        // to find the next month with a 5th Monday.
+        // Feb 2026: Mon 2, 9, 16, 23 — 4 Mondays, no 5th.
+        // Mar 2026: Mon 2, 9, 16, 23, 30 — 5 Mondays! Mar 30 is the 5th Monday.
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 1, 26), rule: rule)
+        XCTAssertEqual(next, utc(2026, 3, 30))
+    }
+
+    func testMonthlyFifthWeekdayResultStaysInTargetMonth() throws {
+        let rule = try RecurrenceRule.parse("FREQ=MONTHLY;BYDAY=5FR")
+        // May 2026: Fri 1, 8, 15, 22, 29 — 5 Fridays. From May 29 →
+        // Jun 2026: Fri 5, 12, 19, 26 — only 4. Skip.
+        // Jul 2026: Fri 3, 10, 17, 24, 31 — 5 Fridays. Jul 31 is the 5th.
+        let next = RecurrenceEngine.nextDate(after: utc(2026, 5, 29), rule: rule)
+        XCTAssertEqual(next, utc(2026, 7, 31))
+    }
 }

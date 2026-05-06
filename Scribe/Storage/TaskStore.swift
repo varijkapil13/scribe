@@ -96,7 +96,8 @@ final class TaskStore {
         sourceActionItemId: String? = nil,
         tags: [String] = []
     ) throws -> TodoTask {
-        try db.write { database in
+        try validateRecurrence(rule: recurrenceRule, dueAt: dueAt)
+        return try db.write { database in
             let nextOrder = try Int.fetchOne(database,
                 sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
                 arguments: [projectId]) ?? 0
@@ -117,7 +118,6 @@ final class TaskStore {
                 sourceActionItemId: sourceActionItemId
             )
 
-            try validateRecurrence(rule: recurrenceRule, dueAt: dueAt)
             try task.insert(database)
             for tag in normalisedTags(tags) {
                 try TaskTagRow(taskId: task.id, tag: tag).insert(database)
@@ -131,10 +131,8 @@ final class TaskStore {
     func updateTask(_ task: TodoTask) throws {
         var copy = task
         copy.updatedAt = Date()
-        try db.write {
-            try validateRecurrence(rule: copy.recurrenceRule, dueAt: copy.dueAt)
-            try copy.update($0)
-        }
+        try validateRecurrence(rule: copy.recurrenceRule, dueAt: copy.dueAt)
+        try db.write { try copy.update($0) }
     }
 
     func deleteTask(id: String) throws {
@@ -150,8 +148,8 @@ final class TaskStore {
             try TaskCompletion(taskId: id, completedAt: date).insert(database)
 
             if let ruleStr = task.recurrenceRule,
-               let due = task.dueAt,
-               let rule = try? RecurrenceRule.parse(ruleStr) {
+               let due = task.dueAt {
+                let rule = try RecurrenceRule.parse(ruleStr)
                 task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule)
                 task.completedAt = nil
             } else {
@@ -322,9 +320,9 @@ final class TaskStore {
     }
 
     private func validateRecurrence(rule: String?, dueAt: Date?) throws {
-        if rule != nil && dueAt == nil {
-            throw TaskStoreError.recurringTaskRequiresDueDate
-        }
+        guard let ruleStr = rule else { return }
+        if dueAt == nil { throw TaskStoreError.recurringTaskRequiresDueDate }
+        _ = try RecurrenceRule.parse(ruleStr)
     }
 }
 
