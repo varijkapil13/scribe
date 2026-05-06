@@ -92,7 +92,7 @@ sessions — update it as decisions land or scope changes.
       move it (`Transferable` payload), tag chips rendered under task
       titles. PR open as `feat/tasks-slice-4-projects`.
 
-- [~] **Slice 5 — Action item → task bridge.** "Convert to task" button on
+- [x] **Slice 5 — Action item → task bridge.** "Convert to task" button on
       each `ActionItemRow` in `TranscriptDetailView` pre-fills title /
       notes / priority and sets `sourceSessionId` + `sourceActionItemId`.
       Once converted the row's button flips to "Open task" and re-uses
@@ -101,11 +101,15 @@ sessions — update it as decisions land or scope changes.
       title>" row when `sourceSessionId` is set. PR open as
       `feat/tasks-slice-5-convert-action-item`.
 
-- [ ] **Slice 6 — Reminders.** `TaskReminderScheduler` wraps
-      `UNUserNotificationCenter`. Permission flow on first scheduled
-      reminder. Notification actions: "Mark Done" and "Snooze 15 min".
-      Reschedule on edit / cancel on delete or completion. Verify
-      Hardened Runtime entitlement passes.
+- [~] **Slice 6 — Reminders.** `TaskReminderScheduler` wraps
+      `UNUserNotificationCenter` behind a `TaskReminderScheduling`
+      protocol so view models can inject a no-op for tests. Lazy
+      authorization (requested first time `schedule(_:)` runs against
+      a candidate task). Categories + actions ("Mark Done", "Snooze
+      15 min") registered at launch via `AppDelegate`. Editor save,
+      task delete, complete / uncomplete (incl. recurring re-arm)
+      all schedule / cancel as appropriate. PR open as
+      `feat/tasks-slice-6-reminders`.
 
 - [x] **Slice 7 — Recurring tasks.** Minimal RRULE parser
       (`RecurrenceEngine`): `FREQ=DAILY|WEEKLY|MONTHLY`, `INTERVAL`,

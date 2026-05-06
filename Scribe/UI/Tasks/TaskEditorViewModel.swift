@@ -30,15 +30,18 @@ final class TaskEditorViewModel: ObservableObject {
 
     private let store: TaskStore
     private let transcriptStore: TranscriptStore
+    private let reminderScheduler: TaskReminderScheduling
 
     // MARK: - Initializer
 
     init(task: TodoTask,
          store: TaskStore = TaskStore(),
-         transcriptStore: TranscriptStore = TranscriptStore()) {
+         transcriptStore: TranscriptStore = TranscriptStore(),
+         reminderScheduler: TaskReminderScheduling = TaskReminderScheduler.shared) {
         self.originalTask = task
         self.store = store
         self.transcriptStore = transcriptStore
+        self.reminderScheduler = reminderScheduler
         self.title = task.title
         self.notes = task.notes
         self.projectId = task.projectId
@@ -95,6 +98,9 @@ final class TaskEditorViewModel: ObservableObject {
             updated.remindAt = remindAt
             try store.updateTask(updated)
             try store.setTags(parsedTags, for: updated.id)
+            // (Re-)schedule the reminder. The scheduler decides whether the
+            // task is a candidate (no-op on past / cleared remindAt).
+            Task { await reminderScheduler.schedule(updated) }
             saveError = nil
             return true
         } catch {
@@ -107,6 +113,7 @@ final class TaskEditorViewModel: ObservableObject {
     func delete() {
         do {
             try store.deleteTask(id: originalTask.id)
+            Task { await reminderScheduler.cancel(taskId: originalTask.id) }
         } catch {
             saveError = error.localizedDescription
             Log.ui.error("TaskEditorViewModel.delete failed: \(error.localizedDescription, privacy: .public)")

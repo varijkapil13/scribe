@@ -3,6 +3,7 @@ import Combine
 import CoreGraphics
 import Speech
 import SwiftUI
+import UserNotifications
 
 /// AppKit delegate that coordinates high-level recording actions, global
 /// keyboard shortcuts, and app-lifecycle policy.
@@ -42,6 +43,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         registerKeyboardShortcuts()
         observeMainWindowClose()
         observeSpeechErrors()
+        // Reminder category + delegate. Authorization is requested lazily the
+        // first time a task with `remindAt` is saved, not here — that keeps
+        // first-launch silent for users who don't use the task layer.
+        TaskReminderScheduler.shared.registerCategory()
+        TaskReminderScheduler.shared.installDelegate()
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
@@ -56,6 +62,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         Task { @MainActor in
             _ = await Permissions.checkMicrophonePermission()
             _ = await SpeechRecognizerEngine.checkAuthorization()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task {
+            try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }
     }
 
