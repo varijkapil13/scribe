@@ -65,7 +65,6 @@ final class TaskEditorViewModel: ObservableObject {
 
     /// Persists every editable field plus tags. Returns true on success so the
     /// caller can dismiss the sheet.
-    @discardableResult
     func save() -> Bool {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {

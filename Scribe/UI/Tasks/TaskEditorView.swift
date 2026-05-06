@@ -11,11 +11,16 @@ struct TaskEditorView: View {
     @State private var hasDueDate: Bool
     @State private var hasReminder: Bool
     @State private var showDeleteConfirm = false
+    // Preserved so toggling off then on restores the original date rather than defaulting to now.
+    @State private var lastDueDate: Date?
+    @State private var lastRemindDate: Date?
 
     init(task: TodoTask) {
         _viewModel = StateObject(wrappedValue: TaskEditorViewModel(task: task))
         _hasDueDate = State(initialValue: task.dueAt != nil)
         _hasReminder = State(initialValue: task.remindAt != nil)
+        _lastDueDate = State(initialValue: task.dueAt)
+        _lastRemindDate = State(initialValue: task.remindAt)
     }
 
     var body: some View {
@@ -30,7 +35,12 @@ struct TaskEditorView: View {
                 Section("Schedule") {
                     Toggle("Due date", isOn: $hasDueDate)
                         .onChange(of: hasDueDate) { _, on in
-                            viewModel.dueAt = on ? (viewModel.dueAt ?? Date()) : nil
+                            if on {
+                                viewModel.dueAt = lastDueDate ?? Date()
+                            } else {
+                                lastDueDate = viewModel.dueAt
+                                viewModel.dueAt = nil
+                            }
                         }
                     if hasDueDate {
                         DatePicker(
@@ -45,7 +55,12 @@ struct TaskEditorView: View {
 
                     Toggle("Reminder", isOn: $hasReminder)
                         .onChange(of: hasReminder) { _, on in
-                            viewModel.remindAt = on ? (viewModel.remindAt ?? viewModel.dueAt ?? Date()) : nil
+                            if on {
+                                viewModel.remindAt = lastRemindDate ?? viewModel.dueAt ?? Date()
+                            } else {
+                                lastRemindDate = viewModel.remindAt
+                                viewModel.remindAt = nil
+                            }
                         }
                     if hasReminder {
                         DatePicker(
