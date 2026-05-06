@@ -19,18 +19,26 @@ final class TaskEditorViewModel: ObservableObject {
     @Published var tagsInput: String
     @Published private(set) var availableProjects: [Project] = []
     @Published private(set) var saveError: String?
+    /// Title of the meeting session this task originated from, when the task
+    /// has a `sourceSessionId`. Surfaced as a "From: <title>" link in the
+    /// editor sheet.
+    @Published private(set) var sourceSessionTitle: String?
 
     let originalTask: TodoTask
 
     // MARK: - Properties
 
     private let store: TaskStore
+    private let transcriptStore: TranscriptStore
 
     // MARK: - Initializer
 
-    init(task: TodoTask, store: TaskStore = TaskStore()) {
+    init(task: TodoTask,
+         store: TaskStore = TaskStore(),
+         transcriptStore: TranscriptStore = TranscriptStore()) {
         self.originalTask = task
         self.store = store
+        self.transcriptStore = transcriptStore
         self.title = task.title
         self.notes = task.notes
         self.projectId = task.projectId
@@ -40,6 +48,7 @@ final class TaskEditorViewModel: ObservableObject {
         self.tagsInput = ""
         loadProjects()
         loadTags()
+        loadSourceSessionTitle()
     }
 
     // MARK: - Loading
@@ -59,6 +68,11 @@ final class TaskEditorViewModel: ObservableObject {
         } catch {
             Log.ui.error("TaskEditorViewModel.loadTags failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func loadSourceSessionTitle() {
+        guard let sessionId = originalTask.sourceSessionId else { return }
+        sourceSessionTitle = (try? transcriptStore.fetchSession(id: sessionId))?.title
     }
 
     // MARK: - Actions

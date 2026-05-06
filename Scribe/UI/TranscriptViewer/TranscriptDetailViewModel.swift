@@ -17,6 +17,10 @@ final class TranscriptDetailViewModel: ObservableObject {
     @Published var isGeneratingSummary: Bool = false
     @Published var isAnalyzing: Bool = false
     @Published var completedActionItems: Set<UUID> = []
+    /// Action item ids whose conversion already produced a `TodoTask`. Used by
+    /// the row's "Convert to task" button to switch to "Open task" once a
+    /// link exists.
+    @Published var convertedActionItems: Set<UUID> = []
     @Published var summaryError: String?
 
     // MARK: - Selection State (for moving segments)
@@ -28,6 +32,7 @@ final class TranscriptDetailViewModel: ObservableObject {
     // MARK: - Properties
 
     private let store: TranscriptStore
+    private let taskStore: TaskStore
 
     // MARK: - Computed Properties
 
@@ -51,9 +56,12 @@ final class TranscriptDetailViewModel: ObservableObject {
 
     // MARK: - Initializer
 
-    init(session: Session, store: TranscriptStore = TranscriptStore()) {
+    init(session: Session,
+         store: TranscriptStore = TranscriptStore(),
+         taskStore: TaskStore = TaskStore()) {
         self.session = session
         self.store = store
+        self.taskStore = taskStore
     }
 
     /// Re-fetches session metadata from the store. Called after edits to keep
@@ -108,6 +116,52 @@ final class TranscriptDetailViewModel: ObservableObject {
     func loadSummary() {
         meetingSummary = try? store.fetchSummary(sessionId: session.id)
         completedActionItems = (try? store.fetchCompletedActionItemIds(sessionId: session.id)) ?? []
+        refreshConvertedActionItems()
+    }
+
+    /// Refreshes the cache of action-item ids that already have a linked
+    /// task. Called after the summary loads and after a fresh conversion so
+    /// the row's button can flip to "Open task".
+    func refreshConvertedActionItems() {
+        guard let summary = meetingSummary else {
+            convertedActionItems = []
+            return
+        }
+        let ids = summary.actionItems.map { $0.id.uuidString }
+        let linked = (try? taskStore.actionItemIdsWithLinkedTasks(in: ids)) ?? []
+        convertedActionItems = Set(
+            summary.actionItems
+                .filter { linked.contains($0.id.uuidString) }
+                .map(\.id)
+        )
+    }
+
+    /// Converts a single action item into a `TodoTask`. Returns the new task
+    /// (or the existing one when the row had already been converted) so the
+    /// caller can immediately open the editor sheet on it.
+    @discardableResult
+    func convertActionItemToTask(_ item: ActionItem) -> TodoTask? {
+        let actionItemId = item.id.uuidString
+        if let existing = (try? taskStore.fetchTaskForActionItem(actionItemId)) ?? nil {
+            return existing
+        }
+        let draft = ActionItemConverter.draft(from: item, sessionId: session.id)
+        do {
+            let created = try taskStore.createTask(
+                title: draft.title,
+                notes: draft.notes,
+                priority: draft.priority,
+                dueAt: draft.dueAt,
+                sourceSessionId: draft.sourceSessionId,
+                sourceActionItemId: draft.sourceActionItemId,
+                tags: draft.tags
+            )
+            convertedActionItems.insert(item.id)
+            return created
+        } catch {
+            Log.storage.error("convertActionItemToTask failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// Generates an AI-powered meeting summary using on-device Apple Intelligence.
