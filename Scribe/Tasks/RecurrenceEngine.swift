@@ -25,14 +25,33 @@ enum RecurrenceEngine: Sendable {
         }
     }
 
-    // MARK: - WEEKLY (stub — Task 3)
+    // MARK: - WEEKLY
 
     private static func nextWeeklyDate(
         after date: Date,
         rule: RecurrenceRule,
         calendar: Calendar
     ) -> Date {
-        return calendar.date(byAdding: .weekOfYear, value: rule.interval, to: date)!
+        guard !rule.byDay.isEmpty else {
+            return calendar.date(byAdding: .weekOfYear, value: rule.interval, to: date)!
+        }
+
+        let sorted = rule.byDay.sorted { $0.calendarWeekday < $1.calendarWeekday }
+        let currentWeekday = calendar.component(.weekday, from: date)
+
+        // If any BYDAY weekday comes later this week, advance to it.
+        if let next = sorted.first(where: { $0.calendarWeekday > currentWeekday }) {
+            return calendar.date(byAdding: .day,
+                                 value: next.calendarWeekday - currentWeekday,
+                                 to: date)!
+        }
+
+        // Wrap: days to first BYDAY in the next `interval` week(s).
+        let firstWeekday = sorted.first!.calendarWeekday
+        let daysToFirst = (firstWeekday - currentWeekday + 7) % 7
+        let normalised = daysToFirst == 0 ? 7 : daysToFirst
+        let total = normalised + (rule.interval - 1) * 7
+        return calendar.date(byAdding: .day, value: total, to: date)!
     }
 
     // MARK: - MONTHLY (stub — Task 4)
