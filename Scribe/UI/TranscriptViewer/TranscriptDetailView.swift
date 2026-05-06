@@ -12,6 +12,7 @@ struct TranscriptDetailView: View {
     @State var selectedExportFormat: ExportFormat = .markdown
     @State var selectedTab: DetailTab = .transcript
     @State var showMoveSheet: Bool = false
+    @State var openedTask: TodoTask?
 
     private var session: Session { viewModel.session }
 
@@ -72,6 +73,14 @@ struct TranscriptDetailView: View {
             MoveSegmentsSheet(viewModel: viewModel) {
                 showMoveSheet = false
             }
+        }
+        .sheet(item: $openedTask, onDismiss: {
+            // Refresh once the editor closes — the task may have been deleted
+            // (so the row should drop the green "Open task" state) or
+            // duplicated (still converted, no change needed).
+            viewModel.refreshConvertedActionItems()
+        }) { task in
+            TaskEditorView(task: task)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -431,7 +440,13 @@ struct TranscriptDetailView: View {
                     ActionItemRow(
                         item: item,
                         isCompleted: viewModel.completedActionItems.contains(item.id),
-                        onToggle: { viewModel.toggleActionItem(item.id) }
+                        isConverted: viewModel.convertedActionItems.contains(item.id),
+                        onToggle: { viewModel.toggleActionItem(item.id) },
+                        onConvert: {
+                            if let task = viewModel.convertActionItemToTask(item) {
+                                openedTask = task
+                            }
+                        }
                     )
                 }
             }
@@ -584,7 +599,9 @@ struct TranscriptDetailView: View {
 private struct ActionItemRow: View {
     let item: ActionItem
     let isCompleted: Bool
+    var isConverted: Bool = false
     let onToggle: () -> Void
+    var onConvert: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
@@ -618,6 +635,20 @@ private struct ActionItemRow: View {
                     Spacer()
                     if let priority = item.priority {
                         PriorityBadge(priority: priority)
+                    }
+                    if let onConvert {
+                        Button(action: onConvert) {
+                            Label(
+                                isConverted ? "Open task" : "Convert to task",
+                                systemImage: isConverted ? "checkmark.square" : "plus.square.on.square"
+                            )
+                            .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help(isConverted
+                              ? "Open the linked task in the editor"
+                              : "Create a task from this action item")
                     }
                 }
             }

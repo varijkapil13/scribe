@@ -212,6 +212,30 @@ final class TaskStore {
         }
     }
 
+    /// Returns the task created from the given action item, if any. Used by
+    /// the convert-to-task button in `TranscriptDetailView` to switch the row
+    /// from "Convert" to "Open task" once a link exists.
+    func fetchTaskForActionItem(_ actionItemId: String) throws -> TodoTask? {
+        try db.read { database in
+            try TodoTask
+                .filter(Column("sourceActionItemId") == actionItemId)
+                .fetchOne(database)
+        }
+    }
+
+    /// Bulk variant — returns the set of action-item ids that already have a
+    /// linked task, so a transcript view can mark every "converted" row in
+    /// one query rather than N.
+    func actionItemIdsWithLinkedTasks(in actionItemIds: [String]) throws -> Set<String> {
+        guard !actionItemIds.isEmpty else { return [] }
+        return try db.read { database in
+            let tasks = try TodoTask
+                .filter(actionItemIds.contains(Column("sourceActionItemId")))
+                .fetchAll(database)
+            return Set(tasks.compactMap(\.sourceActionItemId))
+        }
+    }
+
     func fetchTask(id: String) throws -> TodoTask? {
         try db.read { try TodoTask.fetchOne($0, key: id) }
     }

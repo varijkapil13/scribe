@@ -92,6 +92,13 @@ struct TaskEditorView: View {
                     TextField("Tags (comma-separated)", text: $viewModel.tagsInput)
                 }
 
+                if let title = viewModel.sourceSessionTitle {
+                    Section("Source") {
+                        Label(title, systemImage: "waveform.badge.mic")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 if let err = viewModel.saveError {
                     Section {
                         Label(err, systemImage: "exclamationmark.triangle")

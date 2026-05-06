@@ -69,7 +69,7 @@ sessions — update it as decisions land or scope changes.
       Upcoming / All / Completed / project / tag). Tests: 11 cases via
       `swift test`. PR #2.
 
-- [~] **Slice 2 — Sidebar + minimal task list.** Extend `MainSelection` with
+- [x] **Slice 2 — Sidebar + minimal task list.** Extend `MainSelection` with
       `.tasks(TaskStore.Filter)`. New sidebar section "Tasks": Inbox,
       Today, Upcoming, All, Completed. Detail pane = vertical list grouped by
       date (Overdue / Today / Tomorrow / This week / Later / No date /
@@ -80,24 +80,26 @@ sessions — update it as decisions land or scope changes.
       keyboard shortcuts land in slice 8. PR open as
       `feat/tasks-slice-2-list-ui`.
 
-- [~] **Slice 3 — Task editor pane.** Modal sheet on row tap (right-side
+- [x] **Slice 3 — Task editor pane.** Modal sheet on row tap (right-side
       inspector deferred). Edits title, notes, priority, due date,
       reminder, project, tags. Save on commit (Cmd-Return), Cancel
       discards. Toolbar exposes Duplicate + Delete (destructive with
       confirm). PR open as `feat/tasks-slice-3-editor-pane`.
 
-- [~] **Slice 4 — Projects.** Project create / edit / delete sheet,
+- [x] **Slice 4 — Projects.** Project create / edit / delete sheet,
       sidebar Projects subsection below the smart filters with `+` button,
       drag-to-reorder rows (`onMove`), drop a task onto a project row to
       move it (`Transferable` payload), tag chips rendered under task
       titles. PR open as `feat/tasks-slice-4-projects`.
 
-- [ ] **Slice 5 — Action item → task bridge.** "Convert to task" button on
-      each `ActionItemRow` in `TranscriptDetailView` (Action Items tab).
-      Pre-fills title from description, assignee/deadline → tags or notes,
-      priority carries over. Sets `sourceSessionId` + `sourceActionItemId`
-      so the linked task is reachable from the meeting and vice versa.
-      Detail pane on a task shows a "From: <session title>" link.
+- [~] **Slice 5 — Action item → task bridge.** "Convert to task" button on
+      each `ActionItemRow` in `TranscriptDetailView` pre-fills title /
+      notes / priority and sets `sourceSessionId` + `sourceActionItemId`.
+      Once converted the row's button flips to "Open task" and re-uses
+      the existing `TaskEditorView` sheet (so editing / deleting / dup
+      the linked task all work). Editor sheet shows a "Source: <session
+      title>" row when `sourceSessionId` is set. PR open as
+      `feat/tasks-slice-5-convert-action-item`.
 
 - [ ] **Slice 6 — Reminders.** `TaskReminderScheduler` wraps
       `UNUserNotificationCenter`. Permission flow on first scheduled
@@ -105,7 +107,7 @@ sessions — update it as decisions land or scope changes.
       Reschedule on edit / cancel on delete or completion. Verify
       Hardened Runtime entitlement passes.
 
-- [ ] **Slice 7 — Recurring tasks.** Minimal RRULE parser
+- [x] **Slice 7 — Recurring tasks.** Minimal RRULE parser
       (`RecurrenceEngine`): `FREQ=DAILY|WEEKLY|MONTHLY`, `INTERVAL`,
       `BYDAY` (MO,TU,…). On complete, advance `dueAt` and clear
       `completedAt` while writing a row to `task_completions`. Picker UI

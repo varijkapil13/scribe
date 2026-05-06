@@ -302,6 +302,66 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertNil(refreshed.projectId)
     }
 
+    // MARK: - Action item linkage
+
+    /// Creates the necessary session + summary + action_item rows so the
+    /// `tasks.sourceActionItemId` foreign key is satisfied.
+    private func makePersistedActionItem(description: String = "Send report") throws -> (sessionId: String, actionItemId: String) {
+        let transcripts = TranscriptStore(databaseManager: manager)
+        let session = try transcripts.createSession(title: "Sync")
+        let actionItem = ActionItem(
+            id: UUID(),
+            description: description,
+            assignee: nil,
+            deadline: nil,
+            priority: nil,
+            sourceText: ""
+        )
+        let summary = MeetingSummary(
+            id: UUID(),
+            sessionId: session.id,
+            summary: "ok",
+            keyDecisions: [],
+            actionItems: [actionItem],
+            keyTopics: [],
+            followUpQuestions: [],
+            createdAt: Date()
+        )
+        try transcripts.saveSummary(summary)
+        return (session.id, actionItem.id.uuidString)
+    }
+
+    func testFetchTaskForActionItemReturnsLinkedTask() throws {
+        let link = try makePersistedActionItem()
+        let task = try store.createTask(
+            title: "From AI",
+            sourceSessionId: link.sessionId,
+            sourceActionItemId: link.actionItemId
+        )
+        let fetched = try XCTUnwrap(store.fetchTaskForActionItem(link.actionItemId))
+        XCTAssertEqual(fetched.id, task.id)
+    }
+
+    func testActionItemIdsWithLinkedTasksReturnsOnlyMatching() throws {
+        let link1 = try makePersistedActionItem(description: "A")
+        let link2 = try makePersistedActionItem(description: "B")
+        let unlinkedAction = try makePersistedActionItem(description: "C")
+
+        _ = try store.createTask(title: "A", sourceSessionId: link1.sessionId, sourceActionItemId: link1.actionItemId)
+        _ = try store.createTask(title: "B", sourceSessionId: link2.sessionId, sourceActionItemId: link2.actionItemId)
+        _ = try store.createTask(title: "Standalone")
+
+        let result = try store.actionItemIdsWithLinkedTasks(in: [link1.actionItemId, link2.actionItemId, unlinkedAction.actionItemId])
+        XCTAssertEqual(result, [link1.actionItemId, link2.actionItemId])
+    }
+
+    func testActionItemIdsWithLinkedTasksHandlesEmptyInput() throws {
+        let result = try store.actionItemIdsWithLinkedTasks(in: [])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    // MARK: - Project reorder
+
     func testReorderProjectsUpdatesSortOrder() throws {
         let a = try store.createProject(name: "A")
         let b = try store.createProject(name: "B")
