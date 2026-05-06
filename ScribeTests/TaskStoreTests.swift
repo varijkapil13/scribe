@@ -275,6 +275,44 @@ final class TaskStoreTests: XCTestCase {
         }
     }
 
+    // MARK: - Project moves & reorder
+
+    func testMoveTaskAssignsNewProjectAndAppendsToScope() throws {
+        let work = try store.createProject(name: "Work")
+        // Existing task already in the destination so we can verify ordering.
+        let existing = try store.createTask(title: "In work", projectId: work.id)
+        let inboxTask = try store.createTask(title: "Inbox task")
+
+        try store.moveTask(id: inboxTask.id, toProject: work.id)
+
+        let workTasks = try store.fetchTasks(filter: .project(work.id))
+        XCTAssertEqual(workTasks.map(\.id), [existing.id, inboxTask.id])
+
+        let inbox = try store.fetchTasks(filter: .inbox)
+        XCTAssertTrue(inbox.isEmpty)
+    }
+
+    func testMoveTaskBackToInboxClearsProjectId() throws {
+        let project = try store.createProject(name: "Work")
+        let task = try store.createTask(title: "Move me", projectId: project.id)
+
+        try store.moveTask(id: task.id, toProject: nil)
+
+        let refreshed = try XCTUnwrap(store.fetchTask(id: task.id))
+        XCTAssertNil(refreshed.projectId)
+    }
+
+    func testReorderProjectsUpdatesSortOrder() throws {
+        let a = try store.createProject(name: "A")
+        let b = try store.createProject(name: "B")
+        let c = try store.createProject(name: "C")
+
+        try store.reorderProjects([c.id, a.id, b.id])
+
+        let result = try store.fetchProjects()
+        XCTAssertEqual(result.map(\.id), [c.id, a.id, b.id])
+    }
+
     // MARK: - Source links
 
     func testTaskCanLinkToSessionAndActionItem() throws {

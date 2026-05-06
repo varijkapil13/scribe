@@ -74,11 +74,36 @@ final class TaskStore {
     }
 
     func fetchProjects() throws -> [Project] {
-        try db.read {
-            try Project
-                .order(Column("sortOrder").asc, Column("createdAt").asc)
-                .fetchAll($0)
+        try db.read { try Self.fetchProjects($0) }
+    }
+
+    fileprivate static func fetchProjects(_ database: Database) throws -> [Project] {
+        try Project
+            .order(Column("sortOrder").asc, Column("createdAt").asc)
+            .fetchAll(database)
+    }
+
+    /// Persists a new manual ordering for the sidebar's project list. Ids
+    /// not present in the projects table are silently skipped.
+    func reorderProjects(_ orderedIds: [String]) throws {
+        try db.write { database in
+            for (index, id) in orderedIds.enumerated() {
+                try database.execute(
+                    sql: "UPDATE projects SET sortOrder = ? WHERE id = ?",
+                    arguments: [index, id]
+                )
+            }
         }
+    }
+
+    /// Combine publisher emitting the project list whenever the projects
+    /// table changes. Used by the sidebar so create/edit/delete reflect
+    /// without manual refresh.
+    func observeProjects() -> DatabasePublishers.Value<[Project]> {
+        let observation = ValueObservation.tracking { database -> [Project] in
+            try Self.fetchProjects(database)
+        }
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
     }
 
     // MARK: - Task CRUD
@@ -137,6 +162,22 @@ final class TaskStore {
 
     func deleteTask(id: String) throws {
         try db.write { _ = try TodoTask.deleteOne($0, key: id) }
+    }
+
+    /// Moves a task to a different project (or out to Inbox when `projectId`
+    /// is nil) and assigns it the next sortOrder within the destination
+    /// scope so it lands at the bottom of the list.
+    func moveTask(id: String, toProject projectId: String?) throws {
+        try db.write { database in
+            guard var task = try TodoTask.fetchOne(database, key: id) else { return }
+            let nextOrder = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
+                arguments: [projectId]) ?? 0
+            task.projectId = projectId
+            task.sortOrder = nextOrder
+            task.updatedAt = Date()
+            try task.update(database)
+        }
     }
 
     /// Marks a task complete. For recurring tasks, advances `dueAt` to the
@@ -303,7 +344,25 @@ final class TaskStore {
         let observation = ValueObservation.tracking { database -> [TodoTask] in
             try Self.fetchTasks(database, filter: filter)
         }
-        return observation.publisher(in: db, scheduling: .immediate)
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
+    /// Batch-fetches tags for a set of task ids. Returns a dictionary keyed by
+    /// task id so callers can do O(1) lookups per row. Tasks with no tags are
+    /// absent from the result (treat a missing key as an empty array).
+    func fetchTagsForTasks(_ ids: [String]) throws -> [String: [String]] {
+        guard !ids.isEmpty else { return [:] }
+        return try db.read { database in
+            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+            let rows = try Row.fetchAll(database,
+                sql: "SELECT taskId, tag FROM task_tags WHERE taskId IN (\(placeholders)) ORDER BY tag ASC",
+                arguments: StatementArguments(ids))
+            var out: [String: [String]] = [:]
+            for row in rows {
+                out[row["taskId"], default: []].append(row["tag"])
+            }
+            return out
+        }
     }
 
     // MARK: - Helpers

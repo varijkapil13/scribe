@@ -122,9 +122,11 @@ struct TaskListView: View {
                 TaskRowView(
                     task: task,
                     isRecentlyCompleted: viewModel.recentlyCompletedRecurring.contains(task.id),
+                    tags: viewModel.tags(for: task.id),
                     onToggle: { viewModel.toggleCompleted(task) },
                     onOpen: { editingTask = task }
                 )
+                .draggable(TaskDragPayload(id: task.id))
                 .contextMenu {
                     Button {
                         editingTask = task
@@ -150,6 +152,7 @@ struct TaskListView: View {
 struct TaskRowView: View {
     let task: TodoTask
     let isRecentlyCompleted: Bool
+    let tags: [String]
     let onToggle: () -> Void
     let onOpen: () -> Void
 
@@ -195,6 +198,14 @@ struct TaskRowView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)
+                }
+                if !tags.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(tags, id: \.self) { tag in
+                            TagChip(text: "#\(tag)", tint: .secondary)
+                        }
+                    }
+                    .padding(.top, 2)
                 }
             }
 

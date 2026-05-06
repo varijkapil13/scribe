@@ -86,9 +86,11 @@ sessions — update it as decisions land or scope changes.
       discards. Toolbar exposes Duplicate + Delete (destructive with
       confirm). PR open as `feat/tasks-slice-3-editor-pane`.
 
-- [ ] **Slice 4 — Projects.** Project create/edit/delete UI, sidebar group
-      lists projects below the smart filters, drag-to-reorder rows
-      (`onMove`), drag a task between projects, tag chip rendering on rows.
+- [~] **Slice 4 — Projects.** Project create / edit / delete sheet,
+      sidebar Projects subsection below the smart filters with `+` button,
+      drag-to-reorder rows (`onMove`), drop a task onto a project row to
+      move it (`Transferable` payload), tag chips rendered under task
+      titles. PR open as `feat/tasks-slice-4-projects`.
 
 - [ ] **Slice 5 — Action item → task bridge.** "Convert to task" button on
       each `ActionItemRow` in `TranscriptDetailView` (Action Items tab).

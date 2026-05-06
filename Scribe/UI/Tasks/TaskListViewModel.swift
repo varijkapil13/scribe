@@ -37,6 +37,7 @@ final class TaskListViewModel: ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
+    @Published private(set) var taskTags: [String: [String]] = [:]
     @Published var quickAddText: String = ""
     @Published private(set) var recentlyCompletedRecurring: Set<String> = []
 
@@ -58,11 +59,12 @@ final class TaskListViewModel: ObservableObject {
 
     func start() {
         cancellable = store.observeTasks(filter: filter)
-            .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { [weak self] tasks in
-                    self?.groups = Self.bucket(tasks: tasks, calendar: .current, now: Date())
+                    guard let self else { return }
+                    self.groups = Self.bucket(tasks: tasks, calendar: .current, now: Date())
+                    self.taskTags = (try? self.store.fetchTagsForTasks(tasks.map(\.id))) ?? [:]
                 }
             )
     }
@@ -126,6 +128,10 @@ final class TaskListViewModel: ObservableObject {
         } catch {
             Log.ui.error("TaskListViewModel.delete failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    func tags(for taskId: String) -> [String] {
+        taskTags[taskId] ?? []
     }
 
     // MARK: - Bucketing
