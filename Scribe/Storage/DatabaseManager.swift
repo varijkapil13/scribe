@@ -141,6 +141,66 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        migrator.registerMigration("v3") { db in
+            // -- projects --
+            try db.create(table: "projects") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("name", .text).notNull()
+                t.column("color", .text)
+                t.column("icon", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+            }
+
+            // -- tasks --
+            //
+            // `id` is a UUID string for stable cross-device references
+            // (matches `sessions` / `action_items`). Sqlite still maintains an
+            // implicit `rowid`, which we'll use later for FTS5 wiring.
+            try db.create(table: "tasks") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("title", .text).notNull()
+                t.column("notes", .text).notNull().defaults(to: "")
+                t.column("projectId", .text)
+                    .references("projects", onDelete: .setNull)
+                t.column("priority", .text)
+                t.column("dueAt", .datetime)
+                t.column("remindAt", .datetime)
+                t.column("recurrenceRule", .text)
+                t.column("completedAt", .datetime)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+                t.column("sourceSessionId", .text)
+                    .references("sessions", onDelete: .setNull)
+                t.column("sourceActionItemId", .text)
+                    .references("action_items", onDelete: .setNull)
+            }
+            try db.create(index: "tasks_dueAt_idx", on: "tasks", columns: ["dueAt"])
+            try db.create(index: "tasks_projectId_idx", on: "tasks", columns: ["projectId"])
+            try db.create(index: "tasks_completedAt_idx", on: "tasks", columns: ["completedAt"])
+
+            // -- task_tags (many-to-many) --
+            try db.create(table: "task_tags") { t in
+                t.column("taskId", .text).notNull()
+                    .references("tasks", onDelete: .cascade)
+                t.column("tag", .text).notNull()
+                t.primaryKey(["taskId", "tag"])
+            }
+            try db.create(index: "task_tags_tag_idx", on: "task_tags", columns: ["tag"])
+
+            // -- task_completions (history for recurring tasks) --
+            try db.create(table: "task_completions") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("taskId", .text).notNull()
+                    .references("tasks", onDelete: .cascade)
+                t.column("completedAt", .datetime).notNull()
+            }
+            try db.create(index: "task_completions_taskId_idx",
+                          on: "task_completions",
+                          columns: ["taskId"])
+        }
+
         try migrator.migrate(database)
     }
 }
