@@ -60,4 +60,28 @@ final class TaskListViewModelTests: XCTestCase {
         let groups = TaskListViewModel.bucket(tasks: tasks, calendar: calendar, now: now)
         XCTAssertEqual(groups.map(\.bucket), [.completed])
     }
+
+    func testBoundaryAtStartOfTomorrow() {
+        // A task due exactly at midnight of tomorrow belongs to tomorrow, not today.
+        let now = date(2026, 5, 6, hour: 9)
+        let midnightTomorrow = date(2026, 5, 7, hour: 0)
+        let groups = TaskListViewModel.bucket(
+            tasks: [task(title: "T", dueAt: midnightTomorrow)],
+            calendar: calendar,
+            now: now
+        )
+        XCTAssertEqual(groups.map(\.bucket), [.tomorrow])
+    }
+
+    func testBoundaryAtStartOfDay7IsLaterNotThisWeek() {
+        // "This week" = days 2–6 from today. Day 7 (exactly startOfNext7) falls into Later.
+        let now = date(2026, 5, 6, hour: 9)
+        let day7 = date(2026, 5, 13, hour: 0)
+        let groups = TaskListViewModel.bucket(
+            tasks: [task(title: "T", dueAt: day7)],
+            calendar: calendar,
+            now: now
+        )
+        XCTAssertEqual(groups.map(\.bucket), [.later])
+    }
 }

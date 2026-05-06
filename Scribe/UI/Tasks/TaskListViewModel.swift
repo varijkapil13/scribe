@@ -70,19 +70,12 @@ final class TaskListViewModel: ObservableObject {
         cancellable = nil
     }
 
-    /// Switch to a different sidebar filter. Tears down the old observation
-    /// and starts a new one so SwiftUI re-renders immediately.
-    func switchFilter(to newFilter: TaskStore.Filter) {
-        guard newFilter != filter else { return }
-        filter = newFilter
-        stop()
-        start()
-    }
-
     // MARK: - Quick add
 
-    /// Creates an Inbox task from the current `quickAddText`. Slice 2 is
-    /// title-only; richer parsing (`#tag`, `!high`, dates) lands in slice 8.
+    /// Creates an Inbox task from `quickAddText`. Always creates with no project/date regardless
+    /// of the active filter — tasks added from Today/Upcoming will land in Inbox/No-date.
+    /// Slice 8: upgrade to NL parsing so dates, tags, and priority are inferred from the text,
+    /// and consider whether the active filter should seed defaults (e.g. today's date for Today filter).
     func commitQuickAdd() {
         let title = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }

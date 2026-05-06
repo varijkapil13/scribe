@@ -388,8 +388,8 @@ extension Notification.Name {
 
 // MARK: - Task sidebar items
 
-/// Smart filters shown under the "Tasks" sidebar header. Mirrors the Phase 1
-/// plan: Inbox, Today, Upcoming, All. Project rows ship in slice 4.
+/// Smart filters shown under the "Tasks" sidebar header: Inbox, Today, Upcoming, All, Completed.
+/// Project rows ship in slice 4.
 struct TaskSidebarItem: Identifiable, Hashable {
     let id: String
     let title: String

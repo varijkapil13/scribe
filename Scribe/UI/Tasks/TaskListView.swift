@@ -30,9 +30,8 @@ struct TaskListView: View {
         .navigationTitle(headerTitle)
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
-        .onChange(of: filter) { _, newFilter in
-            viewModel.switchFilter(to: newFilter)
-        }
+        // Filter switches are handled by .id(filter) in MainWindowView, which tears down and
+        // recreates this view (and its @StateObject) — no onChange needed here.
         .onReceive(NotificationCenter.default.publisher(for: .scribeFocusQuickAdd)) { _ in
             quickAddFocused = true
         }
@@ -210,7 +209,8 @@ private struct DueDateChip: View {
 // MARK: - Notification names
 
 extension Notification.Name {
-    /// Posted when the user wants the task list's quick-add field focused
-    /// (e.g. via Cmd-N when a task filter is selected).
+    /// Received by TaskListView to focus the quick-add field.
+    /// Slice 8: post this from the main window key handler when a task filter is
+    /// selected and the user presses Cmd-N.
     static let scribeFocusQuickAdd = Notification.Name("scribe.focusQuickAdd")
 }
