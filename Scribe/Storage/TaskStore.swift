@@ -45,11 +45,13 @@ final class TaskStore {
 
     @discardableResult
     func createProject(name: String, color: String? = nil, icon: String? = nil) throws -> Project {
-        let nextOrder = try db.read { try Int.fetchOne($0,
-            sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM projects") } ?? 0
-        let project = Project(name: name, color: color, icon: icon, sortOrder: nextOrder)
-        try db.write { try project.insert($0) }
-        return project
+        try db.write { database in
+            let nextOrder = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM projects") ?? 0
+            let project = Project(name: name, color: color, icon: icon, sortOrder: nextOrder)
+            try project.insert(database)
+            return project
+        }
     }
 
     func updateProject(_ project: Project) throws {
@@ -83,39 +85,37 @@ final class TaskStore {
         sourceActionItemId: String? = nil,
         tags: [String] = []
     ) throws -> TodoTask {
-        let nextOrder = try db.read {
-            try Int.fetchOne($0,
-                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
-                arguments: [projectId])
-        } ?? 0
-
-        let now = Date()
-        let task = TodoTask(
-            title: title,
-            notes: notes,
-            projectId: projectId,
-            priority: priority,
-            dueAt: dueAt,
-            remindAt: remindAt,
-            recurrenceRule: recurrenceRule,
-            createdAt: now,
-            updatedAt: now,
-            sortOrder: nextOrder,
-            sourceSessionId: sourceSessionId,
-            sourceActionItemId: sourceActionItemId
-        )
-
         try db.write { database in
+            let nextOrder = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
+                arguments: [projectId]) ?? 0
+
+            let now = Date()
+            let task = TodoTask(
+                title: title,
+                notes: notes,
+                projectId: projectId,
+                priority: priority,
+                dueAt: dueAt,
+                remindAt: remindAt,
+                recurrenceRule: recurrenceRule,
+                createdAt: now,
+                updatedAt: now,
+                sortOrder: nextOrder,
+                sourceSessionId: sourceSessionId,
+                sourceActionItemId: sourceActionItemId
+            )
+
             try task.insert(database)
             for tag in normalisedTags(tags) {
                 try TaskTagRow(taskId: task.id, tag: tag).insert(database)
             }
+            return task
         }
-        return task
     }
 
-    /// Persists changes to an existing task. The caller is responsible for
-    /// stamping `updatedAt`; if it equals the existing value we bump it here.
+    /// Persists changes to an existing task. `updatedAt` is always stamped
+    /// to the current time so callers don't have to remember to bump it.
     func updateTask(_ task: TodoTask) throws {
         var copy = task
         copy.updatedAt = Date()
@@ -182,8 +182,9 @@ final class TaskStore {
 
     // MARK: - Filtered Queries
 
-    /// Fetches tasks for a sidebar filter. Sort: incomplete first (by dueAt,
-    /// then sortOrder), completed at the bottom (by completedAt desc).
+    /// Fetches tasks for a sidebar filter. Sort: incomplete first (by dueAt
+    /// then sortOrder), completed at the bottom (most recently completed
+    /// first).
     func fetchTasks(filter: Filter, calendar: Calendar = .current, now: Date = Date()) throws -> [TodoTask] {
         try db.read { database in
             try Self.fetchTasks(database, filter: filter, calendar: calendar, now: now)
@@ -205,10 +206,12 @@ final class TaskStore {
                 .filter(Column("projectId") == nil)
                 .filter(Column("completedAt") == nil)
         case .today:
-            let endOfToday = calendar.endOfDay(for: now)
+            // Half-open window `dueAt < startOfTomorrow` includes overdue and
+            // every dueAt today regardless of sub-second precision.
+            let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
             request = request
                 .filter(Column("completedAt") == nil)
-                .filter(Column("dueAt") != nil && Column("dueAt") <= endOfToday)
+                .filter(Column("dueAt") != nil && Column("dueAt") < startOfTomorrow)
         case .upcoming:
             let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
             let endOfWindow = calendar.date(byAdding: .day, value: 7, to: startOfTomorrow)!
@@ -227,30 +230,44 @@ final class TaskStore {
             let ids = try String.fetchAll(database,
                 sql: "SELECT taskId FROM task_tags WHERE tag = ?",
                 arguments: [tag])
+            // Avoid emitting `id IN ()` (rejected by some SQLite versions).
+            guard !ids.isEmpty else { return [] }
             request = request
                 .filter(ids.contains(Column("id")))
                 .filter(Column("completedAt") == nil)
         }
 
+        // Incomplete tasks first (NULL `completedAt` ranked highest via the
+        // explicit `IS NULL DESC`), tie-broken by dueAt then sortOrder.
+        // Completed tasks fall to the bottom and are sorted newest-first.
         return try request
-            .order(
-                Column("completedAt").asc,
-                Column("dueAt").asc,
-                Column("sortOrder").asc,
-                Column("createdAt").asc
-            )
+            .order(sql: """
+                completedAt IS NULL DESC,
+                completedAt DESC,
+                dueAt ASC,
+                sortOrder ASC,
+                createdAt ASC
+                """)
             .fetchAll(database)
     }
 
     // MARK: - Reordering
 
-    /// Persists a new manual ordering for the given task ids.
-    func reorderTasks(_ orderedIds: [String]) throws {
+    /// Persists a new manual ordering for the given task ids within a single
+    /// project scope (`projectId == nil` = Inbox). `sortOrder` is per-project,
+    /// so callers must reorder one scope at a time; ids in `orderedIds` that
+    /// don't live in `projectId` are skipped to keep scopes independent.
+    func reorderTasks(_ orderedIds: [String], in projectId: String? = nil) throws {
         try db.write { database in
+            let now = Date()
             for (index, id) in orderedIds.enumerated() {
                 try database.execute(
-                    sql: "UPDATE tasks SET sortOrder = ?, updatedAt = ? WHERE id = ?",
-                    arguments: [index, Date(), id]
+                    sql: """
+                        UPDATE tasks
+                        SET sortOrder = ?, updatedAt = ?
+                        WHERE id = ? AND projectId IS ?
+                        """,
+                    arguments: [index, now, id, projectId]
                 )
             }
         }
@@ -281,11 +298,3 @@ final class TaskStore {
     }
 }
 
-// MARK: - Calendar convenience
-
-private extension Calendar {
-    func endOfDay(for date: Date) -> Date {
-        let start = startOfDay(for: date)
-        return self.date(byAdding: DateComponents(day: 1, second: -1), to: start) ?? date
-    }
-}

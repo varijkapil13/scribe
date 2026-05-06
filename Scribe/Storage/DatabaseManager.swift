@@ -201,6 +201,18 @@ final class DatabaseManager: @unchecked Sendable {
                           columns: ["taskId"])
         }
 
+        migrator.registerMigration("v4") { db in
+            // Indexes for the source-link FKs. Without them, deleting a
+            // session or action item triggers a full scan over `tasks` to
+            // satisfy ON DELETE SET NULL.
+            try db.create(index: "tasks_sourceSessionId_idx",
+                          on: "tasks",
+                          columns: ["sourceSessionId"])
+            try db.create(index: "tasks_sourceActionItemId_idx",
+                          on: "tasks",
+                          columns: ["sourceActionItemId"])
+        }
+
         try migrator.migrate(database)
     }
 }

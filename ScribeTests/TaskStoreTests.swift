@@ -149,6 +149,52 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), [c.id, a.id, b.id])
     }
 
+    func testReorderTasksIgnoresTasksOutsideScope() throws {
+        // Inbox tasks.
+        let i1 = try store.createTask(title: "Inbox 1")
+        let i2 = try store.createTask(title: "Inbox 2")
+        // Project tasks.
+        let project = try store.createProject(name: "Work")
+        let p1 = try store.createTask(title: "Proj 1", projectId: project.id)
+        let p2 = try store.createTask(title: "Proj 2", projectId: project.id)
+
+        // Try to reorder a project task within the Inbox scope — must be a
+        // no-op for that task.
+        let inboxScope: String? = nil
+        try store.reorderTasks([i2.id, p1.id, i1.id], in: inboxScope)
+
+        let inbox = try store.fetchTasks(filter: .inbox)
+        XCTAssertEqual(inbox.map(\.id), [i2.id, i1.id])
+
+        let proj = try store.fetchTasks(filter: .project(project.id))
+        // Project ordering untouched.
+        XCTAssertEqual(proj.map(\.id), [p1.id, p2.id])
+    }
+
+    // MARK: - Sort order
+
+    func testCompletedTasksSortNewestFirst() throws {
+        let cal = Calendar(identifier: .gregorian)
+        let t0 = cal.date(from: DateComponents(year: 2026, month: 5, day: 1))!
+        let t1 = cal.date(from: DateComponents(year: 2026, month: 5, day: 3))!
+
+        let oldDone = try store.createTask(title: "Old done")
+        let newDone = try store.createTask(title: "New done")
+        try store.completeTask(id: oldDone.id, at: t0)
+        try store.completeTask(id: newDone.id, at: t1)
+
+        let completed = try store.fetchTasks(filter: .completed)
+        XCTAssertEqual(completed.map(\.id), [newDone.id, oldDone.id])
+    }
+
+    // MARK: - Tag filter edge cases
+
+    func testTagFilterReturnsEmptyForUnknownTag() throws {
+        _ = try store.createTask(title: "Tagged", tags: ["work"])
+        let result = try store.fetchTasks(filter: .tag("nonexistent"))
+        XCTAssertTrue(result.isEmpty)
+    }
+
     // MARK: - Source links
 
     func testTaskCanLinkToSessionAndActionItem() throws {
