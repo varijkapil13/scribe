@@ -302,6 +302,66 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertNil(refreshed.projectId)
     }
 
+    // MARK: - Search
+
+    func testSearchTasksMatchesTitleAndNotes() throws {
+        let a = try store.createTask(title: "Send invoice to Acme", notes: "include PO number")
+        let b = try store.createTask(title: "Buy birthday cake", notes: "")
+        _ = try store.createTask(title: "Walk the dog", notes: "before lunch")
+
+        let invoice = try store.searchTasks(query: "invoice")
+        XCTAssertEqual(Set(invoice.map(\.id)), [a.id])
+
+        let cake = try store.searchTasks(query: "cake")
+        XCTAssertEqual(Set(cake.map(\.id)), [b.id])
+
+        // Notes-only match.
+        let lunch = try store.searchTasks(query: "lunch")
+        XCTAssertEqual(lunch.count, 1)
+    }
+
+    func testSearchTasksPrefixMatches() throws {
+        let task = try store.createTask(title: "Refactor authentication")
+        let result = try store.searchTasks(query: "refac")
+        XCTAssertEqual(result.first?.id, task.id)
+    }
+
+    func testSearchTasksHonoursIncludeCompletedFlag() throws {
+        let live = try store.createTask(title: "Active task")
+        let done = try store.createTask(title: "Active task done")
+        try store.completeTask(id: done.id)
+
+        let all = try store.searchTasks(query: "active", includeCompleted: true)
+        XCTAssertEqual(Set(all.map(\.id)), [live.id, done.id])
+
+        let liveOnly = try store.searchTasks(query: "active", includeCompleted: false)
+        XCTAssertEqual(Set(liveOnly.map(\.id)), [live.id])
+    }
+
+    func testSearchTasksHandlesPunctuationSafely() throws {
+        _ = try store.createTask(title: "Quoted \"thing\" with hyphen-here")
+        // Should not throw despite the punctuation.
+        XCTAssertNoThrow(try store.searchTasks(query: "\"thing\""))
+        XCTAssertNoThrow(try store.searchTasks(query: "hyphen-here"))
+    }
+
+    func testSearchTasksReturnsEmptyForBlankQuery() throws {
+        _ = try store.createTask(title: "Anything")
+        XCTAssertTrue(try store.searchTasks(query: "").isEmpty)
+        XCTAssertTrue(try store.searchTasks(query: "   ").isEmpty)
+    }
+
+    func testFtsIndexUpdatesOnTitleChange() throws {
+        var task = try store.createTask(title: "Original wording")
+        XCTAssertEqual(try store.searchTasks(query: "original").first?.id, task.id)
+
+        task.title = "Renamed entirely"
+        try store.updateTask(task)
+
+        XCTAssertTrue(try store.searchTasks(query: "original").isEmpty)
+        XCTAssertEqual(try store.searchTasks(query: "renamed").first?.id, task.id)
+    }
+
     // MARK: - Action item linkage
 
     /// Creates the necessary session + summary + action_item rows so the

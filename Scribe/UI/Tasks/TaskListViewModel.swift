@@ -39,6 +39,15 @@ final class TaskListViewModel: ObservableObject {
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
     @Published private(set) var taskTags: [String: [String]] = [:]
     @Published var quickAddText: String = ""
+    /// Free-text query for the search bar. When non-empty, `groups` is
+    /// ignored and `searchResults` drives the detail pane instead.
+    @Published var searchQuery: String = "" {
+        didSet { runSearch() }
+    }
+    @Published private(set) var searchResults: [TodoTask] = []
+    /// Currently focused row id; drives keyboard-shortcut targets (Space to
+    /// toggle, Cmd-Backspace to delete).
+    @Published var focusedTaskId: String?
     @Published private(set) var recentlyCompletedRecurring: Set<String> = []
 
     // MARK: - Properties
@@ -87,15 +96,34 @@ final class TaskListViewModel: ObservableObject {
 
     // MARK: - Quick add
 
-    /// Creates an Inbox task from `quickAddText`. Always creates with no project/date regardless
-    /// of the active filter — tasks added from Today/Upcoming will land in Inbox/No-date.
-    /// Slice 8: upgrade to NL parsing so dates, tags, and priority are inferred from the text,
-    /// and consider whether the active filter should seed defaults (e.g. today's date for Today filter).
+    /// Parses `quickAddText` for inline metadata (`#tag`, `+project`,
+    /// `!priority`, date phrases) and creates the task. Project hints are
+    /// resolved against the existing project list — unknown names fall back
+    /// to Inbox so the task is never silently dropped.
     func commitQuickAdd() {
-        let title = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return }
+        let raw = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+        let parsed = QuickAddParser.parse(raw)
+        guard !parsed.title.isEmpty else { return }
+
+        var projectId: String? = nil
+        if let name = parsed.projectName {
+            do {
+                projectId = try store.fetchProjects()
+                    .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id
+            } catch {
+                Log.ui.error("TaskListViewModel.commitQuickAdd fetchProjects failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
         do {
-            _ = try store.createTask(title: title)
+            _ = try store.createTask(
+                title: parsed.title,
+                projectId: projectId,
+                priority: parsed.priority,
+                dueAt: parsed.dueAt,
+                tags: parsed.tags
+            )
             quickAddText = ""
         } catch {
             Log.ui.error("TaskListViewModel.commitQuickAdd failed: \(error.localizedDescription, privacy: .public)")
@@ -147,6 +175,25 @@ final class TaskListViewModel: ObservableObject {
             Task { await reminderScheduler.cancel(taskId: task.id) }
         } catch {
             Log.ui.error("TaskListViewModel.delete failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Search
+
+    var isSearching: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func runSearch() {
+        guard isSearching else {
+            searchResults = []
+            return
+        }
+        do {
+            searchResults = try store.searchTasks(query: searchQuery)
+        } catch {
+            Log.ui.error("TaskListViewModel.runSearch failed: \(error.localizedDescription, privacy: .public)")
+            searchResults = []
         }
     }
 

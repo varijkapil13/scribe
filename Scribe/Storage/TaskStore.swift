@@ -360,6 +360,55 @@ final class TaskStore {
         }
     }
 
+    // MARK: - Search
+
+    /// Full-text search over `title` + `notes` via the `tasks_fts` FTS5
+    /// virtual table. Returns matching tasks ordered by FTS5's bm25 ranking
+    /// (best match first). Empty queries return an empty array.
+    ///
+    /// Free-text input is sanitised: each token is wrapped in double quotes
+    /// and a `*` prefix is appended so partial words match. This avoids
+    /// the user having to type FTS5's syntax themselves and prevents the
+    /// query from blowing up on punctuation.
+    func searchTasks(query: String, includeCompleted: Bool = true, limit: Int = 100) throws -> [TodoTask] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let sanitized = Self.ftsQuery(from: trimmed)
+        guard !sanitized.isEmpty else { return [] }
+
+        return try db.read { database in
+            var sql = """
+                SELECT tasks.* FROM tasks
+                JOIN tasks_fts ON tasks_fts.rowid = tasks.rowid
+                WHERE tasks_fts MATCH ?
+                """
+            if !includeCompleted {
+                sql += " AND tasks.completedAt IS NULL"
+            }
+            // bm25 returns negative values; more-negative = better match, so ASC = best first.
+            sql += " ORDER BY bm25(tasks_fts) ASC LIMIT ?"
+            return try TodoTask.fetchAll(database, sql: sql,
+                                         arguments: [sanitized, limit])
+        }
+    }
+
+    /// Builds a safe FTS5 MATCH expression from raw user input. Splits on
+    /// whitespace, drops anything that isn't alphanumeric, wraps each
+    /// surviving token in double quotes (so single quotes / hyphens don't
+    /// break the parser), and appends `*` for prefix matching.
+    static func ftsQuery(from raw: String) -> String {
+        let tokens = raw
+            .components(separatedBy: .whitespacesAndNewlines)
+            .map { token in
+                token.unicodeScalars
+                    .filter { CharacterSet.alphanumerics.contains($0) }
+                    .reduce(into: "") { $0.append(Character($1)) }
+            }
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return "" }
+        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
+    }
+
     // MARK: - Observation
 
     /// Combine publisher emitting tasks for the given filter whenever the

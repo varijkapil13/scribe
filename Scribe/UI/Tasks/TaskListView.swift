@@ -9,6 +9,7 @@ struct TaskListView: View {
     @StateObject private var viewModel: TaskListViewModel
     @FocusState private var quickAddFocused: Bool
     @State private var editingTask: TodoTask?
+    @State private var pendingDelete: TodoTask?
 
     init(filter: TaskStore.Filter) {
         self.filter = filter
@@ -29,6 +30,7 @@ struct TaskListView: View {
         }
         .background(DesignTokens.Palette.surface)
         .navigationTitle(headerTitle)
+        .searchable(text: $viewModel.searchQuery, prompt: "Search tasks")
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
         .onChange(of: filter) { _, newFilter in
@@ -40,6 +42,62 @@ struct TaskListView: View {
         .sheet(item: $editingTask) { task in
             TaskEditorView(task: task)
         }
+        .confirmationDialog(
+            pendingDelete.map { "Delete \"\($0.title)\"?" } ?? "Delete task?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let task = pendingDelete { viewModel.delete(task) }
+                pendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        }
+        .background(
+            // Hidden buttons attach keyboard shortcuts that fire whenever the
+            // detail pane has key focus. Keeping them out of the visible
+            // hierarchy avoids cluttering the toolbar.
+            shortcutButtons
+        )
+    }
+
+    // MARK: - Shortcuts
+
+    @ViewBuilder
+    private var shortcutButtons: some View {
+        VStack(spacing: 0) {
+            Button("New task") { quickAddFocused = true }
+                .keyboardShortcut("n", modifiers: [.command])
+            Button("Toggle complete") {
+                if let id = viewModel.focusedTaskId,
+                   let task = focusedTask(id: id) {
+                    viewModel.toggleCompleted(task)
+                }
+            }
+            .keyboardShortcut(.space, modifiers: [])
+            .disabled(viewModel.focusedTaskId == nil)
+            Button("Delete") {
+                if let id = viewModel.focusedTaskId,
+                   let task = focusedTask(id: id) {
+                    pendingDelete = task
+                }
+            }
+            .keyboardShortcut(.delete, modifiers: [.command])
+            .disabled(viewModel.focusedTaskId == nil)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    private func focusedTask(id: String) -> TodoTask? {
+        for group in viewModel.groups {
+            if let task = group.tasks.first(where: { $0.id == id }) { return task }
+        }
+        return viewModel.searchResults.first(where: { $0.id == id })
     }
 
     // MARK: - Header
@@ -83,7 +141,9 @@ struct TaskListView: View {
 
     @ViewBuilder
     private var content: some View {
-        if viewModel.groups.isEmpty {
+        if viewModel.isSearching {
+            searchContent
+        } else if viewModel.groups.isEmpty {
             EmptyStateView(
                 systemImage: "checkmark.circle",
                 title: "Nothing here yet",
@@ -97,6 +157,58 @@ struct TaskListView: View {
                     }
                 }
                 .padding(DesignTokens.Spacing.xl)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var searchContent: some View {
+        if viewModel.searchResults.isEmpty {
+            EmptyStateView(
+                systemImage: "magnifyingglass",
+                title: "No matches",
+                message: "Try a different word or part of a word."
+            )
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    Text("\(viewModel.searchResults.count) result\(viewModel.searchResults.count == 1 ? "" : "s")")
+                        .eyebrowStyle()
+                        .padding(.bottom, DesignTokens.Spacing.xs)
+                    ForEach(viewModel.searchResults) { task in
+                        taskRow(for: task)
+                    }
+                }
+                .padding(DesignTokens.Spacing.xl)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func taskRow(for task: TodoTask) -> some View {
+        TaskRowView(
+            task: task,
+            isRecentlyCompleted: viewModel.recentlyCompletedRecurring.contains(task.id),
+            tags: viewModel.tags(for: task.id),
+            isFocused: viewModel.focusedTaskId == task.id,
+            onToggle: { viewModel.toggleCompleted(task) },
+            onOpen: {
+                viewModel.focusedTaskId = task.id
+                editingTask = task
+            }
+        )
+        .onTapGesture { viewModel.focusedTaskId = task.id }
+        .draggable(TaskDragPayload(id: task.id))
+        .contextMenu {
+            Button {
+                editingTask = task
+            } label: {
+                Label("Edit…", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                pendingDelete = task
+            } label: {
+                Label("Delete", systemImage: "trash")
             }
         }
     }
@@ -119,26 +231,7 @@ struct TaskListView: View {
                 .padding(.bottom, DesignTokens.Spacing.xxs)
 
             ForEach(tasks) { task in
-                TaskRowView(
-                    task: task,
-                    isRecentlyCompleted: viewModel.recentlyCompletedRecurring.contains(task.id),
-                    tags: viewModel.tags(for: task.id),
-                    onToggle: { viewModel.toggleCompleted(task) },
-                    onOpen: { editingTask = task }
-                )
-                .draggable(TaskDragPayload(id: task.id))
-                .contextMenu {
-                    Button {
-                        editingTask = task
-                    } label: {
-                        Label("Edit…", systemImage: "pencil")
-                    }
-                    Button(role: .destructive) {
-                        viewModel.delete(task)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
+                taskRow(for: task)
             }
         }
     }
@@ -153,6 +246,7 @@ struct TaskRowView: View {
     let task: TodoTask
     let isRecentlyCompleted: Bool
     let tags: [String]
+    var isFocused: Bool = false
     let onToggle: () -> Void
     let onOpen: () -> Void
 
@@ -181,7 +275,10 @@ struct TaskRowView: View {
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                .strokeBorder(
+                    isFocused ? Color.accentColor : DesignTokens.Palette.cardBorder,
+                    lineWidth: isFocused ? 2 : 1
+                )
         )
     }
 
