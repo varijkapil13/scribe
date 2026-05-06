@@ -120,6 +120,7 @@ struct TaskListView: View {
             ForEach(tasks) { task in
                 TaskRowView(
                     task: task,
+                    isRecentlyCompleted: viewModel.recentlyCompletedRecurring.contains(task.id),
                     onToggle: { viewModel.toggleCompleted(task) },
                     onOpen: { editingTask = task }
                 )
@@ -147,6 +148,7 @@ struct TaskListView: View {
 /// the checkbox toggle stays separate so it can't accidentally launch a sheet.
 struct TaskRowView: View {
     let task: TodoTask
+    let isRecentlyCompleted: Bool
     let onToggle: () -> Void
     let onOpen: () -> Void
 
@@ -185,8 +187,8 @@ struct TaskRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.system(.body))
-                    .strikethrough(task.isCompleted, color: .secondary)
-                    .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                    .strikethrough(task.isCompleted || isRecentlyCompleted, color: .secondary)
+                    .foregroundStyle(task.isCompleted || isRecentlyCompleted ? .secondary : .primary)
                 if !task.notes.isEmpty {
                     Text(task.notes)
                         .font(.caption)
