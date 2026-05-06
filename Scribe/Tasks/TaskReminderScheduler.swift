@@ -47,17 +47,19 @@ final class TaskReminderScheduler: NSObject, TaskReminderScheduling {
 
     private var center: UNUserNotificationCenterAdapter
     /// Used by the action handler (Mark Done / Snooze) to mutate the task.
-    /// Defaults to a fresh `TaskStore` over the shared database; tests can
-    /// override.
-    var taskStore: TaskStore = TaskStore()
+    let taskStore: TaskStore
 
-    /// Cached authorization decision. `nil` means "not yet checked".
+    /// Cached authorization decision. Only set to `true` — denials are never
+    /// cached so that permission granted after an initial denial is picked up
+    /// on the next `schedule` call without a restart.
     private var authorizationGranted: Bool?
 
     // MARK: - Init
 
-    init(center: UNUserNotificationCenterAdapter = SystemNotificationCenter()) {
+    init(center: UNUserNotificationCenterAdapter = SystemNotificationCenter(),
+         taskStore: TaskStore = TaskStore()) {
         self.center = center
+        self.taskStore = taskStore
         super.init()
     }
 
@@ -93,19 +95,19 @@ final class TaskReminderScheduler: NSObject, TaskReminderScheduling {
 
     // MARK: - Authorization
 
-    /// Requests notification authorization if it hasn't been resolved yet.
-    /// Returns true on grant. Cached for the process lifetime to keep
-    /// repeated `schedule` calls cheap.
+    /// Requests notification authorization if not already granted.
+    /// Only positive grants are cached — denials are re-checked each call so
+    /// that a user who grants permission in System Settings after an initial
+    /// denial is picked up without a restart.
     @discardableResult
     func ensureAuthorized() async -> Bool {
-        if let cached = authorizationGranted { return cached }
+        if authorizationGranted == true { return true }
         do {
             let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-            authorizationGranted = granted
+            if granted { authorizationGranted = true }
             return granted
         } catch {
             Log.app.error("Reminder authorization failed: \(error.localizedDescription, privacy: .public)")
-            authorizationGranted = false
             return false
         }
     }

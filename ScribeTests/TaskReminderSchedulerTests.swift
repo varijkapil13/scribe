@@ -92,14 +92,43 @@ final class TaskReminderSchedulerTests: XCTestCase {
     }
 
     @MainActor
+    func testGrantedAuthCachedAfterFirstSchedule() async {
+        let fake = FakeNotificationCenter(grantAuth: true)
+        let scheduler = TaskReminderScheduler(center: fake)
+        let task = TodoTask(title: "x", remindAt: Date().addingTimeInterval(60))
+
+        await scheduler.schedule(task)
+        await scheduler.schedule(task)
+
+        // Grant cached after first call — second schedule must not re-request.
+        XCTAssertEqual(fake.authRequests, 1)
+    }
+
+    @MainActor
+    func testDeniedAuthNotCachedSoLaterGrantIsPickedUp() async {
+        let fake = FakeNotificationCenter(grantAuth: false)
+        let scheduler = TaskReminderScheduler(center: fake)
+        let task = TodoTask(title: "x", remindAt: Date().addingTimeInterval(60))
+
+        await scheduler.schedule(task)
+        XCTAssertTrue(fake.added.isEmpty)
+
+        // Simulate user granting permission in System Settings.
+        fake.grantAuth = true
+        await scheduler.schedule(task)
+
+        XCTAssertEqual(fake.authRequests, 2)
+        XCTAssertFalse(fake.added.isEmpty)
+    }
+
+    @MainActor
     func testHandleMarkDoneCompletesTaskAndCancels() async throws {
         let manager = try DatabaseManager(path: ":memory:")
         let store = TaskStore(databaseManager: manager)
         let task = try store.createTask(title: "Reply", remindAt: Date().addingTimeInterval(60))
 
         let fake = FakeNotificationCenter(grantAuth: true)
-        let scheduler = TaskReminderScheduler(center: fake)
-        scheduler.taskStore = store
+        let scheduler = TaskReminderScheduler(center: fake, taskStore: store)
 
         await scheduler.handle(actionId: TaskReminderScheduler.actionMarkDone, taskId: task.id)
 
@@ -116,8 +145,7 @@ final class TaskReminderSchedulerTests: XCTestCase {
         let task = try store.createTask(title: "Reply", remindAt: originalRemind)
 
         let fake = FakeNotificationCenter(grantAuth: true)
-        let scheduler = TaskReminderScheduler(center: fake)
-        scheduler.taskStore = store
+        let scheduler = TaskReminderScheduler(center: fake, taskStore: store)
 
         await scheduler.handle(actionId: TaskReminderScheduler.actionSnooze, taskId: task.id)
 

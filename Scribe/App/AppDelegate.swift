@@ -3,6 +3,7 @@ import Combine
 import CoreGraphics
 import Speech
 import SwiftUI
+import UserNotifications
 
 /// AppKit delegate that coordinates high-level recording actions, global
 /// keyboard shortcuts, and app-lifecycle policy.
@@ -61,6 +62,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         Task { @MainActor in
             _ = await Permissions.checkMicrophonePermission()
             _ = await SpeechRecognizerEngine.checkAuthorization()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task {
+            try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }
     }
 
