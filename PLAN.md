@@ -101,7 +101,7 @@ sessions — update it as decisions land or scope changes.
       title>" row when `sourceSessionId` is set. PR open as
       `feat/tasks-slice-5-convert-action-item`.
 
-- [~] **Slice 6 — Reminders.** `TaskReminderScheduler` wraps
+- [x] **Slice 6 — Reminders.** `TaskReminderScheduler` wraps
       `UNUserNotificationCenter` behind a `TaskReminderScheduling`
       protocol so view models can inject a no-op for tests. Lazy
       authorization (requested first time `schedule(_:)` runs against
@@ -118,14 +118,19 @@ sessions — update it as decisions land or scope changes.
       for "Daily / Weekdays / Weekly on…/ Monthly on day N / Custom".
       Tests across DST boundaries.
 
-- [ ] **Slice 8 — NL quick add + search + polish.** Parse
-      "buy milk tomorrow 5pm #shopping !high" client-side: pull off
-      `#tag`, `!high|!med|!low`, project via `+project`, and date phrases
-      via `NSDataDetector` (Apple's data detector handles "tomorrow",
-      "Friday 5pm", etc.). Add `tasks_fts` FTS5 over `title` + `notes`
-      with insert/update/delete triggers. Wire up Cmd-F search, plus
-      keyboard shortcuts: Cmd-N (new), Space (toggle complete on selection),
-      Cmd-Backspace (delete with confirm), Cmd-↑/↓ (move).
+- [~] **Slice 8 — NL quick add + search + polish.** New
+      `QuickAddParser` strips `#tag`, `+project`, `!priority`, and date
+      phrases (via `NSDataDetector`) out of the quick-add field; project
+      hints resolve against the live project list, unknown names fall
+      back to Inbox. Migration v5 adds a `tasks_fts` FTS5 virtual table
+      backed by `tasks` with insert/update/delete sync triggers.
+      `TaskStore.searchTasks(query:)` exposes prefix-matched bm25 search;
+      `.searchable` in the task list flips the detail pane between
+      grouped buckets and search results. Hidden keyboard shortcuts on
+      the detail pane: Cmd-N focuses quick-add, Space toggles the
+      focused row, Cmd-Backspace deletes with a confirmation dialog.
+      Cmd-↑/↓ row reorder deferred (LazyVStack focus model needs work).
+      PR open as `feat/tasks-slice-8-nl-fts-shortcuts`.
 
 ### Phase 1 risks
 - Notification entitlement under Hardened Runtime — sandbox is off, should

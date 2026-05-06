@@ -213,6 +213,49 @@ final class DatabaseManager: @unchecked Sendable {
                           columns: ["sourceActionItemId"])
         }
 
+        migrator.registerMigration("v5") { db in
+            // -- FTS5 virtual table over tasks.title + notes --
+            //
+            // External-content table backed by `tasks`; uses the rowid join
+            // pattern so FTS5 only stores the index. Triggers below keep the
+            // index in sync with INSERT / UPDATE / DELETE on the parent.
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE tasks_fts USING fts5(
+                    title,
+                    notes,
+                    content='tasks',
+                    content_rowid='rowid'
+                )
+                """)
+
+            // Backfill FTS index from any rows already present.
+            try db.execute(sql: """
+                INSERT INTO tasks_fts(rowid, title, notes)
+                SELECT rowid, title, notes FROM tasks
+                """)
+
+            try db.execute(sql: """
+                CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+                    INSERT INTO tasks_fts(rowid, title, notes)
+                    VALUES (new.rowid, new.title, new.notes);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+                    INSERT INTO tasks_fts(tasks_fts, rowid, title, notes)
+                    VALUES('delete', old.rowid, old.title, old.notes);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER tasks_fts_au AFTER UPDATE ON tasks BEGIN
+                    INSERT INTO tasks_fts(tasks_fts, rowid, title, notes)
+                    VALUES('delete', old.rowid, old.title, old.notes);
+                    INSERT INTO tasks_fts(rowid, title, notes)
+                    VALUES (new.rowid, new.title, new.notes);
+                END
+                """)
+        }
+
         try migrator.migrate(database)
     }
 }
