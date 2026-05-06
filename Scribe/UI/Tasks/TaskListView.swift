@@ -225,7 +225,6 @@ struct TaskRowView: View {
     }
 }
 
-
 private struct PriorityChip: View {
     let priority: TodoTask.Priority
 

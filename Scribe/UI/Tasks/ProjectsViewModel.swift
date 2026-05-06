@@ -19,7 +19,6 @@ final class ProjectsViewModel: ObservableObject {
 
     func start() {
         cancellable = store.observeProjects()
-            .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { [weak self] in self?.projects = $0 }

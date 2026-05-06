@@ -103,7 +103,7 @@ final class TaskStore {
         let observation = ValueObservation.tracking { database -> [Project] in
             try Self.fetchProjects(database)
         }
-        return observation.publisher(in: db, scheduling: .immediate)
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
     }
 
     // MARK: - Task CRUD
@@ -344,7 +344,25 @@ final class TaskStore {
         let observation = ValueObservation.tracking { database -> [TodoTask] in
             try Self.fetchTasks(database, filter: filter)
         }
-        return observation.publisher(in: db, scheduling: .immediate)
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
+    /// Batch-fetches tags for a set of task ids. Returns a dictionary keyed by
+    /// task id so callers can do O(1) lookups per row. Tasks with no tags are
+    /// absent from the result (treat a missing key as an empty array).
+    func fetchTagsForTasks(_ ids: [String]) throws -> [String: [String]] {
+        guard !ids.isEmpty else { return [:] }
+        return try db.read { database in
+            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+            let rows = try Row.fetchAll(database,
+                sql: "SELECT taskId, tag FROM task_tags WHERE taskId IN (\(placeholders)) ORDER BY tag ASC",
+                arguments: StatementArguments(ids))
+            var out: [String: [String]] = [:]
+            for row in rows {
+                out[row["taskId"], default: []].append(row["tag"])
+            }
+            return out
+        }
     }
 
     // MARK: - Helpers

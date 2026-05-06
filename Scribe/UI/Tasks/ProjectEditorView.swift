@@ -4,9 +4,7 @@ import SwiftUI
 /// the schema minimal: name + a small swatch palette + an SF Symbol name.
 struct ProjectEditorView: View {
 
-    enum Mode { case create, edit(Project) }
-
-    let mode: Mode
+    let mode: ProjectEditorMode
     let onCommit: (_ name: String, _ color: String?, _ icon: String?) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +19,7 @@ struct ProjectEditorView: View {
         "#64D2FF", "#0A84FF", "#5E5CE6", "#BF5AF2"
     ]
 
-    init(mode: Mode, onCommit: @escaping (_ name: String, _ color: String?, _ icon: String?) -> Void) {
+    init(mode: ProjectEditorMode, onCommit: @escaping (_ name: String, _ color: String?, _ icon: String?) -> Void) {
         self.mode = mode
         self.onCommit = onCommit
         switch mode {

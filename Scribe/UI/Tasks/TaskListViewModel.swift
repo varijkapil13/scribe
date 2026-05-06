@@ -37,6 +37,7 @@ final class TaskListViewModel: ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
+    @Published private(set) var taskTags: [String: [String]] = [:]
     @Published var quickAddText: String = ""
     @Published private(set) var recentlyCompletedRecurring: Set<String> = []
 
@@ -58,11 +59,12 @@ final class TaskListViewModel: ObservableObject {
 
     func start() {
         cancellable = store.observeTasks(filter: filter)
-            .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { [weak self] tasks in
-                    self?.groups = Self.bucket(tasks: tasks, calendar: .current, now: Date())
+                    guard let self else { return }
+                    self.groups = Self.bucket(tasks: tasks, calendar: .current, now: Date())
+                    self.taskTags = (try? self.store.fetchTagsForTasks(tasks.map(\.id))) ?? [:]
                 }
             )
     }
@@ -128,16 +130,8 @@ final class TaskListViewModel: ObservableObject {
         }
     }
 
-    /// Lightweight tag lookup so rows can render chips without each owning
-    /// their own subscription. Returns `[]` on error rather than throwing —
-    /// the row falls back to no chips if the read fails.
     func tags(for taskId: String) -> [String] {
-        do {
-            return try store.tags(for: taskId)
-        } catch {
-            Log.ui.error("TaskListViewModel.tags(for:) failed: \(error.localizedDescription, privacy: .public)")
-            return []
-        }
+        taskTags[taskId] ?? []
     }
 
     // MARK: - Bucketing
