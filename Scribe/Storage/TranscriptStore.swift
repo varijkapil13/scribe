@@ -106,6 +106,109 @@ final class TranscriptStore {
         }
     }
 
+    /// Moves segments to a different session, preserving wall-clock alignment.
+    ///
+    /// Each segment's wall-clock time (`source.createdAt + segment.startMs`) is
+    /// re-expressed as an offset from the target session's `createdAt`. If any
+    /// moved segment begins earlier than the target's `createdAt`, the target
+    /// session's `createdAt` is shifted backward to accommodate it and the
+    /// target's existing segments are bumped forward by the same amount so
+    /// their wall-clock alignment is also preserved.
+    ///
+    /// Recomputes `endedAt` / `durationSeconds` for both the source and target
+    /// sessions.
+    ///
+    /// - Parameters:
+    ///   - ids: The auto-incremented segment row ids to move.
+    ///   - toSessionId: Destination session id.
+    func moveSegments(ids: [Int64], toSessionId: String) throws {
+        guard !ids.isEmpty else { return }
+        try db.write { database in
+            let segments = try Segment
+                .filter(ids.contains(Column("id")))
+                .order(Column("startMs").asc)
+                .fetchAll(database)
+            guard !segments.isEmpty else { return }
+
+            guard var target = try Session.fetchOne(database, key: toSessionId) else { return }
+
+            let sourceIds = Set(segments.map { $0.sessionId })
+            // Cache source createdAt values so we don't re-fetch per segment.
+            var sourceCreatedAt: [String: Date] = [:]
+            for sid in sourceIds {
+                if let s = try Session.fetchOne(database, key: sid) {
+                    sourceCreatedAt[sid] = s.createdAt
+                }
+            }
+
+            // Compute each moved segment's absolute wall-clock start/end.
+            struct MovedAbs { let id: Int64; let startAbs: Date; let endAbs: Date; let speaker: String; let text: String }
+            var moved: [MovedAbs] = []
+            moved.reserveCapacity(segments.count)
+            for seg in segments {
+                guard let segId = seg.id, let createdAt = sourceCreatedAt[seg.sessionId] else { continue }
+                let startAbs = createdAt.addingTimeInterval(TimeInterval(seg.startMs) / 1000)
+                let endAbs = createdAt.addingTimeInterval(TimeInterval(seg.endMs) / 1000)
+                moved.append(MovedAbs(id: segId, startAbs: startAbs, endAbs: endAbs, speaker: seg.speaker, text: seg.text))
+            }
+            guard !moved.isEmpty else { return }
+
+            let earliestAbs = moved.map { $0.startAbs }.min()!
+
+            // If the moved selection starts before target.createdAt, slide the
+            // target session's origin back so all timestamps stay non-negative
+            // and the target's existing segments retain their wall-clock time.
+            if earliestAbs < target.createdAt {
+                let shiftMs = Int((target.createdAt.timeIntervalSince(earliestAbs) * 1000).rounded())
+                if shiftMs > 0 {
+                    try database.execute(
+                        sql: "UPDATE segments SET startMs = startMs + ?, endMs = endMs + ? WHERE sessionId = ?",
+                        arguments: [shiftMs, shiftMs, toSessionId]
+                    )
+                    target.createdAt = earliestAbs
+                    try target.update(database)
+                }
+            }
+
+            // Re-fetch in case createdAt changed.
+            let targetCreatedAt = target.createdAt
+
+            for m in moved {
+                let newStart = Int((m.startAbs.timeIntervalSince(targetCreatedAt) * 1000).rounded())
+                let newEnd = Int((m.endAbs.timeIntervalSince(targetCreatedAt) * 1000).rounded())
+                try database.execute(
+                    sql: "UPDATE segments SET sessionId = ?, startMs = ?, endMs = ? WHERE id = ?",
+                    arguments: [toSessionId, newStart, newEnd, m.id]
+                )
+            }
+
+            for sid in sourceIds.union([toSessionId]) {
+                try Self.recomputeSessionDuration(database, sessionId: sid)
+            }
+        }
+    }
+
+    /// Recomputes a session's `endedAt` / `durationSeconds` from its current
+    /// segments. Used after moves so both source and target reflect their new
+    /// content lengths.
+    private static func recomputeSessionDuration(_ database: Database, sessionId: String) throws {
+        guard var session = try Session.fetchOne(database, key: sessionId) else { return }
+        let lastEndMs = try Segment
+            .filter(Column("sessionId") == sessionId)
+            .order(Column("endMs").desc)
+            .fetchOne(database)?
+            .endMs
+
+        if let lastEndMs {
+            session.endedAt = session.createdAt.addingTimeInterval(TimeInterval(lastEndMs) / 1000)
+            session.durationSeconds = lastEndMs / 1000
+        } else {
+            session.endedAt = session.createdAt
+            session.durationSeconds = 0
+        }
+        try session.update(database)
+    }
+
     // MARK: - Full-Text Search
 
     /// Searches all transcripts using FTS5 and groups matching segments by session.

@@ -56,6 +56,9 @@ struct MainWindowView: View {
             let pane = (note.object as? SettingsPane) ?? .general
             selection = .settings(pane)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeSessionUpdated)) { _ in
+            viewModel.loadSessions()
+        }
         .onChange(of: appState.isTranscribing) { _, isRecording in
             // Session started → flip to the inline live view so the user
             // immediately sees the streaming transcript. Session ended → reload
@@ -365,4 +368,5 @@ private struct KeyCapGroup: View {
 
 extension Notification.Name {
     static let openScribeSettings = Notification.Name("scribe.openSettings")
+    static let scribeSessionUpdated = Notification.Name("scribe.sessionUpdated")
 }
