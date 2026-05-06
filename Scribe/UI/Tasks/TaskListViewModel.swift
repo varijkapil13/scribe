@@ -108,8 +108,12 @@ final class TaskListViewModel: ObservableObject {
 
         var projectId: String? = nil
         if let name = parsed.projectName {
-            projectId = (try? store.fetchProjects())?
-                .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id
+            do {
+                projectId = try store.fetchProjects()
+                    .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id
+            } catch {
+                Log.ui.error("TaskListViewModel.commitQuickAdd fetchProjects failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         do {

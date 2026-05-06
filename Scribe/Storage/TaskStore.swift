@@ -385,6 +385,7 @@ final class TaskStore {
             if !includeCompleted {
                 sql += " AND tasks.completedAt IS NULL"
             }
+            // bm25 returns negative values; more-negative = better match, so ASC = best first.
             sql += " ORDER BY bm25(tasks_fts) ASC LIMIT ?"
             return try TodoTask.fetchAll(database, sql: sql,
                                          arguments: [sanitized, limit])

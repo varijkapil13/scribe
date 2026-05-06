@@ -25,7 +25,6 @@ enum QuickAddParser {
     }
 
     static func parse(_ input: String,
-                      now: Date = Date(),
                       detector: NSDataDetector? = .scribeDateDetector) -> ParsedQuickAdd {
         var working = input
 
@@ -37,6 +36,9 @@ enum QuickAddParser {
         var projectName: String?
         var priority: TodoTask.Priority?
 
+        // (?<!\S) = "not preceded by a non-whitespace char" = start-of-string
+        // or whitespace boundary. ICU lookbehind succeeds at position 0 when
+        // no prior character exists, so this correctly rejects "foo#bar".
         let tokenPattern = #"(?<!\S)([#+!])([A-Za-z0-9_-]+)"#
         if let regex = try? NSRegularExpression(pattern: tokenPattern) {
             let nsRange = NSRange(working.startIndex..<working.endIndex, in: working)
@@ -78,7 +80,6 @@ enum QuickAddParser {
                 working.removeSubrange(phraseRange)
             }
         }
-        _ = now // reserved for future relative-date math
 
         // 3) Whatever's left is the title. Collapse double spaces and trim.
         let title = working

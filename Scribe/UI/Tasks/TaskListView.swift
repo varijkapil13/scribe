@@ -206,7 +206,7 @@ struct TaskListView: View {
                 Label("Edit…", systemImage: "pencil")
             }
             Button(role: .destructive) {
-                viewModel.delete(task)
+                pendingDelete = task
             } label: {
                 Label("Delete", systemImage: "trash")
             }
