@@ -142,7 +142,7 @@ final class TranscriptDetailViewModel: ObservableObject {
     @discardableResult
     func convertActionItemToTask(_ item: ActionItem) -> TodoTask? {
         let actionItemId = item.id.uuidString
-        if let existing = (try? taskStore.fetchTaskForActionItem(actionItemId)) ?? nil {
+        if let existing = try? taskStore.fetchTaskForActionItem(actionItemId) {
             return existing
         }
         let draft = ActionItemConverter.draft(from: item, sessionId: session.id)

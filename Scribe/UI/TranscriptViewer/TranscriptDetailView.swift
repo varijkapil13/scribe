@@ -599,9 +599,9 @@ struct TranscriptDetailView: View {
 private struct ActionItemRow: View {
     let item: ActionItem
     let isCompleted: Bool
-    let isConverted: Bool
+    var isConverted: Bool = false
     let onToggle: () -> Void
-    let onConvert: () -> Void
+    var onConvert: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
@@ -636,18 +636,20 @@ private struct ActionItemRow: View {
                     if let priority = item.priority {
                         PriorityBadge(priority: priority)
                     }
-                    Button(action: onConvert) {
-                        Label(
-                            isConverted ? "Open task" : "Convert to task",
-                            systemImage: isConverted ? "checkmark.square" : "plus.square.on.square"
-                        )
-                        .font(.caption)
+                    if let onConvert {
+                        Button(action: onConvert) {
+                            Label(
+                                isConverted ? "Open task" : "Convert to task",
+                                systemImage: isConverted ? "checkmark.square" : "plus.square.on.square"
+                            )
+                            .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help(isConverted
+                              ? "Open the linked task in the editor"
+                              : "Create a task from this action item")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help(isConverted
-                          ? "Open the linked task in the editor"
-                          : "Create a task from this action item")
                 }
             }
         }

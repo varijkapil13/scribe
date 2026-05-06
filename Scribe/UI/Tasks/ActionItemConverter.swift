@@ -74,9 +74,11 @@ enum ActionItemConverter {
     static func parseDate(_ text: String, with detector: NSDataDetector, reference: Date) -> Date? {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         let matches = detector.matches(in: text, options: [], range: range)
+        // NSDataDetector resolves relative phrases ("tomorrow", "next Friday")
+        // against the system clock, not an injectable reference date. Absolute
+        // phrases ("December 1, 2099") are unaffected.
         for match in matches where match.resultType == .date {
-            // Use reference date so phrases like "tomorrow" resolve correctly.
-            if let date = match.date(from: reference) ?? match.date {
+            if let date = match.date {
                 return date
             }
         }
@@ -88,19 +90,4 @@ extension NSDataDetector {
     /// Shared detector configured for date-like phrases. Falls back to nil if
     /// the system fails to construct one (extremely unlikely).
     static let scribeDateDetector: NSDataDetector? = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue)
-}
-
-// `NSTextCheckingResult.date(from:)` resolves relative phrases against a
-// reference date but isn't a public API on every SDK version. Provide a
-// shim that uses the absolute date and applies the offset manually if
-// needed.
-private extension NSTextCheckingResult {
-    func date(from reference: Date) -> Date? {
-        guard resultType == .date, let absolute = date else { return nil }
-        // For "tomorrow at 3pm" style phrases, NSDataDetector already returns
-        // a fully-qualified Date relative to its current "now". We lean on
-        // that here; reference is preserved for future RRULE-style work.
-        _ = reference
-        return absolute
-    }
 }

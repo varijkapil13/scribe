@@ -229,14 +229,10 @@ final class TaskStore {
     func actionItemIdsWithLinkedTasks(in actionItemIds: [String]) throws -> Set<String> {
         guard !actionItemIds.isEmpty else { return [] }
         return try db.read { database in
-            let rows = try String.fetchAll(database,
-                sql: """
-                    SELECT sourceActionItemId FROM tasks
-                    WHERE sourceActionItemId IN (\(actionItemIds.map { _ in "?" }.joined(separator: ",")))
-                    """,
-                arguments: StatementArguments(actionItemIds)
-            )
-            return Set(rows)
+            let tasks = try TodoTask
+                .filter(actionItemIds.contains(Column("sourceActionItemId")))
+                .fetchAll(database)
+            return Set(tasks.compactMap(\.sourceActionItemId))
         }
     }
 
