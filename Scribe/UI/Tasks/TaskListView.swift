@@ -8,6 +8,7 @@ struct TaskListView: View {
 
     @StateObject private var viewModel: TaskListViewModel
     @FocusState private var quickAddFocused: Bool
+    @State private var editingTask: TodoTask?
 
     init(filter: TaskStore.Filter) {
         self.filter = filter
@@ -34,6 +35,9 @@ struct TaskListView: View {
         // recreates this view (and its @StateObject) — no onChange needed here.
         .onReceive(NotificationCenter.default.publisher(for: .scribeFocusQuickAdd)) { _ in
             quickAddFocused = true
+        }
+        .sheet(item: $editingTask) { task in
+            TaskEditorView(task: task)
         }
     }
 
@@ -116,9 +120,15 @@ struct TaskListView: View {
             ForEach(tasks) { task in
                 TaskRowView(
                     task: task,
-                    onToggle: { viewModel.toggleCompleted(task) }
+                    onToggle: { viewModel.toggleCompleted(task) },
+                    onOpen: { editingTask = task }
                 )
                 .contextMenu {
+                    Button {
+                        editingTask = task
+                    } label: {
+                        Label("Edit…", systemImage: "pencil")
+                    }
                     Button(role: .destructive) {
                         viewModel.delete(task)
                     } label: {
@@ -132,15 +142,16 @@ struct TaskListView: View {
 
 // MARK: - Row
 
-/// Single-row presentation: completion checkbox, title, optional due chip.
-/// Slice 3 grows this with priority + project metadata once the editor pane
-/// lands.
+/// Single-row presentation: completion checkbox, title, optional metadata
+/// chips (priority, due date). Tapping the body opens the task editor sheet;
+/// the checkbox toggle stays separate so it can't accidentally launch a sheet.
 struct TaskRowView: View {
     let task: TodoTask
     let onToggle: () -> Void
+    let onOpen: () -> Void
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
             Button(action: onToggle) {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(task.isCompleted ? Color.accentColor : .secondary)
@@ -149,6 +160,28 @@ struct TaskRowView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(task.isCompleted ? "Mark incomplete" : "Mark complete")
 
+            // The whole rest of the row is the click target for opening the
+            // editor. Wrapping in a plain Button keeps SwiftUI's default
+            // accessibility / focus behaviour without fighting the checkbox.
+            Button(action: onOpen) {
+                rowContent
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+        }
+        .padding(.vertical, DesignTokens.Spacing.sm)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .background(DesignTokens.Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.system(.body))
@@ -164,18 +197,38 @@ struct TaskRowView: View {
 
             Spacer(minLength: DesignTokens.Spacing.sm)
 
+            if let priority = task.priority {
+                PriorityChip(priority: priority)
+            }
+
             if let due = task.dueAt {
-                DueDateChip(date: due, isOverdue: !task.isCompleted && due < Calendar.current.startOfDay(for: Date()))
+                DueDateChip(
+                    date: due,
+                    isOverdue: !task.isCompleted && due < Calendar.current.startOfDay(for: Date())
+                )
             }
         }
-        .padding(.vertical, DesignTokens.Spacing.sm)
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .background(DesignTokens.Palette.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
-        )
+    }
+}
+
+private struct PriorityChip: View {
+    let priority: TodoTask.Priority
+
+    var body: some View {
+        Text(priority.rawValue)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tint.opacity(0.12)))
+    }
+
+    private var tint: Color {
+        switch priority {
+        case .high:   return DesignTokens.Palette.priorityHigh
+        case .medium: return DesignTokens.Palette.priorityMedium
+        case .low:    return DesignTokens.Palette.priorityLow
+        }
     }
 }
 

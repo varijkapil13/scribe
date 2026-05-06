@@ -80,9 +80,11 @@ sessions — update it as decisions land or scope changes.
       keyboard shortcuts land in slice 8. PR open as
       `feat/tasks-slice-2-list-ui`.
 
-- [ ] **Slice 3 — Task editor pane.** Right-side detail (or inline expand)
-      to set priority, due date (date picker), project, notes, tags. Save
-      on commit, cancel discards. Delete + duplicate actions in toolbar.
+- [~] **Slice 3 — Task editor pane.** Modal sheet on row tap (right-side
+      inspector deferred). Edits title, notes, priority, due date,
+      reminder, project, tags. Save on commit (Cmd-Return), Cancel
+      discards. Toolbar exposes Duplicate + Delete (destructive with
+      confirm). PR open as `feat/tasks-slice-3-editor-pane`.
 
 - [ ] **Slice 4 — Projects.** Project create/edit/delete UI, sidebar group
       lists projects below the smart filters, drag-to-reorder rows
