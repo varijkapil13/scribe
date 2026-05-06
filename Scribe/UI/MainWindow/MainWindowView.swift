@@ -17,8 +17,10 @@ struct MainWindowView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var appDelegate: AppDelegate
     @StateObject private var viewModel = TranscriptListViewModel()
+    @StateObject private var projectsViewModel = ProjectsViewModel()
     @State private var searchText: String = ""
     @State private var selection: MainSelection?
+    @State private var projectEditorMode: ProjectEditorMode?
 
     var body: some View {
         NavigationSplitView {
@@ -44,6 +46,7 @@ struct MainWindowView: View {
         }
         .onAppear {
             viewModel.loadSessions()
+            projectsViewModel.start()
             if selection == nil {
                 if appState.isTranscribing {
                     selection = .live
@@ -51,6 +54,23 @@ struct MainWindowView: View {
                     selection = .transcript(first.id)
                 }
                 // Otherwise stay `.none` and show the Welcome hero.
+            }
+        }
+        .onDisappear { projectsViewModel.stop() }
+        .sheet(item: $projectEditorMode) { mode in
+            switch mode {
+            case .create:
+                ProjectEditorView(mode: .create) { name, color, icon in
+                    _ = projectsViewModel.create(name: name, color: color, icon: icon)
+                }
+            case .edit(let project):
+                ProjectEditorView(mode: .edit(project)) { name, color, icon in
+                    var copy = project
+                    copy.name = name
+                    copy.color = color
+                    copy.icon = icon
+                    projectsViewModel.update(copy)
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
@@ -173,6 +193,52 @@ struct MainWindowView: View {
             } header: {
                 Text("Tasks")
                     .eyebrowStyle()
+            }
+
+            Section {
+                ForEach(projectsViewModel.projects) { project in
+                    NavigationLink(value: MainSelection.tasks(.project(project.id))) {
+                        ProjectSidebarRow(project: project)
+                    }
+                    .contextMenu {
+                        Button {
+                            projectEditorMode = .edit(project)
+                        } label: {
+                            Label("Edit…", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            projectsViewModel.delete(id: project.id)
+                            if case .tasks(.project(let id)) = selection, id == project.id {
+                                selection = .tasks(.inbox)
+                            }
+                        } label: {
+                            Label("Delete project", systemImage: "trash")
+                        }
+                    }
+                    .dropDestination(for: TaskDragPayload.self) { items, _ in
+                        for item in items {
+                            projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
+                        }
+                        return !items.isEmpty
+                    }
+                }
+                .onMove { source, destination in
+                    projectsViewModel.reorder(from: source, to: destination)
+                }
+            } header: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Projects")
+                        .eyebrowStyle()
+                    Spacer()
+                    Button {
+                        projectEditorMode = .create
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .help("New project")
+                }
             }
 
             Section {
@@ -389,7 +455,6 @@ extension Notification.Name {
 // MARK: - Task sidebar items
 
 /// Smart filters shown under the "Tasks" sidebar header: Inbox, Today, Upcoming, All, Completed.
-/// Project rows ship in slice 4.
 struct TaskSidebarItem: Identifiable, Hashable {
     let id: String
     let title: String
@@ -403,4 +468,39 @@ struct TaskSidebarItem: Identifiable, Hashable {
         .init(id: "all",      title: "All",      systemImage: "list.bullet",     filter: .all),
         .init(id: "completed", title: "Completed", systemImage: "checkmark.circle", filter: .completed)
     ]
+}
+
+// MARK: - Project sidebar
+
+/// Drives the create/edit sheet for projects from the sidebar.
+enum ProjectEditorMode: Identifiable, Hashable {
+    case create
+    case edit(Project)
+
+    var id: String {
+        switch self {
+        case .create: return "create"
+        case .edit(let project): return "edit-\(project.id)"
+        }
+    }
+}
+
+/// Sidebar row for a single project. Renders the project's icon (if set) in
+/// its custom color, otherwise falls back to a generic folder.
+struct ProjectSidebarRow: View {
+    let project: Project
+
+    var body: some View {
+        Label {
+            Text(project.name)
+        } icon: {
+            Image(systemName: project.icon ?? "folder")
+                .foregroundStyle(tint)
+        }
+    }
+
+    private var tint: Color {
+        if let hex = project.color, let color = Color(hex: hex) { return color }
+        return .secondary
+    }
 }

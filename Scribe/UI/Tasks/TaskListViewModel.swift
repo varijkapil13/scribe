@@ -128,6 +128,18 @@ final class TaskListViewModel: ObservableObject {
         }
     }
 
+    /// Lightweight tag lookup so rows can render chips without each owning
+    /// their own subscription. Returns `[]` on error rather than throwing —
+    /// the row falls back to no chips if the read fails.
+    func tags(for taskId: String) -> [String] {
+        do {
+            return try store.tags(for: taskId)
+        } catch {
+            Log.ui.error("TaskListViewModel.tags(for:) failed: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
     // MARK: - Bucketing
 
     /// Splits a task list into ordered buckets for the grouped UI. Pure
