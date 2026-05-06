@@ -10,6 +10,7 @@ final class TranscriptDetailViewModel: ObservableObject {
 
     // MARK: - Published Properties
 
+    @Published var session: Session
     @Published var segments: [Segment] = []
     @Published var meetingSummary: MeetingSummary?
     @Published var transcriptAnalysis: TranscriptAnalysis?
@@ -18,9 +19,14 @@ final class TranscriptDetailViewModel: ObservableObject {
     @Published var completedActionItems: Set<UUID> = []
     @Published var summaryError: String?
 
+    // MARK: - Selection State (for moving segments)
+
+    @Published var isSelecting: Bool = false
+    @Published var selectedSegmentIds: Set<Int64> = []
+    @Published var moveTargetCandidates: [Session] = []
+
     // MARK: - Properties
 
-    let session: Session
     private let store: TranscriptStore
 
     // MARK: - Computed Properties
@@ -50,6 +56,14 @@ final class TranscriptDetailViewModel: ObservableObject {
         self.store = store
     }
 
+    /// Re-fetches session metadata from the store. Called after edits to keep
+    /// the view in sync.
+    func reloadSession() {
+        if let fresh = try? store.fetchSession(id: session.id) {
+            session = fresh
+        }
+    }
+
     // MARK: - Public Methods
 
     /// Fetches all segments for the session from the store.
@@ -65,14 +79,26 @@ final class TranscriptDetailViewModel: ObservableObject {
     func updateSessionTitle(_ title: String) {
         var updated = session
         updated.title = title
-        try? store.updateSession(updated)
+        do {
+            try store.updateSession(updated)
+            session = updated
+            NotificationCenter.default.post(name: .scribeSessionUpdated, object: updated.id)
+        } catch {
+            Log.storage.error("Failed to update session title: \(error.localizedDescription)")
+        }
     }
 
     /// Updates the session tags in the store.
     func updateSessionTags(_ tags: [String]) {
         var updated = session
         updated.tags = tags
-        try? store.updateSession(updated)
+        do {
+            try store.updateSession(updated)
+            session = updated
+            NotificationCenter.default.post(name: .scribeSessionUpdated, object: updated.id)
+        } catch {
+            Log.storage.error("Failed to update session tags: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Intelligence Methods
@@ -87,6 +113,13 @@ final class TranscriptDetailViewModel: ObservableObject {
     /// Generates an AI-powered meeting summary using on-device Apple Intelligence.
     @MainActor
     func generateSummary() async {
+        Log.intelligence.info("generateSummary tapped — \(self.segments.count) segments")
+        guard !segments.isEmpty else {
+            summaryError = "Transcript is empty — record or move segments back before summarising."
+            Log.intelligence.error("generateSummary aborted — no segments")
+            return
+        }
+
         isGeneratingSummary = true
         summaryError = nil
         defer { isGeneratingSummary = false }
@@ -103,8 +136,10 @@ final class TranscriptDetailViewModel: ObservableObject {
             )
             try? store.saveSummary(summary)
             meetingSummary = summary
+            Log.intelligence.info("generateSummary succeeded — \(summary.actionItems.count) action items")
         } catch {
             summaryError = error.localizedDescription
+            Log.intelligence.error("generateSummary failed: \(error.localizedDescription)")
         }
     }
 
@@ -132,6 +167,51 @@ final class TranscriptDetailViewModel: ObservableObject {
         if !entities.isEmpty {
             // We have cached entities; run a quick re-analysis for the rest.
             runAnalysis()
+        }
+    }
+
+    // MARK: - Segment Selection / Move
+
+    /// Toggles selection mode. Exiting selection mode clears the selection.
+    func toggleSelectMode() {
+        isSelecting.toggle()
+        if !isSelecting {
+            selectedSegmentIds.removeAll()
+        }
+    }
+
+    /// Toggles a segment's membership in the current selection.
+    func toggleSegmentSelection(_ id: Int64) {
+        if selectedSegmentIds.contains(id) {
+            selectedSegmentIds.remove(id)
+        } else {
+            selectedSegmentIds.insert(id)
+        }
+    }
+
+    /// Loads the list of sessions the current selection can be moved into
+    /// (everything except the current session, ordered most-recent first).
+    func loadMoveTargets() {
+        let all = (try? store.fetchAllSessions()) ?? []
+        moveTargetCandidates = all.filter { $0.id != session.id }
+    }
+
+    /// Moves the currently selected segments into `target`. On success, exits
+    /// selection mode, reloads segments, and notifies the sidebar so both
+    /// sessions reflect new durations.
+    func moveSelectedSegments(to target: Session) {
+        let ids = Array(selectedSegmentIds)
+        guard !ids.isEmpty else { return }
+        do {
+            try store.moveSegments(ids: ids, toSessionId: target.id)
+            selectedSegmentIds.removeAll()
+            isSelecting = false
+            loadSegments()
+            reloadSession()
+            NotificationCenter.default.post(name: .scribeSessionUpdated, object: session.id)
+            NotificationCenter.default.post(name: .scribeSessionUpdated, object: target.id)
+        } catch {
+            Log.storage.error("Failed to move segments: \(error.localizedDescription)")
         }
     }
 

@@ -4,7 +4,6 @@ import SwiftUI
 /// and all transcript segments with intelligence features (summary, action items, insights).
 struct TranscriptDetailView: View {
 
-    let session: Session
     @StateObject var viewModel: TranscriptDetailViewModel
     @State var isEditing: Bool = false
     @State var editedTitle: String = ""
@@ -12,6 +11,9 @@ struct TranscriptDetailView: View {
     @State var showExportSheet: Bool = false
     @State var selectedExportFormat: ExportFormat = .markdown
     @State var selectedTab: DetailTab = .transcript
+    @State var showMoveSheet: Bool = false
+
+    private var session: Session { viewModel.session }
 
     enum DetailTab: String, CaseIterable {
         case transcript = "Transcript"
@@ -32,7 +34,6 @@ struct TranscriptDetailView: View {
     // MARK: - Initializer
 
     init(session: Session) {
-        self.session = session
         _viewModel = StateObject(wrappedValue: TranscriptDetailViewModel(session: session))
     }
 
@@ -67,15 +68,13 @@ struct TranscriptDetailView: View {
         .sheet(isPresented: $showExportSheet) {
             ExportSheetView(session: session, segments: viewModel.segments)
         }
+        .sheet(isPresented: $showMoveSheet) {
+            MoveSegmentsSheet(viewModel: viewModel) {
+                showMoveSheet = false
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    showExportSheet = true
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .help("Export transcript to Markdown, plain text, or JSON")
-
                 Button {
                     Task { await viewModel.generateSummary() }
                 } label: {
@@ -91,6 +90,46 @@ struct TranscriptDetailView: View {
                 }
                 .disabled(viewModel.isAnalyzing || viewModel.segments.isEmpty)
                 .help("Extract entities, topics, and sentiment")
+
+                Button {
+                    showExportSheet = true
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .help("Export transcript to Markdown, plain text, or JSON")
+            }
+
+            ToolbarItemGroup(placement: .secondaryAction) {
+                if viewModel.isSelecting {
+                    Text("\(viewModel.selectedSegmentIds.count) selected")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+
+                    Button {
+                        viewModel.loadMoveTargets()
+                        showMoveSheet = true
+                    } label: {
+                        Label("Move To…", systemImage: "arrow.right.doc.on.clipboard")
+                    }
+                    .disabled(viewModel.selectedSegmentIds.isEmpty)
+                    .help("Move selected segments into another transcript")
+
+                    Button {
+                        viewModel.toggleSelectMode()
+                    } label: {
+                        Label("Done", systemImage: "xmark.circle")
+                    }
+                    .help("Exit selection mode")
+                } else {
+                    Button {
+                        viewModel.toggleSelectMode()
+                    } label: {
+                        Label("Select", systemImage: "checklist")
+                    }
+                    .disabled(viewModel.segments.isEmpty)
+                    .help("Select segments to move into another transcript")
+                }
             }
         }
         .onAppear {
@@ -257,8 +296,17 @@ struct TranscriptDetailView: View {
         } else {
             LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                 ForEach(viewModel.segments) { segment in
-                    SegmentView(segment: segment)
-                        .padding(.vertical, DesignTokens.Spacing.xs)
+                    SegmentView(
+                        segment: segment,
+                        isSelecting: viewModel.isSelecting,
+                        isSelected: segment.id.map { viewModel.selectedSegmentIds.contains($0) } ?? false,
+                        onToggleSelection: {
+                            if let id = segment.id {
+                                viewModel.toggleSegmentSelection(id)
+                            }
+                        }
+                    )
+                    .padding(.vertical, DesignTokens.Spacing.xs)
                 }
             }
         }
@@ -277,6 +325,26 @@ struct TranscriptDetailView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 280)
+        } else if let error = viewModel.summaryError {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Summary failed")
+                        .font(.system(.headline, weight: .semibold))
+                }
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Button("Try Again") {
+                    Task { await viewModel.generateSummary() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.segments.isEmpty)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accentCard(tint: .orange)
         } else if let summary = viewModel.meetingSummary {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
@@ -656,5 +724,111 @@ private struct WrappingHStack: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
+    }
+}
+
+// MARK: - MoveSegmentsSheet
+
+/// Sheet that lets the user move the currently-selected segments into another
+/// existing transcript session. Useful when a single recording accidentally
+/// captured multiple back-to-back calls.
+struct MoveSegmentsSheet: View {
+    @ObservedObject var viewModel: TranscriptDetailViewModel
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Move Segments")
+                        .font(.system(.title3, weight: .semibold))
+                    Text("\(viewModel.selectedSegmentIds.count) segment\(viewModel.selectedSegmentIds.count == 1 ? "" : "s") will be appended to the chosen transcript.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel", action: onClose)
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+            .padding(DesignTokens.Spacing.lg)
+
+            Divider()
+
+            if viewModel.moveTargetCandidates.isEmpty {
+                EmptyStateView(
+                    systemImage: "tray",
+                    title: "No other transcripts",
+                    message: "Create another recording first to have somewhere to move these segments to."
+                )
+                .frame(minHeight: 280)
+                .padding(DesignTokens.Spacing.lg)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        ForEach(viewModel.moveTargetCandidates) { candidate in
+                            Button {
+                                viewModel.moveSelectedSegments(to: candidate)
+                                onClose()
+                            } label: {
+                                MoveTargetRow(session: candidate)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(DesignTokens.Spacing.lg)
+                }
+            }
+        }
+        .frame(minWidth: 480, minHeight: 360)
+    }
+}
+
+private struct MoveTargetRow: View {
+    let session: Session
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
+            Image(systemName: "text.alignleft")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.secondary.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.title.isEmpty ? "Untitled Session" : session.title)
+                    .font(.system(.body, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Text(session.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    if let duration = session.durationSeconds {
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(formatDuration(duration))
+                            .monospacedDigit()
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(DesignTokens.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func formatDuration(_ total: Int) -> String {
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        if h > 0 { return String(format: "%dh %dm", h, m) }
+        if m > 0 { return String(format: "%dm %ds", m, s) }
+        return String(format: "%ds", s)
     }
 }

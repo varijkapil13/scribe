@@ -6,9 +6,23 @@ import SwiftUI
 struct SegmentView: View {
 
     let segment: Segment
+    var isSelecting: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelection: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
+            if isSelecting {
+                Button(action: { onToggleSelection?() }) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+
             // Vertical accent bar keyed to the speaker.
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                 .fill(Color.speakerTint(for: segment.speaker))
