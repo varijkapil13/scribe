@@ -76,4 +76,103 @@ final class NoteStoreTests: XCTestCase {
         let links = try db.database.read { try NoteLinkRow.fetchAll($0) }
         XCTAssertTrue(links.isEmpty)
     }
+
+    // MARK: - Task 2 tests (require NoteStore)
+
+    func testCreateAndFetchNote() throws {
+        let store = NoteStore(databaseManager: db)
+        let note = try store.createNote(title: "Hello", body: "World", tags: [])
+        let fetched = try store.fetchNote(id: note.id)
+        XCTAssertEqual(fetched?.title, "Hello")
+        XCTAssertEqual(fetched?.body, "World")
+        XCTAssertFalse(fetched!.isDailyNote)
+    }
+
+    func testUpdateNote() throws {
+        let store = NoteStore(databaseManager: db)
+        var note = try store.createNote(title: "Old", body: "", tags: [])
+        note.title = "New"
+        note.body = "Updated body"
+        try store.updateNote(note, tags: [])
+        let fetched = try store.fetchNote(id: note.id)
+        XCTAssertEqual(fetched?.title, "New")
+        XCTAssertEqual(fetched?.body, "Updated body")
+    }
+
+    func testDeleteNote() throws {
+        let store = NoteStore(databaseManager: db)
+        let note = try store.createNote(title: "Delete me", body: "", tags: [])
+        try store.deleteNote(id: note.id)
+        XCTAssertNil(try store.fetchNote(id: note.id))
+    }
+
+    func testTagsNormalized() throws {
+        let store = NoteStore(databaseManager: db)
+        let note = try store.createNote(title: "Tagged", body: "", tags: ["Swift", " iOS "])
+        let tags = try store.tags(for: note.id)
+        XCTAssertEqual(Set(tags), Set(["swift", "ios"]))
+    }
+
+    func testDailyNoteIdempotent() throws {
+        let store = NoteStore(databaseManager: db)
+        let today = Date()
+        let first = try store.dailyNote(for: today)
+        let second = try store.dailyNote(for: today)
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertTrue(first.isDailyNote)
+        XCTAssertTrue(first.title.hasPrefix("Daily Note \u{2013}"))
+    }
+
+    func testDailyNoteDifferentDates() throws {
+        let store = NoteStore(databaseManager: db)
+        let today = Date()
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        let a = try store.dailyNote(for: today)
+        let b = try store.dailyNote(for: tomorrow)
+        XCTAssertNotEqual(a.id, b.id)
+    }
+
+    func testFTSSearch() throws {
+        let store = NoteStore(databaseManager: db)
+        _ = try store.createNote(title: "Swift concurrency", body: "actors and tasks", tags: [])
+        _ = try store.createNote(title: "Python guide", body: "no concurrency here", tags: [])
+        let results = try store.searchNotes(query: "concurr")
+        XCTAssertEqual(results.count, 2)
+    }
+
+    func testFTSSearchEmptyQueryReturnsAll() throws {
+        let store = NoteStore(databaseManager: db)
+        _ = try store.createNote(title: "A", body: "", tags: [])
+        _ = try store.createNote(title: "B", body: "", tags: [])
+        let results = try store.searchNotes(query: "")
+        XCTAssertEqual(results.count, 2)
+    }
+
+    func testBacklinks() throws {
+        let store = NoteStore(databaseManager: db)
+        let target = try store.createNote(title: "Target", body: "", tags: [])
+        let source = try store.createNote(title: "Source", body: "See [[Target]] for details", tags: [])
+        try store.updateNote(source, tags: [])
+        let links = try store.backlinks(for: target.id)
+        XCTAssertEqual(links.count, 1)
+        XCTAssertEqual(links[0].id, source.id)
+    }
+
+    func testAllNoteTags() throws {
+        let store = NoteStore(databaseManager: db)
+        _ = try store.createNote(title: "A", body: "", tags: ["swift", "ios"])
+        _ = try store.createNote(title: "B", body: "", tags: ["swift", "macos"])
+        let tags = try store.allNoteTags()
+        XCTAssertEqual(Set(tags), Set(["swift", "ios", "macos"]))
+    }
+
+    func testDeleteCascadesCleansTagsAndLinks() throws {
+        let store = NoteStore(databaseManager: db)
+        let b = try store.createNote(title: "B", body: "", tags: [])
+        let a = try store.createNote(title: "A", body: "[[B]]", tags: ["x"])
+        try store.updateNote(a, tags: ["x"])
+        try store.deleteNote(id: a.id)
+        let linksAfter = try store.backlinks(for: b.id)
+        XCTAssertTrue(linksAfter.isEmpty)
+    }
 }
