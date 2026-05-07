@@ -8,7 +8,19 @@ enum MainSelection: Hashable {
     case transcript(String) // session id
     case tasks(TaskStore.Filter)
     case taskCalendar
+    case note(String)           // noteId
+    case notes(NotesFilter)
     case settings(SettingsPane)
+}
+
+enum NotesFilter: Hashable {
+    case all
+    case inbox
+    case today
+    case daily
+    case notebook(String)   // notebookId
+    case tag(String)
+    case graph
 }
 
 /// The main window — sidebar of past transcripts + settings panes, detail
@@ -24,8 +36,21 @@ struct MainWindowView: View {
     @State private var projectEditorMode: ProjectEditorMode?
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
+    @State private var notesExpanded: Bool = true
+    @State private var notebooksExpanded: Bool = true
+    @State private var notesTagsExpanded: Bool = false
     @State private var transcriptsExpanded: Bool = true
     @State private var settingsExpanded: Bool = false
+    @State private var unifiedTags: [String] = []
+    @State private var notebooks: [Notebook] = []
+    @State private var showUniversalSearch: Bool = false
+    @State private var isCreatingNotebook: Bool = false
+    @State private var notebookDraftName: String = ""
+    @State private var renamingNotebookId: String? = nil
+    @State private var inlineRenameName: String = ""
+    @State private var detailNote: Note? = nil
+    @State private var todayNote: Note? = nil
+    @State private var tagReloadTask: Task<Void, Never>? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -52,6 +77,7 @@ struct MainWindowView: View {
         .onAppear {
             viewModel.loadSessions()
             projectsViewModel.start()
+            reloadTags()
             if selection == nil {
                 if appState.isTranscribing {
                     selection = .live
@@ -61,6 +87,8 @@ struct MainWindowView: View {
             }
         }
         .onDisappear { projectsViewModel.stop() }
+        .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in scheduleTagReload() }
+        .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
             case .create:
@@ -77,6 +105,25 @@ struct MainWindowView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if showUniversalSearch {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { showUniversalSearch = false }
+                    UniversalSearchView(isPresented: $showUniversalSearch) { dest in
+                        selection = dest
+                    }
+                    .padding(.top, 60)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+        }
+        .background(
+            Button("") { showUniversalSearch.toggle() }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .hidden()
+        )
         .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
             let pane = (note.object as? SettingsPane) ?? .general
             selection = .settings(pane)
@@ -203,18 +250,146 @@ struct MainWindowView: View {
                     }
                 }
             } header: {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center) {
                     CollapsibleSectionHeader(title: "Projects", isExpanded: $projectsExpanded)
                     Spacer()
                     Button {
                         projectEditorMode = .create
                     } label: {
                         Image(systemName: "plus.circle")
-                            .font(.caption)
+                            .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                     .help("New project")
                 }
+            }
+
+            Section {
+                if notesExpanded {
+                    NavigationLink(value: MainSelection.notes(.today)) {
+                        Label("Today", systemImage: "sun.max")
+                    }
+                    NavigationLink(value: MainSelection.notes(.inbox)) {
+                        Label("Inbox", systemImage: "tray")
+                    }
+                    NavigationLink(value: MainSelection.notes(.all)) {
+                        Label("All Notes", systemImage: "note.text")
+                    }
+                    NavigationLink(value: MainSelection.notes(.daily)) {
+                        Label("Daily Notes", systemImage: "calendar.badge.clock")
+                    }
+                    NavigationLink(value: MainSelection.notes(.graph)) {
+                        Label("Graph", systemImage: "circle.hexagongrid")
+                    }
+                }
+            } header: {
+                HStack(alignment: .center) {
+                    CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
+                    Spacer()
+                    Button {
+                        let note = try? NoteStore.shared.createNote(title: "", body: "")
+                        if let note { selection = .note(note.id) }
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("New note (⌘N)")
+                    .keyboardShortcut("n", modifiers: .command)
+                }
+            }
+
+            Section {
+                if notebooksExpanded {
+                    ForEach(notebooks) { nb in
+                        if renamingNotebookId == nb.id {
+                            InlineNameField(
+                                text: $inlineRenameName,
+                                placeholder: nb.name,
+                                systemImage: "folder"
+                            ) {
+                                let name = inlineRenameName.trimmingCharacters(in: .whitespaces)
+                                if !name.isEmpty {
+                                    var copy = nb
+                                    copy.name = name
+                                    try? NoteStore.shared.updateNotebook(copy)
+                                }
+                                renamingNotebookId = nil
+                            } onCancel: {
+                                renamingNotebookId = nil
+                            }
+                        } else {
+                            NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
+                                Label(nb.name, systemImage: "folder")
+                            }
+                            .contextMenu {
+                                Button {
+                                    renamingNotebookId = nb.id
+                                    inlineRenameName = nb.name
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+                                Divider()
+                                Button(role: .destructive) {
+                                    try? NoteStore.shared.deleteNotebook(id: nb.id)
+                                    if case .notes(.notebook(let id)) = selection, id == nb.id {
+                                        selection = .notes(.all)
+                                    }
+                                } label: {
+                                    Label("Delete Notebook", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+
+                    if isCreatingNotebook {
+                        InlineNameField(
+                            text: $notebookDraftName,
+                            placeholder: "New Notebook",
+                            systemImage: "folder"
+                        ) {
+                            let name = notebookDraftName.trimmingCharacters(in: .whitespaces)
+                            if !name.isEmpty {
+                                try? NoteStore.shared.createNotebook(name: name)
+                            }
+                            isCreatingNotebook = false
+                            notebookDraftName = ""
+                        } onCancel: {
+                            isCreatingNotebook = false
+                            notebookDraftName = ""
+                        }
+                    }
+                }
+            } header: {
+                HStack(alignment: .center) {
+                    CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
+                    Spacer()
+                    Button {
+                        notebooksExpanded = true
+                        isCreatingNotebook = true
+                        notebookDraftName = ""
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("New notebook")
+                }
+            }
+
+            Section {
+                if notesTagsExpanded {
+                    ForEach(unifiedTags, id: \.self) { tag in
+                        NavigationLink(value: MainSelection.notes(.tag(tag))) {
+                            Label(tag, systemImage: "tag")
+                        }
+                    }
+                }
+            } header: {
+                CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
             }
 
             Section {
@@ -270,6 +445,55 @@ struct MainWindowView: View {
         .navigationTitle("Scribe")
     }
 
+    private func reloadTags() {
+        let noteTags = (try? NoteStore.shared.allNoteTags()) ?? []
+        let taskTags = (try? TaskStore.shared.allTags()) ?? []
+        unifiedTags = Array(Set(noteTags + taskTags)).sorted()
+    }
+
+    private func scheduleTagReload() {
+        tagReloadTask?.cancel()
+        tagReloadTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            reloadTags()
+        }
+    }
+
+    @ViewBuilder
+    private func notesDetailView(filter: NotesFilter) -> some View {
+        let noteListBinding = Binding<String?>(
+            get: { if case .note(let id) = selection { return id } else { return nil } },
+            set: { id in selection = id.map { .note($0) } ?? .notes(filter) }
+        )
+        switch filter {
+        case .today:
+            Group {
+                if let note = todayNote {
+                    NoteDetailView(note: note, onNavigate: { selection = .note($0) })
+                        .id(note.id)
+                } else {
+                    DailyNoteView(onNavigate: { selection = .note($0) })
+                }
+            }
+            .task {
+                todayNote = try? NoteStore.shared.fetchExistingDailyNote(for: Date())
+            }
+        case .daily:
+            DailyNoteView(onNavigate: { selection = .note($0) })
+        case .graph:
+            GraphView(onNavigate: { selection = .note($0) })
+        case .tag(let tag):
+            TaggedContentView(tag: tag, onNavigate: { selection = .note($0) })
+        case .inbox:
+            NoteListView(scope: .inbox, selectedNoteId: noteListBinding)
+        case .notebook(let notebookId):
+            NoteListView(scope: .notebook(notebookId), selectedNoteId: noteListBinding)
+        case .all:
+            NoteListView(scope: .all, selectedNoteId: noteListBinding)
+        }
+    }
+
     private var sidebarEmptyHint: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "waveform.badge.mic")
@@ -306,7 +530,29 @@ struct MainWindowView: View {
             TaskListView(filter: filter)
                 .id(filter)
         case .taskCalendar:
-            TaskCalendarView()
+            TaskCalendarView(onNavigateToNote: { noteId in
+                selection = .note(noteId)
+            })
+        case .note(let id):
+            Group {
+                if let note = detailNote, note.id == id {
+                    NoteDetailView(note: note, onNavigate: { noteId in
+                        selection = .note(noteId)
+                    })
+                    .id(id)
+                } else {
+                    ContentUnavailableView(
+                        "Note not found",
+                        systemImage: "note.text",
+                        description: Text("This note may have been deleted.")
+                    )
+                }
+            }
+            .task(id: id) {
+                detailNote = try? NoteStore.shared.fetchNote(id: id)
+            }
+        case .notes(let filter):
+            notesDetailView(filter: filter)
         case .settings(let pane):
             SettingsPaneView(pane: pane, audioManager: appState.audioManager)
         case .none:
@@ -539,5 +785,41 @@ struct ProjectSidebarRow: View {
     private var tint: Color {
         if let hex = project.color, let color = Color(hex: hex) { return color }
         return .secondary
+    }
+}
+
+// MARK: - Inline name field
+
+/// Inline editable text field for sidebar rows (notebook create / rename).
+/// Commits on Return, cancels on Escape.
+private struct InlineNameField: View {
+    @Binding var text: String
+    let placeholder: String
+    let systemImage: String
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: systemImage)
+                .imageScale(.small)
+                .foregroundStyle(Color.accentColor)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.body)
+                .focused($isFocused)
+                .onSubmit { onCommit() }
+                .onExitCommand { onCancel() }
+        }
+        .padding(.vertical, 2)
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.accentColor.opacity(0.10))
+                .padding(.horizontal, -4)
+        )
+        .onAppear { isFocused = true }
     }
 }

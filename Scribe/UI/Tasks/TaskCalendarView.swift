@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Full monthly calendar showing task load per day.
-/// Left pane: calendar grid. Right pane (slides in): task list for selected day.
+/// Full monthly calendar showing task load and daily notes per day.
+/// Left pane: calendar grid. Right pane (slides in): tasks + daily note for selected day.
 struct TaskCalendarView: View {
 
     @StateObject private var viewModel = TaskCalendarViewModel()
     @State private var editingTask: TodoTask?
+    var onNavigateToNote: ((String) -> Void)?
 
     private let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
@@ -142,6 +143,7 @@ struct TaskCalendarView: View {
     private func calendarCell(_ cell: TaskCalendarViewModel.CalendarCell, height: CGFloat) -> some View {
         let date      = cell.date
         let tasks     = date.map { viewModel.tasks(for: $0) } ?? []
+        let noteExists = date.map { viewModel.hasNote(for: $0) } ?? false
         let isToday   = date.map { viewModel.cal.isDateInToday($0) } ?? false
         let isSelected = date.map { d in
             viewModel.selectedDay.map { viewModel.cal.isDate(d, inSameDayAs: $0) } ?? false
@@ -159,16 +161,25 @@ struct TaskCalendarView: View {
 
                     Spacer(minLength: 0)
 
-                    // Task count badge (when > 0 and collapsed)
-                    if tasks.count > 0 {
-                        Text("\(tasks.count)")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(minWidth: 16, minHeight: 14)
-                            .background(Capsule().fill(countBadgeColor(for: tasks)))
-                            .padding(.top, 4)
-                            .padding(.trailing, 4)
+                    HStack(spacing: 3) {
+                        // Note dot
+                        if noteExists {
+                            Image(systemName: "note.text")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(isToday ? Color.white.opacity(0.85) : Color.accentColor.opacity(0.7))
+                        }
+
+                        // Task count badge (when > 0)
+                        if tasks.count > 0 {
+                            Text("\(tasks.count)")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 16, minHeight: 14)
+                                .background(Capsule().fill(countBadgeColor(for: tasks)))
+                        }
                     }
+                    .padding(.top, 4)
+                    .padding(.trailing, 4)
                 }
                 .padding(.horizontal, 6)
                 .padding(.top, 6)
@@ -239,7 +250,10 @@ struct TaskCalendarView: View {
     // MARK: - Day Panel
 
     private func dayPanel(for day: Date) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let tasks = viewModel.tasks(for: day)
+        let dailyNote = viewModel.existingDailyNote(for: day)
+
+        return VStack(alignment: .leading, spacing: 0) {
             // Header
             VStack(alignment: .leading, spacing: 2) {
                 Text(day, format: .dateTime.weekday(.wide))
@@ -254,24 +268,60 @@ struct TaskCalendarView: View {
 
             Divider()
 
-            let tasks = viewModel.tasks(for: day)
-            if tasks.isEmpty {
-                Spacer()
-                VStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.tertiary)
-                    Text("No tasks")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                        ForEach(tasks) { task in
-                            dayPanelRow(task)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // ── Tasks section ────────────────────────────────────
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        Text("Tasks")
+                            .font(.system(.caption, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .padding(.bottom, 2)
+
+                        if tasks.isEmpty {
+                            HStack(spacing: DesignTokens.Spacing.sm) {
+                                Image(systemName: "checkmark.circle")
+                                    .foregroundStyle(.tertiary)
+                                Text("No tasks")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, DesignTokens.Spacing.sm)
+                        } else {
+                            ForEach(tasks) { task in
+                                dayPanelRow(task)
+                            }
+                        }
+                    }
+                    .padding(DesignTokens.Spacing.md)
+
+                    Divider()
+                        .padding(.horizontal, DesignTokens.Spacing.md)
+
+                    // ── Daily Note section ───────────────────────────────
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        Text("Daily Note")
+                            .font(.system(.caption, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .padding(.bottom, 2)
+
+                        if let note = dailyNote {
+                            dailyNoteCard(note)
+                        } else {
+                            Button {
+                                if let note = try? NoteStore.shared.dailyNote(for: day) {
+                                    onNavigateToNote?(note.id)
+                                }
+                            } label: {
+                                Label("New Daily Note", systemImage: "square.and.pencil")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.vertical, DesignTokens.Spacing.sm)
                         }
                     }
                     .padding(DesignTokens.Spacing.md)
@@ -280,6 +330,40 @@ struct TaskCalendarView: View {
         }
         .background(DesignTokens.Palette.surface)
         .id(TaskCalendarViewModel.dayKey(for: day))
+    }
+
+    private func dailyNoteCard(_ note: Note) -> some View {
+        Button {
+            onNavigateToNote?(note.id)
+        } label: {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                if !note.body.isEmpty {
+                    Text(note.body)
+                        .font(.system(.caption))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("Empty note")
+                        .font(.system(.caption))
+                        .foregroundStyle(.tertiary)
+                        .italic()
+                }
+
+                Label("Open note", systemImage: "arrow.right")
+                    .font(.caption2)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .padding(DesignTokens.Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DesignTokens.Palette.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func dayPanelRow(_ task: TodoTask) -> some View {

@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+// Custom attribute key storing the anchor text for [[wiki-links]].
+// Set during extraHighlighter; read in mouseDown — no scanning needed.
+extension NSAttributedString.Key {
+    static let wikiAnchor = NSAttributedString.Key("scribe.wikiAnchor")
+}
+
 /// Bear-style inline markdown editor: a single NSTextView that formats
 /// markdown syntax visually as you type. Syntax markers (**, *, #, etc.)
 /// are dimmed; content (bold, italic, heading text) is styled.
@@ -11,6 +17,9 @@ struct MarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = "Notes…"
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
+    var extraHighlighter: ((NSMutableAttributedString) -> Void)? = nil
+    var onWikiLinkTyped: ((String) -> Void)? = nil
+    var onWikiLinkNavigate: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -44,6 +53,10 @@ struct MarkdownEditorView: NSViewRepresentable {
 
         scrollView.documentView = tv
         tv.delegate = context.coordinator
+        let coordinator = context.coordinator
+        tv.onLinkClick = { anchor in
+            coordinator.parent.onWikiLinkNavigate?(anchor)
+        }
         context.coordinator.textView = tv
         context.coordinator.parent = self
         return scrollView
@@ -83,6 +96,21 @@ struct MarkdownEditorView: NSViewRepresentable {
             if let mtv = tv as? MarkdownNSTextView {
                 applyFormatting(to: mtv)
             }
+            detectWikiLinkTyping(in: tv)
+        }
+
+        private func detectWikiLinkTyping(in tv: NSTextView) {
+            let cursorPos = tv.selectedRange().location
+            let text = tv.string
+            let prefix = String(text.prefix(cursorPos))
+            if let lastOpen = prefix.range(of: "[[", options: .backwards) {
+                let afterOpen = String(prefix[lastOpen.upperBound...])
+                if !afterOpen.contains("]]") {
+                    parent.onWikiLinkTyped?(afterOpen)
+                    return
+                }
+            }
+            parent.onWikiLinkTyped?("")
         }
 
         func applyFormatting(to tv: NSTextView) {
@@ -91,9 +119,12 @@ struct MarkdownEditorView: NSViewRepresentable {
             guard !raw.isEmpty else { return }
             let font = tv.font ?? parent.font
             let formatted = MarkdownFormatter.attributed(raw, font: font)
+            // Apply extra highlighting (e.g., [[wiki-links]])
+            let mutable = NSMutableAttributedString(attributedString: formatted)
+            parent.extraHighlighter?(mutable)
             let saved = tv.selectedRanges
             storage.beginEditing()
-            storage.setAttributedString(formatted)
+            storage.setAttributedString(mutable)
             storage.endEditing()
             let len = storage.length
             tv.selectedRanges = saved.map { v in
@@ -112,6 +143,22 @@ struct MarkdownEditorView: NSViewRepresentable {
 
 final class MarkdownNSTextView: NSTextView {
     var placeholderString: String = ""
+    var onLinkClick: ((String) -> Void)? = nil
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        guard let onLinkClick, let storage = textStorage else { return }
+        let pt = convert(event.locationInWindow, from: nil)
+        guard let lm = layoutManager, let tc = textContainer else { return }
+        let glyphIdx = lm.glyphIndex(for: pt, in: tc)
+        guard glyphIdx < lm.numberOfGlyphs else { return }
+        let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
+        guard charIdx < storage.length else { return }
+        // Read the wikiAnchor attribute set by extraHighlighter — no scanning needed.
+        let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
+        guard let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty else { return }
+        onLinkClick(anchor)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)

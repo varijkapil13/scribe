@@ -42,6 +42,8 @@ final class TaskStore {
 
     // MARK: - Properties
 
+    nonisolated(unsafe) static let shared = TaskStore(databaseManager: .shared)
+
     private let dbManager: DatabaseManager
 
     private var db: DatabaseQueue { dbManager.database }

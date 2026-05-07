@@ -145,34 +145,34 @@ sessions — update it as decisions land or scope changes.
 
 ### Slices
 
-- [ ] **Slice 9 — Notes storage.** Migration v4: `notes(id, title, body,
+- [x] **Slice 9 — Notes storage.** Migration v4: `notes(id, title, body,
       createdAt, updatedAt, isDailyNote, dailyDate?)`, `note_tags`,
       `note_links(sourceNoteId, targetNoteId, range)` for bidirectional
       navigation. `notes_fts` FTS5 over `title + body`. `NoteStore` CRUD +
       observation.
 
-- [ ] **Slice 10 — Editor.** SwiftUI markdown editor. Investigate
+- [x] **Slice 10 — Editor.** SwiftUI markdown editor. Investigate
       `MarkdownUI` for rendering, `NSTextView` wrapper for editing with
       live syntax highlighting (headings, bold, italic, code, lists, links).
       Two modes: **edit** and **preview**, toggle keyboardable.
 
-- [ ] **Slice 11 — Wiki-links + backlinks.** Parse `[[title]]` on save,
+- [x] **Slice 11 — Wiki-links + backlinks.** Parse `[[title]]` on save,
       resolve to noteId or sessionId/taskId; persist edges in `note_links`.
       Click a link → navigate. Right panel shows backlinks (which notes /
       sessions / tasks reference this note). Autocomplete `[[` with
       fuzzy-matched candidate list.
 
-- [ ] **Slice 12 — Daily notes + tags.** "Today's note" sidebar entry
+- [x] **Slice 12 — Daily notes + tags.** "Today's note" sidebar entry
       auto-creates a note dated today on first open. Calendar view to jump
       to past daily notes. Tag pane lists `#tag` occurrences across notes
       and tasks (shared namespace).
 
-- [ ] **Slice 13 — Search.** Universal search over notes + tasks +
+- [x] **Slice 13 — Search.** Universal search over notes + tasks +
       transcripts. Cmd-Shift-F opens a quick-search palette; results
       grouped by type. Use the existing `segments_fts` plus new `notes_fts`
       and `tasks_fts`.
 
-- [ ] **Slice 14 — Graph view.** Force-directed graph of notes / sessions
+- [x] **Slice 14 — Graph view.** Force-directed graph of notes / sessions
       / tasks linked by wiki-links and source references.
       Probably last because it is expensive and easy to skip.
 
