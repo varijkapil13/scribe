@@ -22,10 +22,12 @@ final class NoteStore: @unchecked Sendable {
 
     @discardableResult
     func createNote(title: String, body: String = "", tags: [String] = [],
-                    isDailyNote: Bool = false, dailyDate: String? = nil) throws -> Note {
+                    isDailyNote: Bool = false, dailyDate: String? = nil,
+                    notebookId: String? = nil) throws -> Note {
         try db.write { database in
             let note = Note(title: title, body: body,
-                            isDailyNote: isDailyNote, dailyDate: dailyDate)
+                            isDailyNote: isDailyNote, dailyDate: dailyDate,
+                            notebookId: notebookId)
             try note.insert(database)
             for tag in Self.normalizeTags(tags) {
                 try NoteTagRow(noteId: note.id, tag: tag).insert(database)
@@ -225,6 +227,74 @@ final class NoteStore: @unchecked Sendable {
             .tracking { try Note.order(Column("updatedAt").desc).fetchAll($0) }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .eraseToAnyPublisher()
+    }
+
+    func observeNotebooks() -> AnyPublisher<[Notebook], Error> {
+        ValueObservation
+            .tracking { try Notebook.order(Column("sortOrder")).fetchAll($0) }
+            .publisher(in: db, scheduling: .async(onQueue: .main))
+            .eraseToAnyPublisher()
+    }
+
+    // MARK: - Notebooks
+
+    @discardableResult
+    func createNotebook(name: String) throws -> Notebook {
+        try db.write { database in
+            let maxSort = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) FROM notebooks") ?? -1
+            let nb = Notebook(name: name, sortOrder: maxSort + 1)
+            try nb.insert(database)
+            return nb
+        }
+    }
+
+    func updateNotebook(_ notebook: Notebook) throws {
+        try db.write { try notebook.update($0) }
+    }
+
+    func deleteNotebook(id: String) throws {
+        try db.write { database in
+            // Set notebookId = NULL on orphaned notes (FK is not enforced via
+            // ALTER TABLE, so we do it manually before deleting the notebook).
+            try database.execute(
+                sql: "UPDATE notes SET notebookId = NULL WHERE notebookId = ?",
+                arguments: [id]
+            )
+            try Notebook.deleteOne(database, key: id)
+        }
+    }
+
+    func fetchAllNotebooks() throws -> [Notebook] {
+        try db.read { try Notebook.order(Column("sortOrder")).fetchAll($0) }
+    }
+
+    // Notes filtered by notebook. nil = Inbox (notebookId IS NULL and not a daily note).
+    func fetchNotes(inNotebook notebookId: String) throws -> [Note] {
+        try db.read { database in
+            try Note
+                .filter(Column("notebookId") == notebookId)
+                .order(Column("updatedAt").desc)
+                .fetchAll(database)
+        }
+    }
+
+    func fetchInboxNotes() throws -> [Note] {
+        try db.read { database in
+            try Note
+                .filter(Column("notebookId") == nil && Column("isDailyNote") == false)
+                .order(Column("updatedAt").desc)
+                .fetchAll(database)
+        }
+    }
+
+    func moveNote(id: String, toNotebookId: String?) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE notes SET notebookId = ? WHERE id = ?",
+                arguments: [toNotebookId, id]
+            )
+        }
     }
 
     // MARK: - Private helpers

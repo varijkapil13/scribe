@@ -2,8 +2,13 @@
 import SwiftUI
 
 struct NoteListView: View {
-    @StateObject private var vm = NoteListViewModel()
+    @StateObject private var vm: NoteListViewModel
     @Binding var selectedNoteId: String?
+
+    init(scope: NoteListScope = .all, selectedNoteId: Binding<String?>) {
+        _vm = StateObject(wrappedValue: NoteListViewModel(scope: scope))
+        _selectedNoteId = selectedNoteId
+    }
 
     var body: some View {
         VStack(spacing: 0) {

@@ -2,6 +2,16 @@
 import Foundation
 import GRDB
 
+struct Notebook: Codable, Identifiable, Equatable, Hashable {
+    var id: String = UUID().uuidString
+    var name: String
+    var sortOrder: Int = 0
+}
+
+extension Notebook: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "notebooks"
+}
+
 struct Note: Codable, Identifiable, Equatable, Hashable {
     var id: String
     var title: String
@@ -9,7 +19,8 @@ struct Note: Codable, Identifiable, Equatable, Hashable {
     var createdAt: Date
     var updatedAt: Date
     var isDailyNote: Bool
-    var dailyDate: String?  // "YYYY-MM-DD", only set when isDailyNote == true
+    var dailyDate: String?    // "YYYY-MM-DD", only set when isDailyNote == true
+    var notebookId: String?   // nil = Inbox (uncategorized)
 
     init(
         id: String = UUID().uuidString,
@@ -18,7 +29,8 @@ struct Note: Codable, Identifiable, Equatable, Hashable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isDailyNote: Bool = false,
-        dailyDate: String? = nil
+        dailyDate: String? = nil,
+        notebookId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -27,6 +39,7 @@ struct Note: Codable, Identifiable, Equatable, Hashable {
         self.updatedAt = updatedAt
         self.isDailyNote = isDailyNote
         self.dailyDate = dailyDate
+        self.notebookId = notebookId
     }
 }
 

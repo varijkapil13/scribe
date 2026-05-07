@@ -332,6 +332,22 @@ final class DatabaseManager: @unchecked Sendable {
                 """)
         }
 
+        migrator.registerMigration("v8") { db in
+            // -- notebooks --
+            try db.create(table: "notebooks") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("name", .text).notNull()
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+            }
+            try db.create(index: "notebooks_sortOrder_idx", on: "notebooks", columns: ["sortOrder"])
+
+            // -- notes.notebookId (nil = Inbox / uncategorized) --
+            try db.alter(table: "notes") { t in
+                t.add(column: "notebookId", .text)
+            }
+            try db.create(index: "notes_notebookId_idx", on: "notes", columns: ["notebookId"])
+        }
+
         try migrator.migrate(database)
     }
 }

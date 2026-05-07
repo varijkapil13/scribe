@@ -23,14 +23,26 @@ struct NoteDetailView: View {
                 .textFieldStyle(.plain)
                 .foregroundStyle(.primary)
 
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "clock")
-                        .imageScale(.small)
-                    Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
+                HStack(spacing: DesignTokens.Spacing.md) {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        Image(systemName: "clock")
+                            .imageScale(.small)
+                        Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
+                    }
+                    .font(DesignTokens.Typography.eyebrow)
+                    .foregroundStyle(.tertiary)
+                    .tracking(0.5)
+
+                    if !vm.note.isDailyNote {
+                        NotebookPicker(selectedNotebookId: Binding(
+                            get: { vm.note.notebookId },
+                            set: { newId in
+                                vm.note.notebookId = newId
+                                vm.markDirty()
+                            }
+                        ))
+                    }
                 }
-                .font(DesignTokens.Typography.eyebrow)
-                .foregroundStyle(.tertiary)
-                .tracking(0.5)
             }
             .padding(.horizontal, DesignTokens.Spacing.xxxl)
             .padding(.top, DesignTokens.Spacing.xl)
@@ -154,5 +166,55 @@ private struct BacklinksBar: View {
             }
         }
         .background(DesignTokens.Palette.surfaceSunken)
+    }
+}
+
+// MARK: - Notebook picker chip
+
+private struct NotebookPicker: View {
+    @Binding var selectedNotebookId: String?
+    @State private var notebooks: [Notebook] = []
+
+    var body: some View {
+        Menu {
+            Button {
+                selectedNotebookId = nil
+            } label: {
+                HStack {
+                    Text("Inbox")
+                    if selectedNotebookId == nil { Image(systemName: "checkmark") }
+                }
+            }
+            if !notebooks.isEmpty {
+                Divider()
+                ForEach(notebooks) { nb in
+                    Button {
+                        selectedNotebookId = nb.id
+                    } label: {
+                        HStack {
+                            Text(nb.name)
+                            if selectedNotebookId == nb.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "folder")
+                    .imageScale(.small)
+                Text(currentName)
+            }
+            .font(DesignTokens.Typography.eyebrow)
+            .foregroundStyle(.secondary)
+            .tracking(0.5)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .onAppear { notebooks = (try? NoteStore.shared.fetchAllNotebooks()) ?? [] }
+    }
+
+    private var currentName: String {
+        guard let id = selectedNotebookId else { return "Inbox" }
+        return notebooks.first(where: { $0.id == id })?.name ?? "Notebook"
     }
 }

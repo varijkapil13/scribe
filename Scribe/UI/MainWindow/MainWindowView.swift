@@ -15,8 +15,10 @@ enum MainSelection: Hashable {
 
 enum NotesFilter: Hashable {
     case all
+    case inbox
     case today
     case daily
+    case notebook(String)   // notebookId
     case tag(String)
     case graph
 }
@@ -35,11 +37,17 @@ struct MainWindowView: View {
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
     @State private var notesExpanded: Bool = true
+    @State private var notebooksExpanded: Bool = true
     @State private var notesTagsExpanded: Bool = false
     @State private var transcriptsExpanded: Bool = true
     @State private var settingsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
+    @State private var notebooks: [Notebook] = []
     @State private var showUniversalSearch: Bool = false
+    @State private var showNewNotebookAlert: Bool = false
+    @State private var newNotebookName: String = ""
+    @State private var renamingNotebook: Notebook? = nil
+    @State private var renameText: String = ""
 
     var body: some View {
         NavigationSplitView {
@@ -77,6 +85,7 @@ struct MainWindowView: View {
         }
         .onDisappear { projectsViewModel.stop() }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in reloadTags() }
+        .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
             case .create:
@@ -92,6 +101,32 @@ struct MainWindowView: View {
                     projectsViewModel.update(copy)
                 }
             }
+        }
+        .alert("New Notebook", isPresented: $showNewNotebookAlert) {
+            TextField("Name", text: $newNotebookName)
+            Button("Create") {
+                let name = newNotebookName.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { return }
+                try? NoteStore.shared.createNotebook(name: name)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Enter a name for your new notebook.")
+        }
+        .alert("Rename Notebook", isPresented: Binding(
+            get: { renamingNotebook != nil },
+            set: { if !$0 { renamingNotebook = nil } }
+        )) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                guard var nb = renamingNotebook else { return }
+                let name = renameText.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { return }
+                nb.name = name
+                try? NoteStore.shared.updateNotebook(nb)
+                renamingNotebook = nil
+            }
+            Button("Cancel", role: .cancel) { renamingNotebook = nil }
         }
         .overlay(alignment: .top) {
             if showUniversalSearch {
@@ -257,6 +292,9 @@ struct MainWindowView: View {
                     NavigationLink(value: MainSelection.notes(.today)) {
                         Label("Today", systemImage: "sun.max")
                     }
+                    NavigationLink(value: MainSelection.notes(.inbox)) {
+                        Label("Inbox", systemImage: "tray")
+                    }
                     NavigationLink(value: MainSelection.notes(.all)) {
                         Label("All Notes", systemImage: "note.text")
                     }
@@ -268,7 +306,60 @@ struct MainWindowView: View {
                     }
                 }
             } header: {
-                CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
+                HStack {
+                    CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
+                    Spacer()
+                    Button {
+                        let note = try? NoteStore.shared.createNote(title: "", body: "")
+                        if let note { selection = .note(note.id) }
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .imageScale(.small)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("New note (⌘N)")
+                    .keyboardShortcut("n", modifiers: .command)
+                }
+            }
+
+            Section {
+                if notebooksExpanded {
+                    ForEach(notebooks) { nb in
+                        NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
+                            Label(nb.name, systemImage: "folder")
+                        }
+                        .contextMenu {
+                            Button {
+                                renamingNotebook = nb
+                                renameText = nb.name
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                try? NoteStore.shared.deleteNotebook(id: nb.id)
+                            } label: {
+                                Label("Delete Notebook", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
+                    Spacer()
+                    Button {
+                        showNewNotebookAlert = true
+                        newNotebookName = ""
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .imageScale(.small)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("New notebook")
+                }
             }
 
             Section {
@@ -362,13 +453,16 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private func notesDetailView(filter: NotesFilter) -> some View {
+        let noteListBinding = Binding<String?>(
+            get: { if case .note(let id) = selection { return id } else { return nil } },
+            set: { id in selection = id.map { .note($0) } ?? .notes(filter) }
+        )
         switch filter {
         case .today:
             if let note = fetchDailyNote(for: Date()) {
                 NoteDetailView(note: note, onNavigate: { selection = .note($0) })
                     .id(note.id)
             } else {
-                // No note for today yet — open Daily Notes so user can start typing.
                 DailyNoteView(onNavigate: { selection = .note($0) })
             }
         case .daily:
@@ -377,16 +471,12 @@ struct MainWindowView: View {
             GraphView(onNavigate: { selection = .note($0) })
         case .tag(let tag):
             TaggedContentView(tag: tag, onNavigate: { selection = .note($0) })
-        default:
-            NoteListView(selectedNoteId: Binding(
-                get: {
-                    if case .note(let id) = selection { return id }
-                    return nil
-                },
-                set: { id in
-                    selection = id.map { .note($0) } ?? .notes(filter)
-                }
-            ))
+        case .inbox:
+            NoteListView(scope: .inbox, selectedNoteId: noteListBinding)
+        case .notebook(let notebookId):
+            NoteListView(scope: .notebook(notebookId), selectedNoteId: noteListBinding)
+        case .all:
+            NoteListView(scope: .all, selectedNoteId: noteListBinding)
         }
     }
 

@@ -2,6 +2,12 @@
 import Foundation
 import Combine
 
+enum NoteListScope {
+    case all
+    case inbox
+    case notebook(String)
+}
+
 @MainActor
 final class NoteListViewModel: ObservableObject {
     @Published var notes: [Note] = []
@@ -10,14 +16,17 @@ final class NoteListViewModel: ObservableObject {
 
     private let store: NoteStore
     private var cancellables = Set<AnyCancellable>()
+    var scope: NoteListScope = .all
 
-    init(store: NoteStore = .shared) {
+    init(store: NoteStore = .shared, scope: NoteListScope = .all) {
         self.store = store
+        self.scope = scope
         store.observeNotes()
             .receive(on: DispatchQueue.main)
             .sink(receiveCompletion: { _ in },
-                  receiveValue: { [weak self] notes in self?.notes = notes })
+                  receiveValue: { [weak self] _ in self?.loadNotes() })
             .store(in: &cancellables)
+        loadNotes()
     }
 
     var filteredNotes: [Note] {
@@ -27,11 +36,25 @@ final class NoteListViewModel: ObservableObject {
     }
 
     func createNote() -> Note? {
-        try? store.createNote(title: "", body: "", tags: [])
+        let notebookId: String?
+        if case .notebook(let id) = scope { notebookId = id } else { notebookId = nil }
+        return try? store.createNote(title: "", body: "", tags: [], notebookId: notebookId)
     }
 
     func deleteNote(id: String) {
         do { try store.deleteNote(id: id) }
         catch { errorMessage = error.localizedDescription }
+    }
+
+    private func loadNotes() {
+        do {
+            notes = switch scope {
+            case .all:             try store.fetchAllNotes()
+            case .inbox:           try store.fetchInboxNotes()
+            case .notebook(let id): try store.fetchNotes(inNotebook: id)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
