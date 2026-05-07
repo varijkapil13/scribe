@@ -99,8 +99,7 @@ struct NoteCalendarView: View {
     }
 
     private func loadDailyNoteDates() {
-        let notes = (try? NoteStore.shared.fetchAllNotes()) ?? []
-        datesWithNotes = Set(notes.compactMap(\.dailyDate))
+        datesWithNotes = Set((try? NoteStore.shared.fetchDailyDates()) ?? [])
     }
 }
 

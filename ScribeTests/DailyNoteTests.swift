@@ -14,8 +14,10 @@ final class DailyNoteTests: XCTestCase {
     func testDailyNoteTitleFormat() throws {
         let date = Calendar.current.date(from: DateComponents(year: 2026, month: 5, day: 7))!
         let note = try store.dailyNote(for: date)
-        XCTAssertTrue(note.title.contains("May 7, 2026"), "Got: \(note.title)")
-        XCTAssertTrue(note.title.hasPrefix("Daily Note –"))
+        // Title uses device locale — in the en_US test environment this is "May 7, 2026".
+        // The key assertion is that the prefix and the year are always present.
+        XCTAssertTrue(note.title.hasPrefix("Daily Note –"), "Got: \(note.title)")
+        XCTAssertTrue(note.title.contains("2026"), "Got: \(note.title)")
     }
 
     func testDailyNoteIsIdempotent() throws {

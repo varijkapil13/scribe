@@ -76,6 +76,7 @@ struct MainWindowView: View {
             }
         }
         .onDisappear { projectsViewModel.stop() }
+        .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in reloadTags() }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
             case .create:
@@ -336,11 +337,21 @@ struct MainWindowView: View {
     }
 
     private func fetchNote(id: String) -> Note? {
-        try? NoteStore.shared.fetchNote(id: id)
+        do {
+            return try NoteStore.shared.fetchNote(id: id)
+        } catch {
+            Log.app.error("fetchNote(\(id)): \(error)")
+            return nil
+        }
     }
 
     private func fetchDailyNote(for date: Date) -> Note? {
-        try? NoteStore.shared.dailyNote(for: date)
+        do {
+            return try NoteStore.shared.dailyNote(for: date)
+        } catch {
+            Log.app.error("fetchDailyNote: \(error)")
+            return nil
+        }
     }
 
     private func reloadTags() {

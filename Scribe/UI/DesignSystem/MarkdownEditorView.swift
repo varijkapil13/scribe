@@ -151,17 +151,27 @@ final class MarkdownNSTextView: NSTextView {
         // Check underline attribute — only wiki-links get underlineStyle in this view
         let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
         guard attrs[.underlineStyle] != nil else { return }
-        // Scan outward to find the anchor text between [[ and ]]
+        // Scan outward to extract anchor text from [[anchor]].
+        // lo backs up past the opening [[; hi advances past the closing ]].
         let nsStr = string as NSString
         var lo = charIdx
         var hi = charIdx
         let openBracket = unichar(UnicodeScalar("[").value)
         let closeBracket = unichar(UnicodeScalar("]").value)
+        // Back up past opening [[
+        while lo > 1,
+              nsStr.character(at: lo - 1) == openBracket,
+              nsStr.character(at: lo - 2) == openBracket {
+            lo -= 2; break
+        }
         while lo > 0, nsStr.character(at: lo - 1) != openBracket { lo -= 1 }
-        while hi < nsStr.length, nsStr.character(at: hi) != closeBracket { hi += 1 }
+        // Advance past closing ]] (stop after second ])
+        while hi < nsStr.length - 1,
+              !(nsStr.character(at: hi) == closeBracket &&
+                nsStr.character(at: hi + 1) == closeBracket) { hi += 1 }
         if hi > lo {
-            var anchor = nsStr.substring(with: NSRange(location: lo, length: hi - lo))
-            anchor = anchor.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            let anchor = nsStr.substring(with: NSRange(location: lo, length: hi - lo))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "[]").union(.whitespaces))
             if !anchor.isEmpty { onLinkClick(anchor) }
         }
     }

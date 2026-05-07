@@ -37,11 +37,7 @@ struct TaggedContentView: View {
     }
 
     private func load() {
-        let allNotes = (try? NoteStore.shared.fetchAllNotes()) ?? []
-        notes = allNotes.filter { note in
-            let noteTags = (try? NoteStore.shared.tags(for: note.id)) ?? []
-            return noteTags.contains(tag)
-        }
+        notes = (try? NoteStore.shared.fetchNotes(withTag: tag)) ?? []
         tasks = (try? TaskStore.shared.fetchTasks(filter: .tag(tag))) ?? []
     }
 }

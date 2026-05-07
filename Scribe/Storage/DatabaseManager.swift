@@ -320,6 +320,18 @@ final class DatabaseManager: @unchecked Sendable {
                 """)
         }
 
+        migrator.registerMigration("v7") { db in
+            // Add unique constraint on notes.dailyDate so concurrent
+            // dailyNote(for:) calls cannot create duplicate daily notes.
+            // SQLite doesn't support ADD CONSTRAINT, so a partial unique index
+            // gives equivalent enforcement.
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX IF NOT EXISTS notes_dailyDate_unique_idx
+                ON notes (dailyDate)
+                WHERE isDailyNote = 1
+                """)
+        }
+
         try migrator.migrate(database)
     }
 }

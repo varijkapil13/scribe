@@ -7,6 +7,8 @@ final class TranscriptStore {
 
     // MARK: - Properties
 
+    nonisolated(unsafe) static let shared = TranscriptStore()
+
     private let dbManager: DatabaseManager
 
     /// Convenience accessor for the underlying database queue.

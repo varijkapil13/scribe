@@ -54,14 +54,9 @@ final class GraphViewModel: ObservableObject {
             )
         }
 
-        var edgeSet: [GraphEdge] = []
-        for note in notes {
-            let srcs = try noteStore.backlinks(for: note.id)
-            for src in srcs {
-                edgeSet.append(GraphEdge(sourceId: src.id, targetId: note.id))
-            }
-        }
-        edges = edgeSet
+        // Single query instead of N backlinks() calls.
+        edges = try noteStore.fetchAllLinks().map { GraphEdge(sourceId: $0.sourceNoteId,
+                                                              targetId: $0.targetNoteId) }
         isSettled = nodes.count <= 1
     }
 

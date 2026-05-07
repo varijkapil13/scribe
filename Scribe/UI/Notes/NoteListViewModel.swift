@@ -23,10 +23,7 @@ final class NoteListViewModel: ObservableObject {
     var filteredNotes: [Note] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return notes }
-        let lower = q.lowercased()
-        return notes.filter {
-            $0.title.lowercased().contains(lower) || $0.body.lowercased().contains(lower)
-        }
+        return (try? store.searchNotes(query: q)) ?? notes
     }
 
     func createNote() -> Note? {

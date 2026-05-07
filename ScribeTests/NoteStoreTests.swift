@@ -175,4 +175,54 @@ final class NoteStoreTests: XCTestCase {
         let linksAfter = try store.backlinks(for: b.id)
         XCTAssertTrue(linksAfter.isEmpty)
     }
+
+    func testNormalizeTagsDeduplicates() throws {
+        let store = NoteStore(databaseManager: db)
+        // "swift" and "Swift" normalise to the same tag — must not insert twice
+        // (would have hit a primary-key violation before the dedup fix).
+        XCTAssertNoThrow(try store.createNote(title: "X", body: "", tags: ["swift", "Swift", "SWIFT"]))
+        let tags = try store.allNoteTags()
+        XCTAssertEqual(tags.filter { $0 == "swift" }.count, 1)
+    }
+
+    func testSearchNotesFTSSpecialCharacters() throws {
+        let store = NoteStore(databaseManager: db)
+        _ = try store.createNote(title: "Hello World", body: "", tags: [])
+        // FTS5 operators in raw input must not crash; sanitiser strips them.
+        XCTAssertNoThrow(try store.searchNotes(query: "hello OR world"))
+        XCTAssertNoThrow(try store.searchNotes(query: "\"hello\""))
+        XCTAssertNoThrow(try store.searchNotes(query: "hello-world"))
+        XCTAssertNoThrow(try store.searchNotes(query: "--"))
+    }
+
+    func testDailyNoteAtomicIdempotency() throws {
+        let store = NoteStore(databaseManager: db)
+        let today = Date()
+        // Simulate rapid double-call (TOCTOU scenario).
+        let first = try store.dailyNote(for: today)
+        let second = try store.dailyNote(for: today)
+        XCTAssertEqual(first.id, second.id, "Concurrent dailyNote calls must return same note")
+        let all = try store.fetchAllNotes()
+        XCTAssertEqual(all.filter { $0.isDailyNote }.count, 1, "Must not create duplicate daily notes")
+    }
+
+    func testFetchNotesByTag() throws {
+        let store = NoteStore(databaseManager: db)
+        _ = try store.createNote(title: "Swift Note", body: "", tags: ["swift"])
+        _ = try store.createNote(title: "Python Note", body: "", tags: ["python"])
+        let swiftNotes = try store.fetchNotes(withTag: "swift")
+        XCTAssertEqual(swiftNotes.count, 1)
+        XCTAssertEqual(swiftNotes[0].title, "Swift Note")
+    }
+
+    func testFetchAllLinksReturnsSingleQueryResult() throws {
+        let store = NoteStore(databaseManager: db)
+        let a = try store.createNote(title: "A", body: "[[B]]", tags: [])
+        let b = try store.createNote(title: "B", body: "", tags: [])
+        try store.updateNote(a, tags: [])
+        let links = try store.fetchAllLinks()
+        XCTAssertEqual(links.count, 1)
+        XCTAssertEqual(links[0].sourceNoteId, a.id)
+        XCTAssertEqual(links[0].targetNoteId, b.id)
+    }
 }

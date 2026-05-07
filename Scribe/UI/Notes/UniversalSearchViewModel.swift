@@ -28,7 +28,7 @@ final class UniversalSearchViewModel: ObservableObject {
 
     init(noteStore: NoteStore = .shared,
          taskStore: TaskStore = .shared,
-         transcriptStore: TranscriptStore = TranscriptStore()) {
+         transcriptStore: TranscriptStore = .shared) {
         self.noteStore = noteStore
         self.taskStore = taskStore
         self.transcriptStore = transcriptStore

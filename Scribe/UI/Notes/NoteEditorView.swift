@@ -58,16 +58,18 @@ struct NoteEditorView: View {
         }
     }
 
-    @MainActor
     private func loadSuggestions(query: String) async {
         suggestions = (try? noteStore.searchNotes(query: query)) ?? []
     }
 
     private func insertCompletion(note: Note) {
-        // Find the last "[[" followed by the current wikiQuery and replace with [[Title]]
-        if let range = text.range(of: "[[" + wikiQuery, options: .backwards) {
-            text = String(text[..<range.lowerBound]) + "[[\(note.title)]]"
-        }
+        // Search backwards from the end of text for the last "[[<wikiQuery>"
+        // occurrence. Using .backwards ensures we replace the instance closest
+        // to the cursor (which is at the end of the live typing session), not
+        // an earlier occurrence of the same partial text in the body.
+        let needle = "[[" + wikiQuery
+        guard let range = text.range(of: needle, options: .backwards) else { return }
+        text = String(text[..<range.lowerBound]) + "[[\(note.title)]]"
         wikiQuery = ""
     }
 }
