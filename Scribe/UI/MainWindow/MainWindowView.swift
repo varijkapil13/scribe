@@ -39,6 +39,7 @@ struct MainWindowView: View {
     @State private var transcriptsExpanded: Bool = true
     @State private var settingsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
+    @State private var showUniversalSearch: Bool = false
 
     var body: some View {
         NavigationSplitView {
@@ -91,6 +92,25 @@ struct MainWindowView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if showUniversalSearch {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { showUniversalSearch = false }
+                    UniversalSearchView(isPresented: $showUniversalSearch) { dest in
+                        selection = dest
+                    }
+                    .padding(.top, 60)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+        }
+        .background(
+            Button("") { showUniversalSearch.toggle() }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .hidden()
+        )
         .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
             let pane = (note.object as? SettingsPane) ?? .general
             selection = .settings(pane)
@@ -343,9 +363,7 @@ struct MainWindowView: View {
         case .daily:
             DailyNoteView(onNavigate: { selection = .note($0) })
         case .graph:
-            // GraphView is added in Task 13 — stub for now
-            ContentUnavailableView("Graph", systemImage: "circle.hexagongrid",
-                                   description: Text("Graph view coming soon."))
+            GraphView(onNavigate: { selection = .note($0) })
         case .tag(let tag):
             TaggedContentView(tag: tag, onNavigate: { selection = .note($0) })
         default:
