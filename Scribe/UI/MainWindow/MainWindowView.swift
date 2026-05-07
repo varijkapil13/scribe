@@ -8,7 +8,17 @@ enum MainSelection: Hashable {
     case transcript(String) // session id
     case tasks(TaskStore.Filter)
     case taskCalendar
+    case note(String)           // noteId
+    case notes(NotesFilter)
     case settings(SettingsPane)
+}
+
+enum NotesFilter: Hashable {
+    case all
+    case today
+    case daily
+    case tag(String)
+    case graph
 }
 
 /// The main window — sidebar of past transcripts + settings panes, detail
@@ -24,6 +34,7 @@ struct MainWindowView: View {
     @State private var projectEditorMode: ProjectEditorMode?
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
+    @State private var notesExpanded: Bool = true
     @State private var transcriptsExpanded: Bool = true
     @State private var settingsExpanded: Bool = false
 
@@ -218,6 +229,25 @@ struct MainWindowView: View {
             }
 
             Section {
+                if notesExpanded {
+                    NavigationLink(value: MainSelection.notes(.today)) {
+                        Label("Today", systemImage: "sun.max")
+                    }
+                    NavigationLink(value: MainSelection.notes(.all)) {
+                        Label("All Notes", systemImage: "note.text")
+                    }
+                    NavigationLink(value: MainSelection.notes(.daily)) {
+                        Label("Daily Notes", systemImage: "calendar.badge.clock")
+                    }
+                    NavigationLink(value: MainSelection.notes(.graph)) {
+                        Label("Graph", systemImage: "circle.hexagongrid")
+                    }
+                }
+            } header: {
+                CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
+            }
+
+            Section {
                 if transcriptsExpanded {
                     if viewModel.filteredSessions.isEmpty {
                         sidebarEmptyHint
@@ -270,6 +300,42 @@ struct MainWindowView: View {
         .navigationTitle("Scribe")
     }
 
+    private func fetchNote(id: String) -> Note? {
+        try? NoteStore.shared.fetchNote(id: id)
+    }
+
+    private func fetchDailyNote(for date: Date) -> Note? {
+        try? NoteStore.shared.dailyNote(for: date)
+    }
+
+    @ViewBuilder
+    private func notesDetailView(filter: NotesFilter) -> some View {
+        switch filter {
+        case .today:
+            if let note = fetchDailyNote(for: Date()) {
+                NoteDetailView(note: note, onNavigate: { selection = .note($0) })
+                    .id(note.id)
+            } else {
+                ContentUnavailableView("Today", systemImage: "sun.max",
+                                       description: Text("Could not load today's note."))
+            }
+        case .graph:
+            // GraphView is added in Task 13 — stub for now
+            ContentUnavailableView("Graph", systemImage: "circle.hexagongrid",
+                                   description: Text("Graph view coming soon."))
+        default:
+            NoteListView(selectedNoteId: Binding(
+                get: {
+                    if case .note(let id) = selection { return id }
+                    return nil
+                },
+                set: { id in
+                    selection = id.map { .note($0) } ?? .notes(filter)
+                }
+            ))
+        }
+    }
+
     private var sidebarEmptyHint: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "waveform.badge.mic")
@@ -307,6 +373,21 @@ struct MainWindowView: View {
                 .id(filter)
         case .taskCalendar:
             TaskCalendarView()
+        case .note(let id):
+            if let note = fetchNote(id: id) {
+                NoteDetailView(note: note, onNavigate: { noteId in
+                    selection = .note(noteId)
+                })
+                .id(id)
+            } else {
+                ContentUnavailableView(
+                    "Note not found",
+                    systemImage: "note.text",
+                    description: Text("This note may have been deleted.")
+                )
+            }
+        case .notes(let filter):
+            notesDetailView(filter: filter)
         case .settings(let pane):
             SettingsPaneView(pane: pane, audioManager: appState.audioManager)
         case .none:
