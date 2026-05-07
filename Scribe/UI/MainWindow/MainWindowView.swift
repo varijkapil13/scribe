@@ -517,7 +517,9 @@ struct MainWindowView: View {
             TaskListView(filter: filter)
                 .id(filter)
         case .taskCalendar:
-            TaskCalendarView()
+            TaskCalendarView(onNavigateToNote: { noteId in
+                selection = .note(noteId)
+            })
         case .note(let id):
             if let note = fetchNote(id: id) {
                 NoteDetailView(note: note, onNavigate: { noteId in

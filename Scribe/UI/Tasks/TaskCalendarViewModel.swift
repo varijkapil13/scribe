@@ -9,6 +9,8 @@ final class TaskCalendarViewModel: ObservableObject {
 
     /// Tasks keyed by "yyyy-MM-dd". Includes all non-completed tasks that have a due date.
     @Published private(set) var tasksByDay: [String: [TodoTask]] = [:]
+    /// Date keys ("yyyy-MM-dd") that have a daily note.
+    @Published private(set) var datesWithNotes: Set<String> = []
     @Published var displayMonth: Date
     @Published var selectedDay: Date?
 
@@ -16,7 +18,8 @@ final class TaskCalendarViewModel: ObservableObject {
 
     let cal = Calendar.current
     private let store: TaskStore
-    private var cancellable: AnyCancellable?
+    private var taskCancellable: AnyCancellable?
+    private var noteCancellable: AnyCancellable?
 
     // MARK: - Init
 
@@ -30,7 +33,7 @@ final class TaskCalendarViewModel: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        cancellable = store.observeTasks(filter: .all)
+        taskCancellable = store.observeTasks(filter: .all)
             .sink(receiveCompletion: { _ in },
                   receiveValue: { [weak self] tasks in
                 guard let self else { return }
@@ -39,11 +42,21 @@ final class TaskCalendarViewModel: ObservableObject {
                     by: { Self.dayKey(for: $0.dueAt!) }
                 )
             })
+
+        noteCancellable = NoteStore.shared.observeNotes()
+            .sink(receiveCompletion: { _ in },
+                  receiveValue: { [weak self] _ in
+                guard let self else { return }
+                self.reloadNoteDates()
+            })
+        reloadNoteDates()
     }
 
     func stop() {
-        cancellable?.cancel()
-        cancellable = nil
+        taskCancellable?.cancel()
+        taskCancellable = nil
+        noteCancellable?.cancel()
+        noteCancellable = nil
     }
 
     // MARK: - Queries
@@ -52,12 +65,26 @@ final class TaskCalendarViewModel: ObservableObject {
         tasksByDay[Self.dayKey(for: date)] ?? []
     }
 
+    func hasNote(for date: Date) -> Bool {
+        datesWithNotes.contains(Self.dayKey(for: date))
+    }
+
+    func existingDailyNote(for date: Date) -> Note? {
+        try? NoteStore.shared.fetchExistingDailyNote(for: date)
+    }
+
     var selectedDayTasks: [TodoTask] {
         selectedDay.map { tasks(for: $0) } ?? []
     }
 
     func totalCount(for date: Date) -> Int {
         tasks(for: date).count
+    }
+
+    // MARK: - Private
+
+    private func reloadNoteDates() {
+        datesWithNotes = Set((try? NoteStore.shared.fetchDailyDates()) ?? [])
     }
 
     // MARK: - Navigation
