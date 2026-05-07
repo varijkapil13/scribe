@@ -43,6 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         registerKeyboardShortcuts()
         observeMainWindowClose()
         observeSpeechErrors()
+
+        // Start MCP server if the user had it enabled in a previous session.
+        if UserDefaults.standard.bool(forKey: "mcpEnabled") {
+            let port = UserDefaults.standard.integer(forKey: "mcpPort")
+            MCPServer.shared.start(port: UInt16(port > 0 ? port : 3333))
+        }
         // Reminder category + delegate. Authorization is requested lazily the
         // first time a task with `remindAt` is saved, not here — that keeps
         // first-launch silent for users who don't use the task layer.

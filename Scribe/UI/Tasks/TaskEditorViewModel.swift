@@ -31,6 +31,7 @@ final class TaskEditorViewModel: ObservableObject {
     private let store: TaskStore
     private let transcriptStore: TranscriptStore
     private let reminderScheduler: TaskReminderScheduling
+    private var autoSaveCancellable: AnyCancellable?
 
     // MARK: - Initializer
 
@@ -52,6 +53,23 @@ final class TaskEditorViewModel: ObservableObject {
         loadProjects()
         loadTags()
         loadSourceSessionTitle()
+        setupAutoSave()
+    }
+
+    private func setupAutoSave() {
+        // dropFirst() skips the initial value emitted when each @Published is set in init.
+        let changes = Publishers.MergeMany([
+            $title.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $notes.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $projectId.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $priority.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $dueAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $remindAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $tagsInput.dropFirst().map { _ in () }.eraseToAnyPublisher()
+        ])
+        autoSaveCancellable = changes
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] in _ = self?.save() }
     }
 
     // MARK: - Loading

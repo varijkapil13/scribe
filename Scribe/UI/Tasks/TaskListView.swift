@@ -7,9 +7,11 @@ struct TaskListView: View {
     let filter: TaskStore.Filter
 
     @StateObject private var viewModel: TaskListViewModel
-    @FocusState private var quickAddFocused: Bool
-    @State private var editingTask: TodoTask?
+    @State private var selectedTask: TodoTask?
     @State private var pendingDelete: TodoTask?
+    @State private var collapsedBuckets: Set<String> = []
+    @State private var showQuickAddDatePicker = false
+    @State private var quickAddFieldHeight: CGFloat = 36
 
     init(filter: TaskStore.Filter) {
         self.filter = filter
@@ -17,31 +19,44 @@ struct TaskListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            quickAddBar
-                .padding(.horizontal, DesignTokens.Spacing.xl)
-                .padding(.top, DesignTokens.Spacing.lg)
-                .padding(.bottom, DesignTokens.Spacing.md)
-                .background(DesignTokens.Palette.surface)
+        HStack(spacing: 0) {
+            // Left: quick-add + task list
+            VStack(spacing: 0) {
+                quickAddBar
+                    .padding(.horizontal, DesignTokens.Spacing.xl)
+                    .padding(.top, DesignTokens.Spacing.lg)
+                    .padding(.bottom, DesignTokens.Spacing.md)
+                    .background(DesignTokens.Palette.surface)
 
-            Divider()
+                Divider()
 
-            content
+                content
+            }
+            .frame(minWidth: 280)
+
+            // Right: detail panel (slides in when a task is selected)
+            if let task = selectedTask {
+                Divider()
+                TaskDetailPanel(task: task, onDismiss: { selectedTask = nil })
+                    .frame(width: 320)
+                    .id(task.id)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
         .background(DesignTokens.Palette.surface)
+        .animation(.easeOut(duration: DesignTokens.Motion.standard), value: selectedTask?.id)
         .navigationTitle(headerTitle)
         .searchable(text: $viewModel.searchQuery, prompt: "Search tasks")
-        .onAppear { viewModel.start() }
+        .onAppear {
+            viewModel.start()
+            focusQuickAddIfNeeded()
+        }
         .onDisappear { viewModel.stop() }
         .onChange(of: filter) { _, newFilter in
             viewModel.switchFilter(to: newFilter)
+            selectedTask = nil
         }
-        .onReceive(NotificationCenter.default.publisher(for: .scribeFocusQuickAdd)) { _ in
-            quickAddFocused = true
-        }
-        .sheet(item: $editingTask) { task in
-            TaskEditorView(task: task)
-        }
+        // Focus is handled directly by HighlightingQuickAddField observing .scribeFocusQuickAdd.
         .confirmationDialog(
             pendingDelete.map { "Delete \"\($0.title)\"?" } ?? "Delete task?",
             isPresented: Binding(
@@ -51,17 +66,15 @@ struct TaskListView: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                if let task = pendingDelete { viewModel.delete(task) }
+                if let task = pendingDelete {
+                    viewModel.delete(task)
+                    if task.id == selectedTask?.id { selectedTask = nil }
+                }
                 pendingDelete = nil
             }
             Button("Cancel", role: .cancel) { pendingDelete = nil }
         }
-        .background(
-            // Hidden buttons attach keyboard shortcuts that fire whenever the
-            // detail pane has key focus. Keeping them out of the visible
-            // hierarchy avoids cluttering the toolbar.
-            shortcutButtons
-        )
+        .background(shortcutButtons)
     }
 
     // MARK: - Shortcuts
@@ -69,8 +82,10 @@ struct TaskListView: View {
     @ViewBuilder
     private var shortcutButtons: some View {
         VStack(spacing: 0) {
-            Button("New task") { quickAddFocused = true }
-                .keyboardShortcut("n", modifiers: [.command])
+            Button("New task") {
+                NotificationCenter.default.post(name: .scribeFocusQuickAdd, object: nil)
+            }
+            .keyboardShortcut("n", modifiers: [.command])
             Button("Toggle complete") {
                 if let id = viewModel.focusedTaskId,
                    let task = focusedTask(id: id) {
@@ -100,6 +115,17 @@ struct TaskListView: View {
         return viewModel.searchResults.first(where: { $0.id == id })
     }
 
+    // MARK: - Focus
+
+    private func focusQuickAddIfNeeded() {
+        guard filter == .today || filter == .inbox else { return }
+        // Small async hop so NSTextField's notification observer is registered
+        // before the post fires (makeNSView runs during the same layout pass as onAppear).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            NotificationCenter.default.post(name: .scribeFocusQuickAdd, object: nil)
+        }
+    }
+
     // MARK: - Header
 
     private var headerTitle: String {
@@ -118,14 +144,42 @@ struct TaskListView: View {
 
     @ViewBuilder
     private var quickAddBar: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "plus.circle")
                 .foregroundStyle(.secondary)
-            TextField("Add a task — press Return to save", text: $viewModel.quickAddText)
-                .textFieldStyle(.plain)
-                .font(.system(.body))
-                .focused($quickAddFocused)
-                .onSubmit { viewModel.commitQuickAdd() }
+                .padding(.top, 6)
+
+            MultilineQuickAddField(
+                text: $viewModel.quickAddText,
+                intrinsicHeight: $quickAddFieldHeight,
+                placeholder: "Add a task — tmr, next fri, #tag, +Project, !high\nReturn for notes · Cmd+Return to save",
+                onSubmit: {
+                    viewModel.commitQuickAdd()
+                    quickAddFieldHeight = 36
+                }
+            )
+            .frame(maxWidth: .infinity, minHeight: quickAddFieldHeight, maxHeight: quickAddFieldHeight)
+
+            // Calendar date picker — tinted when a date is selected
+            Button { showQuickAddDatePicker.toggle() } label: {
+                Image(systemName: viewModel.quickAddDueDate != nil
+                      ? "calendar.badge.clock"
+                      : "calendar")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(viewModel.quickAddDueDate != nil
+                                     ? Color.orange
+                                     : Color.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+            .popover(isPresented: $showQuickAddDatePicker, arrowEdge: .bottom) {
+                InlineDatePickerView(selectedDate: $viewModel.quickAddDueDate)
+                    .padding(4)
+            }
+            .help(viewModel.quickAddDueDate.map {
+                "Due: \($0.formatted(date: .abbreviated, time: .omitted))"
+            } ?? "Pick due date")
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
         .padding(.vertical, DesignTokens.Spacing.sm)
@@ -190,18 +244,31 @@ struct TaskListView: View {
             task: task,
             isRecentlyCompleted: viewModel.recentlyCompletedRecurring.contains(task.id),
             tags: viewModel.tags(for: task.id),
-            isFocused: viewModel.focusedTaskId == task.id,
+            isFocused: selectedTask?.id == task.id,
             onToggle: { viewModel.toggleCompleted(task) },
             onOpen: {
                 viewModel.focusedTaskId = task.id
-                editingTask = task
+                withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
+                    selectedTask = task
+                }
             }
         )
-        .onTapGesture { viewModel.focusedTaskId = task.id }
+        .onTapGesture {
+            viewModel.focusedTaskId = task.id
+            withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
+                selectedTask = (selectedTask?.id == task.id) ? nil : task
+            }
+        }
+        .overlay(
+            selectedTask?.id == task.id
+                ? RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                : nil
+        )
         .draggable(TaskDragPayload(id: task.id))
         .contextMenu {
             Button {
-                editingTask = task
+                withAnimation { selectedTask = task }
             } label: {
                 Label("Edit…", systemImage: "pencil")
             }
@@ -225,13 +292,38 @@ struct TaskListView: View {
 
     @ViewBuilder
     private func section(for bucket: TaskListViewModel.Bucket, tasks: [TodoTask]) -> some View {
+        let isCollapsed = collapsedBuckets.contains(bucket.title)
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            Text(bucket.title)
-                .eyebrowStyle()
-                .padding(.bottom, DesignTokens.Spacing.xxs)
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    if isCollapsed {
+                        collapsedBuckets.remove(bucket.title)
+                    } else {
+                        collapsedBuckets.insert(bucket.title)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(bucket.title)
+                        .eyebrowStyle()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                        .animation(.easeOut(duration: 0.18), value: isCollapsed)
+                    Spacer()
+                    Text("\(tasks.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, DesignTokens.Spacing.xxs)
 
-            ForEach(tasks) { task in
-                taskRow(for: task)
+            if !isCollapsed {
+                ForEach(tasks) { task in
+                    taskRow(for: task)
+                }
             }
         }
     }
@@ -291,7 +383,7 @@ struct TaskRowView: View {
                     .strikethrough(task.isCompleted || isRecentlyCompleted, color: .secondary)
                     .foregroundStyle(task.isCompleted || isRecentlyCompleted ? .secondary : .primary)
                 if !task.notes.isEmpty {
-                    Text(task.notes)
+                    Text(LocalizedStringKey(task.notes))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)

@@ -39,6 +39,9 @@ final class TaskListViewModel: ObservableObject {
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
     @Published private(set) var taskTags: [String: [String]] = [:]
     @Published var quickAddText: String = ""
+    /// Date selected via the calendar icon in the quick-add bar. Used as a
+    /// fallback when the NLP parser finds no date phrase in `quickAddText`.
+    @Published var quickAddDueDate: Date?
     /// Free-text query for the search bar. When non-empty, `groups` is
     /// ignored and `searchResults` drives the detail pane instead.
     @Published var searchQuery: String = "" {
@@ -103,7 +106,13 @@ final class TaskListViewModel: ObservableObject {
     func commitQuickAdd() {
         let raw = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
-        let parsed = QuickAddParser.parse(raw)
+
+        // First line = title (with NLP tokens), remaining lines = notes.
+        let lineBreak = raw.firstIndex(of: "\n")
+        let titleRaw = lineBreak.map { String(raw[raw.startIndex..<$0]) } ?? raw
+        let notes    = lineBreak.map { String(raw[raw.index(after: $0)...]).trimmingCharacters(in: .newlines) } ?? ""
+
+        let parsed = QuickAddParser.parse(titleRaw)
         guard !parsed.title.isEmpty else { return }
 
         var projectId: String? = nil
@@ -119,12 +128,14 @@ final class TaskListViewModel: ObservableObject {
         do {
             _ = try store.createTask(
                 title: parsed.title,
+                notes: notes,
                 projectId: projectId,
                 priority: parsed.priority,
-                dueAt: parsed.dueAt,
+                dueAt: parsed.dueAt ?? quickAddDueDate ?? Calendar.current.startOfDay(for: Date()),
                 tags: parsed.tags
             )
             quickAddText = ""
+            quickAddDueDate = nil
         } catch {
             Log.ui.error("TaskListViewModel.commitQuickAdd failed: \(error.localizedDescription, privacy: .public)")
         }

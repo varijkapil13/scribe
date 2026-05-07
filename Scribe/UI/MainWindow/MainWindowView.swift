@@ -7,6 +7,7 @@ enum MainSelection: Hashable {
     case live
     case transcript(String) // session id
     case tasks(TaskStore.Filter)
+    case taskCalendar
     case settings(SettingsPane)
 }
 
@@ -21,6 +22,10 @@ struct MainWindowView: View {
     @State private var searchText: String = ""
     @State private var selection: MainSelection?
     @State private var projectEditorMode: ProjectEditorMode?
+    @State private var tasksExpanded: Bool = true
+    @State private var projectsExpanded: Bool = true
+    @State private var transcriptsExpanded: Bool = true
+    @State private var settingsExpanded: Bool = false
 
     var body: some View {
         NavigationSplitView {
@@ -50,10 +55,9 @@ struct MainWindowView: View {
             if selection == nil {
                 if appState.isTranscribing {
                     selection = .live
-                } else if let first = viewModel.filteredSessions.first {
-                    selection = .transcript(first.id)
+                } else {
+                    selection = .tasks(.today)
                 }
-                // Otherwise stay `.none` and show the Welcome hero.
             }
         }
         .onDisappear { projectsViewModel.stop() }
@@ -152,83 +156,55 @@ struct MainWindowView: View {
             }
 
             Section {
-                if viewModel.filteredSessions.isEmpty {
-                    sidebarEmptyHint
-                } else {
-                    ForEach(viewModel.filteredSessions) { session in
-                        NavigationLink(value: MainSelection.transcript(session.id)) {
-                            SessionRowView(session: session)
+                if tasksExpanded {
+                    ForEach(TaskSidebarItem.smartFilters) { item in
+                        NavigationLink(value: MainSelection.tasks(item.filter)) {
+                            Label(item.title, systemImage: item.systemImage)
+                        }
+                    }
+                    NavigationLink(value: MainSelection.taskCalendar) {
+                        Label("Calendar", systemImage: "calendar")
+                    }
+                }
+            } header: {
+                CollapsibleSectionHeader(title: "Tasks", isExpanded: $tasksExpanded)
+            }
+
+            Section {
+                if projectsExpanded {
+                    ForEach(projectsViewModel.projects) { project in
+                        NavigationLink(value: MainSelection.tasks(.project(project.id))) {
+                            ProjectSidebarRow(project: project)
                         }
                         .contextMenu {
+                            Button {
+                                projectEditorMode = .edit(project)
+                            } label: {
+                                Label("Edit…", systemImage: "pencil")
+                            }
                             Button(role: .destructive) {
-                                viewModel.deleteSession(session)
-                                if case .transcript(let id) = selection, id == session.id {
-                                    selection = viewModel.filteredSessions.first.map { .transcript($0.id) }
+                                projectsViewModel.delete(id: project.id)
+                                if case .tasks(.project(let id)) = selection, id == project.id {
+                                    selection = .tasks(.inbox)
                                 }
                             } label: {
-                                Label("Delete", systemImage: "trash")
+                                Label("Delete project", systemImage: "trash")
                             }
                         }
+                        .dropDestination(for: TaskDragPayload.self) { items, _ in
+                            for item in items {
+                                projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
+                            }
+                            return !items.isEmpty
+                        }
+                    }
+                    .onMove { source, destination in
+                        projectsViewModel.reorder(from: source, to: destination)
                     }
                 }
             } header: {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Transcripts")
-                        .eyebrowStyle()
-                    Spacer()
-                    if !viewModel.filteredSessions.isEmpty {
-                        Text("\(viewModel.filteredSessions.count)")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-
-            Section {
-                ForEach(TaskSidebarItem.smartFilters) { item in
-                    NavigationLink(value: MainSelection.tasks(item.filter)) {
-                        Label(item.title, systemImage: item.systemImage)
-                    }
-                }
-            } header: {
-                Text("Tasks")
-                    .eyebrowStyle()
-            }
-
-            Section {
-                ForEach(projectsViewModel.projects) { project in
-                    NavigationLink(value: MainSelection.tasks(.project(project.id))) {
-                        ProjectSidebarRow(project: project)
-                    }
-                    .contextMenu {
-                        Button {
-                            projectEditorMode = .edit(project)
-                        } label: {
-                            Label("Edit…", systemImage: "pencil")
-                        }
-                        Button(role: .destructive) {
-                            projectsViewModel.delete(id: project.id)
-                            if case .tasks(.project(let id)) = selection, id == project.id {
-                                selection = .tasks(.inbox)
-                            }
-                        } label: {
-                            Label("Delete project", systemImage: "trash")
-                        }
-                    }
-                    .dropDestination(for: TaskDragPayload.self) { items, _ in
-                        for item in items {
-                            projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
-                        }
-                        return !items.isEmpty
-                    }
-                }
-                .onMove { source, destination in
-                    projectsViewModel.reorder(from: source, to: destination)
-                }
-            } header: {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Projects")
-                        .eyebrowStyle()
+                    CollapsibleSectionHeader(title: "Projects", isExpanded: $projectsExpanded)
                     Spacer()
                     Button {
                         projectEditorMode = .create
@@ -242,14 +218,49 @@ struct MainWindowView: View {
             }
 
             Section {
-                ForEach(SettingsPane.allCases) { pane in
-                    NavigationLink(value: MainSelection.settings(pane)) {
-                        Label(pane.title, systemImage: pane.systemImage)
+                if transcriptsExpanded {
+                    if viewModel.filteredSessions.isEmpty {
+                        sidebarEmptyHint
+                    } else {
+                        ForEach(viewModel.filteredSessions) { session in
+                            NavigationLink(value: MainSelection.transcript(session.id)) {
+                                SessionRowView(session: session)
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    viewModel.deleteSession(session)
+                                    if case .transcript(let id) = selection, id == session.id {
+                                        selection = viewModel.filteredSessions.first.map { .transcript($0.id) }
+                                    }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
                     }
                 }
             } header: {
-                Text("Settings")
-                    .eyebrowStyle()
+                HStack(alignment: .firstTextBaseline) {
+                    CollapsibleSectionHeader(title: "Transcripts", isExpanded: $transcriptsExpanded)
+                    Spacer()
+                    if !viewModel.filteredSessions.isEmpty {
+                        Text("\(viewModel.filteredSessions.count)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            Section {
+                if settingsExpanded {
+                    ForEach(SettingsPane.allCases) { pane in
+                        NavigationLink(value: MainSelection.settings(pane)) {
+                            Label(pane.title, systemImage: pane.systemImage)
+                        }
+                    }
+                }
+            } header: {
+                CollapsibleSectionHeader(title: "Settings", isExpanded: $settingsExpanded)
             }
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search transcripts…")
@@ -294,6 +305,8 @@ struct MainWindowView: View {
         case .tasks(let filter):
             TaskListView(filter: filter)
                 .id(filter)
+        case .taskCalendar:
+            TaskCalendarView()
         case .settings(let pane):
             SettingsPaneView(pane: pane, audioManager: appState.audioManager)
         case .none:
@@ -450,6 +463,30 @@ private struct KeyCapGroup: View {
 extension Notification.Name {
     static let openScribeSettings = Notification.Name("scribe.openSettings")
     static let scribeSessionUpdated = Notification.Name("scribe.sessionUpdated")
+}
+
+// MARK: - Collapsible section header
+
+private struct CollapsibleSectionHeader: View {
+    let title: String
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .eyebrowStyle()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.easeOut(duration: 0.18), value: isExpanded)
+            }
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 // MARK: - Task sidebar items

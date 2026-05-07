@@ -9,6 +9,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case intelligence
     case storage
     case shortcuts
+    case mcp
     case about
 
     var id: String { rawValue }
@@ -19,6 +20,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "Intelligence"
         case .storage:      return "Storage"
         case .shortcuts:    return "Shortcuts"
+        case .mcp:          return "MCP Server"
         case .about:        return "About"
         }
     }
@@ -29,6 +31,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "sparkles"
         case .storage:      return "internaldrive"
         case .shortcuts:    return "keyboard"
+        case .mcp:          return "server.rack"
         case .about:        return "info.circle"
         }
     }
@@ -72,6 +75,7 @@ struct SettingsPaneView: View {
         case .intelligence: IntelligenceSettingsPane()
         case .storage:      StorageSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
+        case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
         }
     }
@@ -318,6 +322,130 @@ private struct AboutSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+// MARK: - MCP Server
+
+private struct MCPSettingsPane: View {
+
+    @AppStorage("mcpEnabled") var mcpEnabled: Bool = false
+    @AppStorage("mcpPort")    var mcpPort: Int = 3333
+    @ObservedObject private var server = MCPServer.shared
+
+    var body: some View {
+        Form {
+            Section {
+                toggleWithCaption(
+                    "Enable MCP Server",
+                    isOn: Binding(
+                        get: { mcpEnabled },
+                        set: { enabled in
+                            mcpEnabled = enabled
+                            if enabled { server.start(port: UInt16(mcpPort)) }
+                            else       { server.stop() }
+                        }
+                    ),
+                    caption: "Exposes tasks and transcripts to LLM agents via the Model Context Protocol (HTTP+SSE on localhost)."
+                )
+
+                if mcpEnabled {
+                    LabeledContent("Status") {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(server.isRunning ? Color.green : Color.orange)
+                                .frame(width: 8, height: 8)
+                            Text(server.isRunning ? "Running on port \(mcpPort)" : "Starting…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    LabeledContent("Port") {
+                        HStack {
+                            TextField("", value: $mcpPort, format: .number)
+                                .frame(width: 80)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: mcpPort) { _, newPort in
+                                    guard mcpEnabled else { return }
+                                    server.stop()
+                                    server.start(port: UInt16(newPort))
+                                }
+                            Text("(1024–65535)")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    if let error = server.lastError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                    }
+                }
+            } header: {
+                Text("MCP Server")
+            } footer: {
+                Text("Only accessible from localhost. No authentication is required — keep this disabled when not actively using an agent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if mcpEnabled && server.isRunning {
+                Section("Connect an Agent") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Add this to your MCP client config (e.g. Claude Desktop's `claude_desktop_config.json`):")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(claudeDesktopConfig)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .background(Color.primary.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+
+                Section("Available Tools") {
+                    ForEach(toolList, id: \.0) { name, desc in
+                        LabeledContent(name) {
+                            Text(desc)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            if mcpEnabled && !server.isRunning {
+                server.start(port: UInt16(mcpPort))
+            }
+        }
+    }
+
+    private var claudeDesktopConfig: String {
+        """
+        {
+          "mcpServers": {
+            "scribe": {
+              "url": "http://127.0.0.1:\(mcpPort)/sse"
+            }
+          }
+        }
+        """
+    }
+
+    private var toolList: [(String, String)] {
+        [
+            ("create_task",       "Create a task with title, notes, due date, priority"),
+            ("list_tasks",        "List tasks by filter (today, inbox, all, …)"),
+            ("search_tasks",      "Full-text search across tasks"),
+            ("update_task",       "Update title, notes, due date, priority, or completion"),
+            ("delete_task",       "Delete a task by ID"),
+            ("list_transcripts",  "List recent recording sessions"),
+            ("get_transcript",    "Get full transcript text and action items"),
+        ]
     }
 }
 

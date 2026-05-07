@@ -8,18 +8,16 @@ struct TaskEditorView: View {
     @StateObject private var viewModel: TaskEditorViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var hasDueDate: Bool
     @State private var hasReminder: Bool
     @State private var showDeleteConfirm = false
-    // Preserved so toggling off then on restores the original date rather than defaulting to now.
-    @State private var lastDueDate: Date?
+    @State private var showDueDatePicker = false
+    @State private var showReminderPicker = false
+    // Preserved so toggling off then on restores the original date.
     @State private var lastRemindDate: Date?
 
     init(task: TodoTask) {
         _viewModel = StateObject(wrappedValue: TaskEditorViewModel(task: task))
-        _hasDueDate = State(initialValue: task.dueAt != nil)
         _hasReminder = State(initialValue: task.remindAt != nil)
-        _lastDueDate = State(initialValue: task.dueAt)
         _lastRemindDate = State(initialValue: task.remindAt)
     }
 
@@ -33,44 +31,84 @@ struct TaskEditorView: View {
                 }
 
                 Section("Schedule") {
-                    Toggle("Due date", isOn: $hasDueDate)
-                        .onChange(of: hasDueDate) { _, on in
-                            if on {
-                                viewModel.dueAt = lastDueDate ?? Date()
-                            } else {
-                                lastDueDate = viewModel.dueAt
-                                viewModel.dueAt = nil
+                    // Due date — calendar popover button
+                    HStack {
+                        Label("Due date", systemImage: "calendar")
+                        Spacer()
+                        Button {
+                            showDueDatePicker.toggle()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(dueDateLabel)
+                                    .foregroundStyle(viewModel.dueAt != nil ? .primary : .secondary)
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
                             }
+                            .font(.callout)
                         }
-                    if hasDueDate {
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .popover(isPresented: $showDueDatePicker, arrowEdge: .trailing) {
+                            InlineDatePickerView(selectedDate: $viewModel.dueAt)
+                                .padding(4)
+                        }
+                    }
+
+                    // Time row — only visible when a due date is set
+                    if viewModel.dueAt != nil {
                         DatePicker(
-                            "Due",
+                            "Time",
                             selection: Binding(
                                 get: { viewModel.dueAt ?? Date() },
                                 set: { viewModel.dueAt = $0 }
                             ),
-                            displayedComponents: [.date, .hourAndMinute]
+                            displayedComponents: [.hourAndMinute]
                         )
                     }
 
                     Toggle("Reminder", isOn: $hasReminder)
                         .onChange(of: hasReminder) { _, on in
                             if on {
-                                viewModel.remindAt = lastRemindDate ?? viewModel.dueAt ?? Date()
+                                viewModel.remindAt = lastRemindDate ?? viewModel.dueAt ?? Calendar.current.startOfDay(for: Date())
                             } else {
                                 lastRemindDate = viewModel.remindAt
                                 viewModel.remindAt = nil
                             }
                         }
                     if hasReminder {
-                        DatePicker(
-                            "Remind",
-                            selection: Binding(
-                                get: { viewModel.remindAt ?? Date() },
-                                set: { viewModel.remindAt = $0 }
-                            ),
-                            displayedComponents: [.date, .hourAndMinute]
-                        )
+                        HStack {
+                            Label("Remind at", systemImage: "bell")
+                            Spacer()
+                            Button {
+                                showReminderPicker.toggle()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(reminderDateLabel)
+                                        .foregroundStyle(.primary)
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .font(.callout)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .popover(isPresented: $showReminderPicker, arrowEdge: .trailing) {
+                                InlineDatePickerView(selectedDate: $viewModel.remindAt)
+                                    .padding(4)
+                            }
+                        }
+                        if viewModel.remindAt != nil {
+                            DatePicker(
+                                "Reminder time",
+                                selection: Binding(
+                                    get: { viewModel.remindAt ?? Date() },
+                                    set: { viewModel.remindAt = $0 }
+                                ),
+                                displayedComponents: [.hourAndMinute]
+                            )
+                        }
                     }
                 }
 
@@ -149,5 +187,23 @@ struct TaskEditorView: View {
             }
         }
         .frame(minWidth: 480, idealWidth: 560, minHeight: 520, idealHeight: 640)
+    }
+
+    // MARK: - Helpers
+
+    private var dueDateLabel: String {
+        guard let date = viewModel.dueAt else { return "No date" }
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow" }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private var reminderDateLabel: String {
+        guard let date = viewModel.remindAt else { return "No date" }
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow" }
+        return date.formatted(date: .abbreviated, time: .omitted)
     }
 }
