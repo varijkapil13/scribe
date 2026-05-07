@@ -273,16 +273,17 @@ struct MainWindowView: View {
                     }
                 }
             } header: {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center) {
                     CollapsibleSectionHeader(title: "Projects", isExpanded: $projectsExpanded)
                     Spacer()
                     Button {
                         projectEditorMode = .create
                     } label: {
                         Image(systemName: "plus.circle")
-                            .font(.caption)
+                            .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                     .help("New project")
                 }
             }
@@ -306,7 +307,7 @@ struct MainWindowView: View {
                     }
                 }
             } header: {
-                HStack {
+                HStack(alignment: .center) {
                     CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
                     Spacer()
                     Button {
@@ -314,7 +315,7 @@ struct MainWindowView: View {
                         if let note { selection = .note(note.id) }
                     } label: {
                         Image(systemName: "square.and.pencil")
-                            .imageScale(.small)
+                            .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
@@ -346,7 +347,7 @@ struct MainWindowView: View {
                     }
                 }
             } header: {
-                HStack {
+                HStack(alignment: .center) {
                     CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
                     Spacer()
                     Button {
@@ -354,7 +355,7 @@ struct MainWindowView: View {
                         newNotebookName = ""
                     } label: {
                         Image(systemName: "plus.circle")
-                            .imageScale(.small)
+                            .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
