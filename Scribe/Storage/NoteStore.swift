@@ -85,6 +85,7 @@ final class NoteStore: @unchecked Sendable {
         let f = DateFormatter()
         f.dateStyle = .long
         f.timeStyle = .none
+        f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
 

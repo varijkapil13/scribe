@@ -35,8 +35,10 @@ struct MainWindowView: View {
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
     @State private var notesExpanded: Bool = true
+    @State private var notesTagsExpanded: Bool = false
     @State private var transcriptsExpanded: Bool = true
     @State private var settingsExpanded: Bool = false
+    @State private var unifiedTags: [String] = []
 
     var body: some View {
         NavigationSplitView {
@@ -63,6 +65,7 @@ struct MainWindowView: View {
         .onAppear {
             viewModel.loadSessions()
             projectsViewModel.start()
+            reloadTags()
             if selection == nil {
                 if appState.isTranscribing {
                     selection = .live
@@ -248,6 +251,18 @@ struct MainWindowView: View {
             }
 
             Section {
+                if notesTagsExpanded {
+                    ForEach(unifiedTags, id: \.self) { tag in
+                        NavigationLink(value: MainSelection.notes(.tag(tag))) {
+                            Label(tag, systemImage: "tag")
+                        }
+                    }
+                }
+            } header: {
+                CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
+            }
+
+            Section {
                 if transcriptsExpanded {
                     if viewModel.filteredSessions.isEmpty {
                         sidebarEmptyHint
@@ -308,6 +323,12 @@ struct MainWindowView: View {
         try? NoteStore.shared.dailyNote(for: date)
     }
 
+    private func reloadTags() {
+        let noteTags = (try? NoteStore.shared.allNoteTags()) ?? []
+        let taskTags = (try? TaskStore.shared.allTags()) ?? []
+        unifiedTags = Array(Set(noteTags + taskTags)).sorted()
+    }
+
     @ViewBuilder
     private func notesDetailView(filter: NotesFilter) -> some View {
         switch filter {
@@ -319,10 +340,14 @@ struct MainWindowView: View {
                 ContentUnavailableView("Today", systemImage: "sun.max",
                                        description: Text("Could not load today's note."))
             }
+        case .daily:
+            DailyNoteView(onNavigate: { selection = .note($0) })
         case .graph:
             // GraphView is added in Task 13 — stub for now
             ContentUnavailableView("Graph", systemImage: "circle.hexagongrid",
                                    description: Text("Graph view coming soon."))
+        case .tag(let tag):
+            TaggedContentView(tag: tag, onNavigate: { selection = .note($0) })
         default:
             NoteListView(selectedNoteId: Binding(
                 get: {
