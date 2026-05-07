@@ -1,4 +1,5 @@
 // Scribe/UI/Notes/NoteDetailView.swift
+import Combine
 import SwiftUI
 
 struct NoteDetailView: View {
@@ -7,7 +8,7 @@ struct NoteDetailView: View {
     @State private var backlinksExpanded: Bool = false
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
-        _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note))
+        _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
         self.onNavigate = onNavigate
     }
 
@@ -87,7 +88,6 @@ struct NoteDetailView: View {
                 }
             }
         }
-        .onAppear { vm.onNavigate = onNavigate }
         .alert("Error", isPresented: Binding(
             get: { vm.errorMessage != nil },
             set: { if !$0 { vm.errorMessage = nil } }
@@ -174,6 +174,7 @@ private struct BacklinksBar: View {
 private struct NotebookPicker: View {
     @Binding var selectedNotebookId: String?
     @State private var notebooks: [Notebook] = []
+    @State private var notebookCancellable: AnyCancellable?
 
     var body: some View {
         Menu {
@@ -210,7 +211,12 @@ private struct NotebookPicker: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .onAppear { notebooks = (try? NoteStore.shared.fetchAllNotebooks()) ?? [] }
+        .onAppear {
+            notebooks = (try? NoteStore.shared.fetchAllNotebooks()) ?? []
+            notebookCancellable = NoteStore.shared.observeNotebooks()
+                .sink(receiveCompletion: { _ in },
+                      receiveValue: { notebooks = $0 })
+        }
     }
 
     private var currentName: String {

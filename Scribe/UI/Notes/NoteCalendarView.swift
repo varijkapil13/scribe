@@ -1,9 +1,11 @@
 // Scribe/UI/Notes/NoteCalendarView.swift
 import SwiftUI
+import Combine
 
 struct NoteCalendarView: View {
     @State private var displayedMonth: Date = Calendar.current.startOfMonth(for: Date())
     @State private var datesWithNotes: Set<String> = []
+    @State private var noteChangeCancellable: AnyCancellable?
     var onSelectDate: (Date) -> Void
 
     private let calendar = Calendar.current
@@ -51,7 +53,7 @@ struct NoteCalendarView: View {
 
             // ── Day-of-week headers ───────────────────────────────────────
             HStack(spacing: 0) {
-                ForEach(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"], id: \.self) { d in
+                ForEach(weekdaySymbols, id: \.self) { d in
                     Text(d)
                         .font(DesignTokens.Typography.eyebrow)
                         .tracking(0.3)
@@ -89,8 +91,12 @@ struct NoteCalendarView: View {
 
             Spacer()
         }
-        .onAppear { loadDailyNoteDates() }
-        .onChange(of: displayedMonth) { _, _ in loadDailyNoteDates() }
+        .onAppear {
+            loadDailyNoteDates()
+            noteChangeCancellable = NoteStore.shared.observeNotes()
+                .sink(receiveCompletion: { _ in },
+                      receiveValue: { [self] _ in loadDailyNoteDates() })
+        }
     }
 
     private func shiftMonth(_ delta: Int) {
@@ -98,11 +104,19 @@ struct NoteCalendarView: View {
             ?? displayedMonth
     }
 
+    private var weekdaySymbols: [String] {
+        let symbols = calendar.veryShortWeekdaySymbols // ["S","M","T","W","T","F","S"]
+        let first = calendar.firstWeekday - 1
+        return Array(symbols[first...] + symbols[..<first])
+    }
+
     private func monthDays() -> [Date?] {
         guard let monthInterval = calendar.dateInterval(of: .month, for: displayedMonth) else { return [] }
         let firstDay = monthInterval.start
-        let weekday = calendar.component(.weekday, from: firstDay) - 1
-        var days: [Date?] = Array(repeating: nil, count: weekday)
+        let weekday = calendar.component(.weekday, from: firstDay)
+        let firstWeekday = calendar.firstWeekday
+        let leadingBlanks = (weekday - firstWeekday + 7) % 7
+        var days: [Date?] = Array(repeating: nil, count: leadingBlanks)
         var current = firstDay
         while current < monthInterval.end {
             days.append(current)

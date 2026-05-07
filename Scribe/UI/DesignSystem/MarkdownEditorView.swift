@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+// Custom attribute key storing the anchor text for [[wiki-links]].
+// Set during extraHighlighter; read in mouseDown — no scanning needed.
+extension NSAttributedString.Key {
+    static let wikiAnchor = NSAttributedString.Key("scribe.wikiAnchor")
+}
+
 /// Bear-style inline markdown editor: a single NSTextView that formats
 /// markdown syntax visually as you type. Syntax markers (**, *, #, etc.)
 /// are dimmed; content (bold, italic, heading text) is styled.
@@ -147,33 +153,11 @@ final class MarkdownNSTextView: NSTextView {
         let glyphIdx = lm.glyphIndex(for: pt, in: tc)
         guard glyphIdx < lm.numberOfGlyphs else { return }
         let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
-        guard charIdx < string.count else { return }
-        // Check underline attribute — only wiki-links get underlineStyle in this view
+        guard charIdx < storage.length else { return }
+        // Read the wikiAnchor attribute set by extraHighlighter — no scanning needed.
         let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
-        guard attrs[.underlineStyle] != nil else { return }
-        // Scan outward to extract anchor text from [[anchor]].
-        // lo backs up past the opening [[; hi advances past the closing ]].
-        let nsStr = string as NSString
-        var lo = charIdx
-        var hi = charIdx
-        let openBracket = unichar(UnicodeScalar("[").value)
-        let closeBracket = unichar(UnicodeScalar("]").value)
-        // Back up past opening [[
-        while lo > 1,
-              nsStr.character(at: lo - 1) == openBracket,
-              nsStr.character(at: lo - 2) == openBracket {
-            lo -= 2; break
-        }
-        while lo > 0, nsStr.character(at: lo - 1) != openBracket { lo -= 1 }
-        // Advance past closing ]] (stop after second ])
-        while hi < nsStr.length - 1,
-              !(nsStr.character(at: hi) == closeBracket &&
-                nsStr.character(at: hi + 1) == closeBracket) { hi += 1 }
-        if hi > lo {
-            let anchor = nsStr.substring(with: NSRange(location: lo, length: hi - lo))
-                .trimmingCharacters(in: CharacterSet(charactersIn: "[]").union(.whitespaces))
-            if !anchor.isEmpty { onLinkClick(anchor) }
-        }
+        guard let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty else { return }
+        onLinkClick(anchor)
     }
 
     override func draw(_ dirtyRect: NSRect) {

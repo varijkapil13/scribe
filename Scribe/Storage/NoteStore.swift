@@ -3,6 +3,15 @@ import Foundation
 import GRDB
 import Combine
 
+enum NoteStoreError: Error, LocalizedError {
+    case dailyNoteNotFound(String)
+    var errorDescription: String? {
+        switch self {
+        case .dailyNoteNotFound(let key): return "Daily note for \(key) not found after insert."
+        }
+    }
+}
+
 // @unchecked Sendable is safe: DatabaseQueue is thread-safe and dbManager is
 // immutable after init — no mutable state crosses actor boundaries.
 final class NoteStore: @unchecked Sendable {
@@ -63,7 +72,7 @@ final class NoteStore: @unchecked Sendable {
                     // insertOrIgnore: duplicate (sourceNoteId, targetNoteId, anchorText)
                     // is expected when a note links to the same target twice with
                     // identical anchor text — silently skip the duplicate.
-                    _ = try? link.insert(database)
+                    try link.insert(database, onConflict: .ignore)
                 }
             }
         }
@@ -90,7 +99,9 @@ final class NoteStore: @unchecked Sendable {
         return f
     }()
 
-    // Device locale so month names match the user's language.
+    // Intentionally uses device timezone (no explicit timeZone set) so month/day
+    // names appear in the user's locale and current timezone — unlike
+    // dailyDateFormatter which uses en_US_POSIX for machine-readable keys.
     private static let dailyTitleFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .long
@@ -124,7 +135,10 @@ final class NoteStore: @unchecked Sendable {
                     """,
                 arguments: [UUID().uuidString, title, Date(), Date(), key]
             )
-            return try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne(database)!
+            guard let note = try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne(database) else {
+                throw NoteStoreError.dailyNoteNotFound(key)
+            }
+            return note
         }
     }
 
@@ -142,7 +156,7 @@ final class NoteStore: @unchecked Sendable {
     func fetchDailyDates() throws -> [String] {
         try db.read { database in
             try String.fetchAll(database,
-                sql: "SELECT dailyDate FROM notes WHERE isDailyNote = 1 AND dailyDate IS NOT NULL")
+                sql: "SELECT dailyDate FROM notes WHERE isDailyNote = 1 AND dailyDate IS NOT NULL ORDER BY dailyDate")
         }
     }
 
@@ -192,9 +206,9 @@ final class NoteStore: @unchecked Sendable {
 
     func searchNotes(query: String) throws -> [Note] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return try fetchAllNotes() }
+        guard !q.isEmpty else { return [] }
         let sanitized = Self.ftsQuery(from: q)
-        guard !sanitized.isEmpty else { return try fetchAllNotes() }
+        guard !sanitized.isEmpty else { return [] }
         return try db.read { database in
             try Note.fetchAll(database, sql: """
                 SELECT notes.* FROM notes
@@ -282,6 +296,7 @@ final class NoteStore: @unchecked Sendable {
     func fetchInboxNotes() throws -> [Note] {
         try db.read { database in
             try Note
+                // GRDB maps `== nil` to `IS NULL` — intentional, selects unassigned notes.
                 .filter(Column("notebookId") == nil && Column("isDailyNote") == false)
                 .order(Column("updatedAt").desc)
                 .fetchAll(database)
@@ -307,9 +322,13 @@ final class NoteStore: @unchecked Sendable {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
+    private static let wikiLinkRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: #"\[\[([^\[\]]+)\]\]"#)
+    }()
+
     static func parseWikiLinks(from text: String) -> [String] {
-        let pattern = #"\[\[([^\[\]]+)\]\]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let regex = Self.wikiLinkRegex
         let range = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: range).compactMap { match in
             guard let r = Range(match.range(at: 1), in: text) else { return nil }

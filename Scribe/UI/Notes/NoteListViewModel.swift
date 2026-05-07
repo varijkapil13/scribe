@@ -22,7 +22,6 @@ final class NoteListViewModel: ObservableObject {
         self.store = store
         self.scope = scope
         store.observeNotes()
-            .receive(on: DispatchQueue.main)
             .sink(receiveCompletion: { _ in },
                   receiveValue: { [weak self] _ in self?.loadNotes() })
             .store(in: &cancellables)

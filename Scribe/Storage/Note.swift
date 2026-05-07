@@ -3,9 +3,15 @@ import Foundation
 import GRDB
 
 struct Notebook: Codable, Identifiable, Equatable, Hashable {
-    var id: String = UUID().uuidString
+    var id: String
     var name: String
-    var sortOrder: Int = 0
+    var sortOrder: Int
+
+    init(id: String = UUID().uuidString, name: String, sortOrder: Int = 0) {
+        self.id = id
+        self.name = name
+        self.sortOrder = sortOrder
+    }
 }
 
 extension Notebook: FetchableRecord, PersistableRecord {

@@ -84,12 +84,17 @@ private struct DraftDailyNoteView: View {
     let onNavigate: (String) -> Void
 
     @State private var bodyText: String = ""
+    @State private var hasCreated: Bool = false
 
-    private var noteTitle: String {
+    private static let titleFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .long
         f.timeStyle = .none
-        return "Daily Note \u{2013} \(f.string(from: date))"
+        return f
+    }()
+
+    private var noteTitle: String {
+        "Daily Note \u{2013} \(Self.titleFormatter.string(from: date))"
     }
 
     var body: some View {
@@ -125,6 +130,7 @@ private struct DraftDailyNoteView: View {
             .padding(.vertical, DesignTokens.Spacing.lg)
         }
         .onChange(of: bodyText) { _, newValue in
+            guard !hasCreated else { return }
             // First non-whitespace character triggers note creation.
             guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             do {
@@ -133,6 +139,7 @@ private struct DraftDailyNoteView: View {
                 var note = try NoteStore.shared.dailyNote(for: date)
                 note.body = newValue
                 try NoteStore.shared.updateNote(note, tags: [])
+                hasCreated = true
                 onCreated(note)
             } catch {
                 Log.app.error("DraftDailyNoteView: failed to persist note: \(error)")

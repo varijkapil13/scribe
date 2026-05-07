@@ -286,7 +286,7 @@ final class DatabaseManager: @unchecked Sendable {
                 t.column("targetNoteId", .text).notNull()
                     .references("notes", onDelete: .cascade)
                 t.column("anchorText", .text).notNull()
-                t.primaryKey(["sourceNoteId", "targetNoteId", "anchorText"])
+                t.primaryKey(["sourceNoteId", "targetNoteId"])
             }
             try db.create(index: "note_links_targetNoteId_idx",
                           on: "note_links", columns: ["targetNoteId"])
@@ -330,6 +330,23 @@ final class DatabaseManager: @unchecked Sendable {
                 ON notes (dailyDate)
                 WHERE isDailyNote = 1
                 """)
+        }
+
+        migrator.registerMigration("v5_fix_note_links_pk") { db in
+            try db.execute(sql: """
+                CREATE TABLE note_links_new (
+                    sourceNoteId TEXT NOT NULL,
+                    targetNoteId TEXT NOT NULL,
+                    anchorText   TEXT NOT NULL,
+                    PRIMARY KEY (sourceNoteId, targetNoteId)
+                )
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO note_links_new
+                SELECT sourceNoteId, targetNoteId, anchorText FROM note_links
+                """)
+            try db.execute(sql: "DROP TABLE note_links")
+            try db.execute(sql: "ALTER TABLE note_links_new RENAME TO note_links")
         }
 
         migrator.registerMigration("v8") { db in

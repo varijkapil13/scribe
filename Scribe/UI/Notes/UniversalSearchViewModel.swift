@@ -46,11 +46,12 @@ final class UniversalSearchViewModel: ObservableObject {
     private func performSearch() async {
         let q = query.trimmingCharacters(in: .whitespaces)
 
-        let noteSec = await searchNotes(q)
-        let taskSec = await searchTasks(q)
-        let transcriptSec = await searchTranscripts(q)
+        async let noteSec = searchNotes(q)
+        async let taskSec = searchTasks(q)
+        async let transcriptSec = searchTranscripts(q)
 
-        sections = [noteSec, taskSec, transcriptSec].filter { !$0.results.isEmpty }
+        let results = await [noteSec, taskSec, transcriptSec]
+        sections = results.filter { !$0.results.isEmpty }
     }
 
     private func searchNotes(_ q: String) async -> SearchResultSection {

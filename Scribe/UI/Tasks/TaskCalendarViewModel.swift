@@ -23,7 +23,7 @@ final class TaskCalendarViewModel: ObservableObject {
 
     // MARK: - Init
 
-    init(store: TaskStore = TaskStore()) {
+    init(store: TaskStore = TaskStore.shared) {
         self.store = store
         let today = Date()
         self.displayMonth = Calendar.current.startOfMonth(for: today)
@@ -105,12 +105,12 @@ final class TaskCalendarViewModel: ObservableObject {
     func buildCells() -> [CalendarCell] {
         let firstDay  = displayMonth
         let weekday   = cal.component(.weekday, from: firstDay) // 1=Sun … 7=Sat
-        let range     = cal.range(of: .day, in: .month, for: firstDay)!
+        guard let range = cal.range(of: .day, in: .month, for: firstDay) else { return [] }
 
         var cells = Array(repeating: CalendarCell(date: nil, isCurrentMonth: false),
                           count: weekday - 1)
         for day in range {
-            let date = cal.date(byAdding: .day, value: day - 1, to: firstDay)!
+            guard let date = cal.date(byAdding: .day, value: day - 1, to: firstDay) else { continue }
             cells.append(CalendarCell(date: date, isCurrentMonth: true))
         }
         // Pad to complete the last week row

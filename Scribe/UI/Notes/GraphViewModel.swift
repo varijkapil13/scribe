@@ -2,14 +2,14 @@
 import Foundation
 import CoreGraphics
 
-struct GraphNode: Identifiable {
+struct GraphNode: Identifiable, Sendable {
     let id: String
     let label: String
     let type: NodeType
     var position: CGPoint
     var velocity: CGPoint = .zero
 
-    enum NodeType: Equatable {
+    enum NodeType: Equatable, Sendable {
         case note
         var color: (r: Double, g: Double, b: Double) {
             switch self {
@@ -19,7 +19,7 @@ struct GraphNode: Identifiable {
     }
 }
 
-struct GraphEdge {
+struct GraphEdge: Sendable {
     let sourceId: String
     let targetId: String
 }
@@ -31,6 +31,7 @@ final class GraphViewModel: ObservableObject {
     @Published private(set) var isSettled: Bool = true
 
     private let noteStore: NoteStore
+    private var isSimulating = false
 
     init(noteStore: NoteStore = .shared) {
         self.noteStore = noteStore
@@ -54,25 +55,41 @@ final class GraphViewModel: ObservableObject {
             )
         }
 
-        // Single query instead of N backlinks() calls.
         edges = try noteStore.fetchAllLinks().map { GraphEdge(sourceId: $0.sourceNoteId,
                                                               targetId: $0.targetNoteId) }
         isSettled = nodes.count <= 1
     }
 
     func tick() {
-        guard !isSettled, nodes.count > 1 else {
+        guard !isSettled, nodes.count > 1, !isSimulating else {
             if nodes.count <= 1 { isSettled = true }
             return
         }
+        isSimulating = true
+        let snapshot = nodes
+        let edgeSnapshot = edges
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let (updated, settled) = Self.simulate(nodes: snapshot, edges: edgeSnapshot)
+            await MainActor.run {
+                self?.nodes = updated
+                self?.isSettled = settled
+                self?.isSimulating = false
+            }
+        }
+    }
 
+    // Pure function — runs off the main actor.
+    private nonisolated static func simulate(nodes: [GraphNode], edges: [GraphEdge]) -> ([GraphNode], Bool) {
         let repulsionK: Double = 2000
         let springK: Double = 0.04
         let restLength: Double = 120
         let damping: Double = 0.85
 
+        var result = nodes
         var forces = Array(repeating: CGPoint.zero, count: nodes.count)
-        let ids = nodes.map(\.id)
+
+        // H6: O(1) lookup instead of O(N) firstIndex per edge.
+        let idToIndex = Dictionary(uniqueKeysWithValues: nodes.indices.map { (nodes[$0].id, $0) })
 
         for i in nodes.indices {
             for j in nodes.indices where j != i {
@@ -87,8 +104,8 @@ final class GraphViewModel: ObservableObject {
         }
 
         for edge in edges {
-            guard let si = ids.firstIndex(of: edge.sourceId),
-                  let ti = ids.firstIndex(of: edge.targetId) else { continue }
+            guard let si = idToIndex[edge.sourceId],
+                  let ti = idToIndex[edge.targetId] else { continue }
             let dx = nodes[ti].position.x - nodes[si].position.x
             let dy = nodes[ti].position.y - nodes[si].position.y
             let dist = max((dx * dx + dy * dy).squareRoot(), 1)
@@ -101,16 +118,16 @@ final class GraphViewModel: ObservableObject {
         }
 
         var maxSpeed: Double = 0
-        for i in nodes.indices {
-            nodes[i].velocity.x = (nodes[i].velocity.x + forces[i].x) * damping
-            nodes[i].velocity.y = (nodes[i].velocity.y + forces[i].y) * damping
-            nodes[i].position.x += nodes[i].velocity.x
-            nodes[i].position.y += nodes[i].velocity.y
-            let speed = (nodes[i].velocity.x * nodes[i].velocity.x
-                       + nodes[i].velocity.y * nodes[i].velocity.y).squareRoot()
+        for i in result.indices {
+            result[i].velocity.x = (result[i].velocity.x + forces[i].x) * damping
+            result[i].velocity.y = (result[i].velocity.y + forces[i].y) * damping
+            result[i].position.x += result[i].velocity.x
+            result[i].position.y += result[i].velocity.y
+            let speed = (result[i].velocity.x * result[i].velocity.x
+                       + result[i].velocity.y * result[i].velocity.y).squareRoot()
             maxSpeed = max(maxSpeed, speed)
         }
 
-        if maxSpeed < 0.5 { isSettled = true }
+        return (result, maxSpeed < 0.5)
     }
 }

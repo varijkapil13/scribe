@@ -46,15 +46,26 @@ struct NoteEditorView: View {
         }
     }
 
+    private static let wikiHighlightRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: #"\[\[([^\[\]]+)\]\]"#)
+    }()
+
     private func highlightWikiLinks(_ attrStr: NSMutableAttributedString) {
-        let pattern = #"\[\[([^\[\]]+)\]\]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-        let full = NSRange(attrStr.string.startIndex..., in: attrStr.string)
-        regex.enumerateMatches(in: attrStr.string, range: full) { match, _, _ in
-            guard let match else { return }
-            attrStr.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: match.range)
+        let regex = Self.wikiHighlightRegex
+        let str = attrStr.string
+        let full = NSRange(str.startIndex..., in: str)
+        regex.enumerateMatches(in: str, range: full) { match, _, _ in
+            guard let match, match.numberOfRanges >= 2 else { return }
+            let fullRange = match.range
+            attrStr.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: fullRange)
             attrStr.addAttribute(.underlineStyle,
-                                 value: NSUnderlineStyle.single.rawValue, range: match.range)
+                                 value: NSUnderlineStyle.single.rawValue, range: fullRange)
+            // Set wikiAnchor attribute so mouseDown can read it directly — no scanning.
+            if let captureRange = Range(match.range(at: 1), in: str) {
+                let anchor = String(str[captureRange]).trimmingCharacters(in: .whitespaces)
+                attrStr.addAttribute(.wikiAnchor, value: anchor, range: fullRange)
+            }
         }
     }
 

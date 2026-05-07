@@ -11,11 +11,12 @@ final class NoteDetailViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
 
     private let store: NoteStore
-    var onNavigate: ((String) -> Void)?
+    private let onNavigate: (String) -> Void
 
-    init(note: Note, store: NoteStore = .shared) {
+    init(note: Note, store: NoteStore = .shared, onNavigate: @escaping (String) -> Void = { _ in }) {
         self.note = note
         self.store = store
+        self.onNavigate = onNavigate
         reload()
     }
 
@@ -40,7 +41,7 @@ final class NoteDetailViewModel: ObservableObject {
 
     func handleWikiLinkNavigate(anchor: String) {
         guard let target = try? store.resolveTitle(anchor) else { return }
-        onNavigate?(target.id)
+        onNavigate(target.id)
     }
 
     func markDirty() { isDirty = true }

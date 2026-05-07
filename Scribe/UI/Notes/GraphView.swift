@@ -6,6 +6,7 @@ struct GraphView: View {
     @State private var panOffset: CGSize = .zero
     @State private var dragStart: CGSize = .zero
     @State private var zoomScale: CGFloat = 1.0
+    @State private var baseZoom: CGFloat = 1.0
     var onNavigate: (String) -> Void
 
     var body: some View {
@@ -56,7 +57,8 @@ struct GraphView: View {
             )
             .gesture(
                 MagnificationGesture()
-                    .onChanged { v in zoomScale = max(0.25, min(4, v)) }
+                    .onChanged { v in zoomScale = max(0.25, min(4, baseZoom * v)) }
+                    .onEnded { v in baseZoom = max(0.25, min(4, baseZoom * v)) }
             )
             .onTapGesture { location in
                 let size = geo.size
@@ -76,7 +78,7 @@ struct GraphView: View {
         .toolbar {
             ToolbarItem {
                 Button("Reset") {
-                    panOffset = .zero; dragStart = .zero; zoomScale = 1
+                    panOffset = .zero; dragStart = .zero; zoomScale = 1; baseZoom = 1
                     try? vm.load()
                 }
             }

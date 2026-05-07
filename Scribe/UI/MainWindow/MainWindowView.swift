@@ -48,6 +48,9 @@ struct MainWindowView: View {
     @State private var notebookDraftName: String = ""
     @State private var renamingNotebookId: String? = nil
     @State private var inlineRenameName: String = ""
+    @State private var detailNote: Note? = nil
+    @State private var todayNote: Note? = nil
+    @State private var tagReloadTask: Task<Void, Never>? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -84,7 +87,7 @@ struct MainWindowView: View {
             }
         }
         .onDisappear { projectsViewModel.stop() }
-        .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in reloadTags() }
+        .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in scheduleTagReload() }
         .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
@@ -442,28 +445,19 @@ struct MainWindowView: View {
         .navigationTitle("Scribe")
     }
 
-    private func fetchNote(id: String) -> Note? {
-        do {
-            return try NoteStore.shared.fetchNote(id: id)
-        } catch {
-            Log.app.error("fetchNote(\(id)): \(error)")
-            return nil
-        }
-    }
-
-    private func fetchDailyNote(for date: Date) -> Note? {
-        do {
-            return try NoteStore.shared.fetchExistingDailyNote(for: date)
-        } catch {
-            Log.app.error("fetchDailyNote: \(error)")
-            return nil
-        }
-    }
-
     private func reloadTags() {
         let noteTags = (try? NoteStore.shared.allNoteTags()) ?? []
         let taskTags = (try? TaskStore.shared.allTags()) ?? []
         unifiedTags = Array(Set(noteTags + taskTags)).sorted()
+    }
+
+    private func scheduleTagReload() {
+        tagReloadTask?.cancel()
+        tagReloadTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            reloadTags()
+        }
     }
 
     @ViewBuilder
@@ -474,11 +468,16 @@ struct MainWindowView: View {
         )
         switch filter {
         case .today:
-            if let note = fetchDailyNote(for: Date()) {
-                NoteDetailView(note: note, onNavigate: { selection = .note($0) })
-                    .id(note.id)
-            } else {
-                DailyNoteView(onNavigate: { selection = .note($0) })
+            Group {
+                if let note = todayNote {
+                    NoteDetailView(note: note, onNavigate: { selection = .note($0) })
+                        .id(note.id)
+                } else {
+                    DailyNoteView(onNavigate: { selection = .note($0) })
+                }
+            }
+            .task {
+                todayNote = try? NoteStore.shared.fetchExistingDailyNote(for: Date())
             }
         case .daily:
             DailyNoteView(onNavigate: { selection = .note($0) })
@@ -535,17 +534,22 @@ struct MainWindowView: View {
                 selection = .note(noteId)
             })
         case .note(let id):
-            if let note = fetchNote(id: id) {
-                NoteDetailView(note: note, onNavigate: { noteId in
-                    selection = .note(noteId)
-                })
-                .id(id)
-            } else {
-                ContentUnavailableView(
-                    "Note not found",
-                    systemImage: "note.text",
-                    description: Text("This note may have been deleted.")
-                )
+            Group {
+                if let note = detailNote, note.id == id {
+                    NoteDetailView(note: note, onNavigate: { noteId in
+                        selection = .note(noteId)
+                    })
+                    .id(id)
+                } else {
+                    ContentUnavailableView(
+                        "Note not found",
+                        systemImage: "note.text",
+                        description: Text("This note may have been deleted.")
+                    )
+                }
+            }
+            .task(id: id) {
+                detailNote = try? NoteStore.shared.fetchNote(id: id)
             }
         case .notes(let filter):
             notesDetailView(filter: filter)
