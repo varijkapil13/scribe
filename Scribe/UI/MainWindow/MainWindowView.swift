@@ -347,7 +347,7 @@ struct MainWindowView: View {
 
     private func fetchDailyNote(for date: Date) -> Note? {
         do {
-            return try NoteStore.shared.dailyNote(for: date)
+            return try NoteStore.shared.fetchExistingDailyNote(for: date)
         } catch {
             Log.app.error("fetchDailyNote: \(error)")
             return nil
@@ -368,8 +368,8 @@ struct MainWindowView: View {
                 NoteDetailView(note: note, onNavigate: { selection = .note($0) })
                     .id(note.id)
             } else {
-                ContentUnavailableView("Today", systemImage: "sun.max",
-                                       description: Text("Could not load today's note."))
+                // No note for today yet — open Daily Notes so user can start typing.
+                DailyNoteView(onNavigate: { selection = .note($0) })
             }
         case .daily:
             DailyNoteView(onNavigate: { selection = .note($0) })

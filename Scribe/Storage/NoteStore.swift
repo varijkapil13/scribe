@@ -96,6 +96,16 @@ final class NoteStore: @unchecked Sendable {
         return f
     }()
 
+    /// Returns an existing daily note for `date`, or nil if none exists.
+    /// Never creates a note — use `dailyNote(for:)` only when creation is
+    /// explicitly intended (e.g. after the user starts typing).
+    func fetchExistingDailyNote(for date: Date) throws -> Note? {
+        let key = Self.dailyDateFormatter.string(from: date)
+        return try db.read { try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne($0) }
+    }
+
+    /// Atomically fetches or creates the daily note for `date`. Call only
+    /// when creation is intended — for read-only lookup use fetchExistingDailyNote(for:).
     func dailyNote(for date: Date) throws -> Note {
         let key = Self.dailyDateFormatter.string(from: date)
         let title = "Daily Note \u{2013} \(Self.dailyTitleFormatter.string(from: date))"
