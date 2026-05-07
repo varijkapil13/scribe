@@ -4,6 +4,7 @@ import SwiftUI
 struct NoteDetailView: View {
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
+    @State private var backlinksExpanded: Bool = false
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note))
@@ -11,40 +12,67 @@ struct NoteDetailView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                TextField("Title", text: Binding(
+        VStack(spacing: 0) {
+            // ── Document header ────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                TextField("Untitled", text: Binding(
                     get: { vm.note.title },
                     set: { vm.note.title = $0; vm.markDirty() }
                 ))
-                .font(.title2.bold())
+                .font(DesignTokens.Typography.title2)
                 .textFieldStyle(.plain)
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .foregroundStyle(.primary)
 
-                Divider()
-
-                NoteEditorView(
-                    text: Binding(
-                        get: { vm.note.body },
-                        set: { vm.note.body = $0; vm.markDirty() }
-                    ),
-                    noteStore: .shared,
-                    onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
-                )
-                .padding(8)
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "clock")
+                        .imageScale(.small)
+                    Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
+                }
+                .font(DesignTokens.Typography.eyebrow)
+                .foregroundStyle(.tertiary)
+                .tracking(0.5)
             }
+            .padding(.horizontal, DesignTokens.Spacing.xxxl)
+            .padding(.top, DesignTokens.Spacing.xl)
+            .padding(.bottom, DesignTokens.Spacing.lg)
 
             Divider()
 
-            NoteBacklinksView(backlinks: vm.backlinks, onNavigate: onNavigate)
+            // ── Body editor (reading-width constrained) ────────────────────
+            NoteEditorView(
+                text: Binding(
+                    get: { vm.note.body },
+                    set: { vm.note.body = $0; vm.markDirty() }
+                ),
+                noteStore: .shared,
+                onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
+            )
+            .padding(.horizontal, DesignTokens.Spacing.xxxl)
+            .padding(.vertical, DesignTokens.Spacing.lg)
+
+            // ── Backlinks (collapsible, only when non-empty) ───────────────
+            if !vm.backlinks.isEmpty {
+                Divider()
+                BacklinksBar(
+                    backlinks: vm.backlinks,
+                    isExpanded: $backlinksExpanded,
+                    onNavigate: onNavigate
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Save") { vm.save() }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!vm.isDirty)
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    if vm.isDirty {
+                        Text("Unsaved changes")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Save") { vm.save() }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!vm.isDirty)
+                }
             }
         }
         .onAppear { vm.onNavigate = onNavigate }
@@ -56,5 +84,75 @@ struct NoteDetailView: View {
         } message: {
             Text(vm.errorMessage ?? "")
         }
+    }
+}
+
+// MARK: - Backlinks bar
+
+private struct BacklinksBar: View {
+    let backlinks: [Note]
+    @Binding var isExpanded: Bool
+    let onNavigate: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Disclosure toggle
+            Button {
+                withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "link")
+                        .imageScale(.small)
+                    Text("\(backlinks.count) linked note\(backlinks.count == 1 ? "" : "s")")
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                }
+                .font(DesignTokens.Typography.eyebrow)
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, DesignTokens.Spacing.xxxl)
+                .padding(.vertical, DesignTokens.Spacing.sm)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider()
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        ForEach(backlinks) { note in
+                            Button {
+                                onNavigate(note.id)
+                            } label: {
+                                HStack(spacing: DesignTokens.Spacing.xs) {
+                                    Image(systemName: "note.text")
+                                        .imageScale(.small)
+                                    Text(note.title.isEmpty ? "(Untitled)" : note.title)
+                                        .lineLimit(1)
+                                }
+                                .font(.callout)
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, DesignTokens.Spacing.sm)
+                                .padding(.vertical, DesignTokens.Spacing.xs)
+                                .background(DesignTokens.Palette.surfaceElevated,
+                                            in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                                        .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, DesignTokens.Spacing.xxxl)
+                    .padding(.vertical, DesignTokens.Spacing.sm)
+                }
+            }
+        }
+        .background(DesignTokens.Palette.surfaceSunken)
     }
 }

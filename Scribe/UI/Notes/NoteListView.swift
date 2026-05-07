@@ -7,23 +7,46 @@ struct NoteListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            // ── Search ────────────────────────────────────────────────────
+            HStack(spacing: DesignTokens.Spacing.xs) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .imageScale(.small)
+                    .foregroundStyle(.tertiary)
                 TextField("Search notes…", text: $vm.searchText)
                     .textFieldStyle(.plain)
+                    .font(.callout)
+                if !vm.searchText.isEmpty {
+                    Button {
+                        vm.searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .imageScale(.small)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .padding(8)
-            .background(Color(.windowBackgroundColor).opacity(0.5))
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.vertical, DesignTokens.Spacing.xs + 2)
+            .background(DesignTokens.Palette.surfaceElevated)
 
             Divider()
 
             if vm.filteredNotes.isEmpty {
-                ContentUnavailableView(
-                    "No notes",
-                    systemImage: "note.text",
-                    description: Text("Press ⌘N to create your first note.")
-                )
+                VStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: vm.searchText.isEmpty ? "note.text" : "magnifyingglass")
+                        .font(.system(size: 28, weight: .light))
+                        .foregroundStyle(.quaternary)
+                    Text(vm.searchText.isEmpty ? "No notes yet" : "No results")
+                        .font(DesignTokens.Typography.section)
+                        .foregroundStyle(.secondary)
+                    if vm.searchText.isEmpty {
+                        Text("Press ⌘N to create your first note.")
+                            .font(.callout)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(vm.filteredNotes, selection: $selectedNoteId) { note in
                     NoteRowView(note: note)
@@ -33,7 +56,7 @@ struct NoteListView: View {
                                 vm.deleteNote(id: note.id)
                                 if selectedNoteId == note.id { selectedNoteId = nil }
                             } label: {
-                                Label("Delete", systemImage: "trash")
+                                Label("Delete Note", systemImage: "trash")
                             }
                         }
                 }
@@ -55,19 +78,37 @@ struct NoteListView: View {
     }
 }
 
+// MARK: - Note row
+
 private struct NoteRowView: View {
     let note: Note
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(note.title.isEmpty ? "(Untitled)" : note.title)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs + 1) {
+            Text(note.title.isEmpty ? "Untitled" : note.title)
                 .font(.body)
+                .fontWeight(.medium)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
-            Text(note.body.isEmpty ? "No additional text" : note.body)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Text(note.updatedAt, style: .relative)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+
+                if !note.body.isEmpty {
+                    Text("·")
+                        .font(.caption2)
+                        .foregroundStyle(.quaternary)
+
+                    Text(note.body.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
     }
 }
