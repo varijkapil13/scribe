@@ -11,6 +11,9 @@ struct MarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = "Notes…"
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
+    var extraHighlighter: ((NSMutableAttributedString) -> Void)? = nil
+    var onWikiLinkTyped: ((String) -> Void)? = nil
+    var onWikiLinkNavigate: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -44,6 +47,10 @@ struct MarkdownEditorView: NSViewRepresentable {
 
         scrollView.documentView = tv
         tv.delegate = context.coordinator
+        let coordinator = context.coordinator
+        tv.onLinkClick = { anchor in
+            coordinator.parent.onWikiLinkNavigate?(anchor)
+        }
         context.coordinator.textView = tv
         context.coordinator.parent = self
         return scrollView
@@ -83,6 +90,21 @@ struct MarkdownEditorView: NSViewRepresentable {
             if let mtv = tv as? MarkdownNSTextView {
                 applyFormatting(to: mtv)
             }
+            detectWikiLinkTyping(in: tv)
+        }
+
+        private func detectWikiLinkTyping(in tv: NSTextView) {
+            let cursorPos = tv.selectedRange().location
+            let text = tv.string
+            let prefix = String(text.prefix(cursorPos))
+            if let lastOpen = prefix.range(of: "[[", options: .backwards) {
+                let afterOpen = String(prefix[lastOpen.upperBound...])
+                if !afterOpen.contains("]]") {
+                    parent.onWikiLinkTyped?(afterOpen)
+                    return
+                }
+            }
+            parent.onWikiLinkTyped?("")
         }
 
         func applyFormatting(to tv: NSTextView) {
@@ -91,9 +113,12 @@ struct MarkdownEditorView: NSViewRepresentable {
             guard !raw.isEmpty else { return }
             let font = tv.font ?? parent.font
             let formatted = MarkdownFormatter.attributed(raw, font: font)
+            // Apply extra highlighting (e.g., [[wiki-links]])
+            let mutable = NSMutableAttributedString(attributedString: formatted)
+            parent.extraHighlighter?(mutable)
             let saved = tv.selectedRanges
             storage.beginEditing()
-            storage.setAttributedString(formatted)
+            storage.setAttributedString(mutable)
             storage.endEditing()
             let len = storage.length
             tv.selectedRanges = saved.map { v in
@@ -112,6 +137,34 @@ struct MarkdownEditorView: NSViewRepresentable {
 
 final class MarkdownNSTextView: NSTextView {
     var placeholderString: String = ""
+    var onLinkClick: ((String) -> Void)? = nil
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        guard let onLinkClick, let storage = textStorage else { return }
+        let pt = convert(event.locationInWindow, from: nil)
+        guard let lm = layoutManager, let tc = textContainer else { return }
+        let glyphIdx = lm.glyphIndex(for: pt, in: tc)
+        guard glyphIdx < lm.numberOfGlyphs else { return }
+        let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
+        guard charIdx < string.count else { return }
+        // Check underline attribute — only wiki-links get underlineStyle in this view
+        let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
+        guard attrs[.underlineStyle] != nil else { return }
+        // Scan outward to find the anchor text between [[ and ]]
+        let nsStr = string as NSString
+        var lo = charIdx
+        var hi = charIdx
+        let openBracket = unichar(UnicodeScalar("[").value)
+        let closeBracket = unichar(UnicodeScalar("]").value)
+        while lo > 0, nsStr.character(at: lo - 1) != openBracket { lo -= 1 }
+        while hi < nsStr.length, nsStr.character(at: hi) != closeBracket { hi += 1 }
+        if hi > lo {
+            var anchor = nsStr.substring(with: NSRange(location: lo, length: hi - lo))
+            anchor = anchor.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            if !anchor.isEmpty { onLinkClick(anchor) }
+        }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
