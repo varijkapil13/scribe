@@ -256,6 +256,70 @@ final class DatabaseManager: @unchecked Sendable {
                 """)
         }
 
+        migrator.registerMigration("v6") { db in
+            // -- notes --
+            try db.create(table: "notes") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("title", .text).notNull().defaults(to: "")
+                t.column("body", .text).notNull().defaults(to: "")
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.column("isDailyNote", .boolean).notNull().defaults(to: false)
+                t.column("dailyDate", .text)
+            }
+            try db.create(index: "notes_dailyDate_idx", on: "notes", columns: ["dailyDate"])
+            try db.create(index: "notes_updatedAt_idx", on: "notes", columns: ["updatedAt"])
+
+            // -- note_tags --
+            try db.create(table: "note_tags") { t in
+                t.column("noteId", .text).notNull()
+                    .references("notes", onDelete: .cascade)
+                t.column("tag", .text).notNull()
+                t.primaryKey(["noteId", "tag"])
+            }
+            try db.create(index: "note_tags_tag_idx", on: "note_tags", columns: ["tag"])
+
+            // -- note_links --
+            try db.create(table: "note_links") { t in
+                t.column("sourceNoteId", .text).notNull()
+                    .references("notes", onDelete: .cascade)
+                t.column("targetNoteId", .text).notNull()
+                    .references("notes", onDelete: .cascade)
+                t.column("anchorText", .text).notNull()
+                t.primaryKey(["sourceNoteId", "targetNoteId", "anchorText"])
+            }
+            try db.create(index: "note_links_targetNoteId_idx",
+                          on: "note_links", columns: ["targetNoteId"])
+
+            // -- notes_fts --
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE notes_fts USING fts5(
+                    title,
+                    body,
+                    content='notes',
+                    content_rowid='rowid'
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER notes_fts_ai AFTER INSERT ON notes BEGIN
+                    INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER notes_fts_ad AFTER DELETE ON notes BEGIN
+                    INSERT INTO notes_fts(notes_fts, rowid, title, body)
+                    VALUES ('delete', old.rowid, old.title, old.body);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER notes_fts_au AFTER UPDATE ON notes BEGIN
+                    INSERT INTO notes_fts(notes_fts, rowid, title, body)
+                    VALUES ('delete', old.rowid, old.title, old.body);
+                    INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+                END
+                """)
+        }
+
         try migrator.migrate(database)
     }
 }
