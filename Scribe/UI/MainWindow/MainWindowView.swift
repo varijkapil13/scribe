@@ -44,10 +44,10 @@ struct MainWindowView: View {
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
     @State private var showUniversalSearch: Bool = false
-    @State private var showNewNotebookAlert: Bool = false
-    @State private var newNotebookName: String = ""
-    @State private var renamingNotebook: Notebook? = nil
-    @State private var renameText: String = ""
+    @State private var isCreatingNotebook: Bool = false
+    @State private var notebookDraftName: String = ""
+    @State private var renamingNotebookId: String? = nil
+    @State private var inlineRenameName: String = ""
 
     var body: some View {
         NavigationSplitView {
@@ -101,32 +101,6 @@ struct MainWindowView: View {
                     projectsViewModel.update(copy)
                 }
             }
-        }
-        .alert("New Notebook", isPresented: $showNewNotebookAlert) {
-            TextField("Name", text: $newNotebookName)
-            Button("Create") {
-                let name = newNotebookName.trimmingCharacters(in: .whitespaces)
-                guard !name.isEmpty else { return }
-                try? NoteStore.shared.createNotebook(name: name)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Enter a name for your new notebook.")
-        }
-        .alert("Rename Notebook", isPresented: Binding(
-            get: { renamingNotebook != nil },
-            set: { if !$0 { renamingNotebook = nil } }
-        )) {
-            TextField("Name", text: $renameText)
-            Button("Rename") {
-                guard var nb = renamingNotebook else { return }
-                let name = renameText.trimmingCharacters(in: .whitespaces)
-                guard !name.isEmpty else { return }
-                nb.name = name
-                try? NoteStore.shared.updateNotebook(nb)
-                renamingNotebook = nil
-            }
-            Button("Cancel", role: .cancel) { renamingNotebook = nil }
         }
         .overlay(alignment: .top) {
             if showUniversalSearch {
@@ -327,22 +301,61 @@ struct MainWindowView: View {
             Section {
                 if notebooksExpanded {
                     ForEach(notebooks) { nb in
-                        NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
-                            Label(nb.name, systemImage: "folder")
+                        if renamingNotebookId == nb.id {
+                            InlineNameField(
+                                text: $inlineRenameName,
+                                placeholder: nb.name,
+                                systemImage: "folder"
+                            ) {
+                                let name = inlineRenameName.trimmingCharacters(in: .whitespaces)
+                                if !name.isEmpty {
+                                    var copy = nb
+                                    copy.name = name
+                                    try? NoteStore.shared.updateNotebook(copy)
+                                }
+                                renamingNotebookId = nil
+                            } onCancel: {
+                                renamingNotebookId = nil
+                            }
+                        } else {
+                            NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
+                                Label(nb.name, systemImage: "folder")
+                            }
+                            .contextMenu {
+                                Button {
+                                    renamingNotebookId = nb.id
+                                    inlineRenameName = nb.name
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+                                Divider()
+                                Button(role: .destructive) {
+                                    try? NoteStore.shared.deleteNotebook(id: nb.id)
+                                    if case .notes(.notebook(let id)) = selection, id == nb.id {
+                                        selection = .notes(.all)
+                                    }
+                                } label: {
+                                    Label("Delete Notebook", systemImage: "trash")
+                                }
+                            }
                         }
-                        .contextMenu {
-                            Button {
-                                renamingNotebook = nb
-                                renameText = nb.name
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
+                    }
+
+                    if isCreatingNotebook {
+                        InlineNameField(
+                            text: $notebookDraftName,
+                            placeholder: "New Notebook",
+                            systemImage: "folder"
+                        ) {
+                            let name = notebookDraftName.trimmingCharacters(in: .whitespaces)
+                            if !name.isEmpty {
+                                try? NoteStore.shared.createNotebook(name: name)
                             }
-                            Divider()
-                            Button(role: .destructive) {
-                                try? NoteStore.shared.deleteNotebook(id: nb.id)
-                            } label: {
-                                Label("Delete Notebook", systemImage: "trash")
-                            }
+                            isCreatingNotebook = false
+                            notebookDraftName = ""
+                        } onCancel: {
+                            isCreatingNotebook = false
+                            notebookDraftName = ""
                         }
                     }
                 }
@@ -351,8 +364,9 @@ struct MainWindowView: View {
                     CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
                     Spacer()
                     Button {
-                        showNewNotebookAlert = true
-                        newNotebookName = ""
+                        notebooksExpanded = true
+                        isCreatingNotebook = true
+                        notebookDraftName = ""
                     } label: {
                         Image(systemName: "plus.circle")
                             .frame(width: 22, height: 22)
@@ -767,5 +781,41 @@ struct ProjectSidebarRow: View {
     private var tint: Color {
         if let hex = project.color, let color = Color(hex: hex) { return color }
         return .secondary
+    }
+}
+
+// MARK: - Inline name field
+
+/// Inline editable text field for sidebar rows (notebook create / rename).
+/// Commits on Return, cancels on Escape.
+private struct InlineNameField: View {
+    @Binding var text: String
+    let placeholder: String
+    let systemImage: String
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: systemImage)
+                .imageScale(.small)
+                .foregroundStyle(Color.accentColor)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.body)
+                .focused($isFocused)
+                .onSubmit { onCommit() }
+                .onExitCommand { onCancel() }
+        }
+        .padding(.vertical, 2)
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.accentColor.opacity(0.10))
+                .padding(.horizontal, -4)
+        )
+        .onAppear { isFocused = true }
     }
 }
