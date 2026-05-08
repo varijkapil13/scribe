@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: transparent;
+    }
+    .diagram { margin-bottom: 24px; }
+    .diagram svg { max-width: 100%; height: auto; display: block; }
+    hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+    .error {
+      color: #c0392b;
+      font-size: 12px;
+      padding: 8px 12px;
+      background: #fdf2f2;
+      border-radius: 4px;
+      border-left: 3px solid #e74c3c;
+    }
+    #content { min-height: 100vh; }
+  </style>
+  <script type="module">
+    import { renderMermaidSVG } from './beautiful-mermaid.js';
+
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const bg = isDark ? '#1e1e1e' : '#ffffff';
+    const fg = isDark ? '#d4d4d4' : '#27272a';
+
+    // Expose globally so evaluateJavaScript (non-module context) can call it.
+    window.renderMermaid = function(source) {
+      try {
+        const svg = renderMermaidSVG(source, { bg: bg, fg: fg, transparent: true });
+        if (!svg) throw new Error('No SVG returned');
+        return JSON.stringify({ ok: true, svg: svg });
+      } catch (e) {
+        return JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    };
+
+    window.setContent = function(html) {
+      document.getElementById('content').innerHTML = html;
+    };
+
+    // Signal Swift that the module is ready.
+    window._bmReady = true;
+  </script>
+</head>
+<body>
+  <div id="content">
+    <p style="color: #999; font-size: 13px;">Rendering diagrams&#8230;</p>
+  </div>
+</body>
+</html>
