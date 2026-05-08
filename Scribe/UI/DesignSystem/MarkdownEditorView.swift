@@ -103,11 +103,20 @@ struct MarkdownEditorView: NSViewRepresentable {
         var parent: MarkdownEditorView
         weak var textView: MarkdownNSTextView?
 
+        /// Most recent registry produced by applyFormatting. Used by hover overlay and Edit button (Task 6).
+        var foldRegistry: [FoldEntry] = []
+
+        /// When set, applyFormatting uses this source-coord cursor target instead of reading
+        /// the current selection. Cleared after each apply.
+        var pendingCursorSourceOverride: Int? = nil
+
+        /// Set during applyFormatting to suppress recursive selection-change reformat (Task 5).
+        var isApplyingFormatting: Bool = false
+
         init(_ parent: MarkdownEditorView) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
-            parent.text = tv.string
             if let mtv = tv as? MarkdownNSTextView {
                 applyFormatting(to: mtv)
             }
@@ -123,7 +132,6 @@ struct MarkdownEditorView: NSViewRepresentable {
             storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: newText)
             storage.endEditing()
             tv.setSelectedRange(newSel)
-            parent.text = tv.string
             applyFormatting(to: tv)
         }
 
@@ -146,7 +154,6 @@ struct MarkdownEditorView: NSViewRepresentable {
             if !isURL {
                 tv.setSelectedRange(NSRange(location: sel.location + 2, length: 0))
             }
-            parent.text = tv.string
             applyFormatting(to: tv)
             if !isURL { detectWikiLinkTyping(in: tv) }
         }
@@ -176,7 +183,6 @@ struct MarkdownEditorView: NSViewRepresentable {
             storage.beginEditing()
             storage.replaceCharacters(in: blockRange, with: newBlock)
             storage.endEditing()
-            parent.text = tv.string
             applyFormatting(to: tv)
         }
 
@@ -213,7 +219,6 @@ struct MarkdownEditorView: NSViewRepresentable {
             storage.beginEditing()
             storage.replaceCharacters(in: blockRange, with: newBlock)
             storage.endEditing()
-            parent.text = tv.string
             applyFormatting(to: tv)
         }
 
@@ -241,7 +246,6 @@ struct MarkdownEditorView: NSViewRepresentable {
             let prefixLen = level == 0 ? 0 : level + 1
             let newCursor = min(lineRange.location + prefixLen, (tv.string as NSString).length)
             tv.setSelectedRange(NSRange(location: newCursor, length: 0))
-            parent.text = tv.string
             applyFormatting(to: tv)
         }
 
@@ -261,28 +265,101 @@ struct MarkdownEditorView: NSViewRepresentable {
 
         func applyFormatting(to tv: NSTextView) {
             guard let storage = tv.textStorage else { return }
-            let raw = tv.string
-            guard !raw.isEmpty else { return }
+            isApplyingFormatting = true
+            defer { isApplyingFormatting = false }
+
+            // 1. Decompose current display into source + old registry.
+            let (currentSource, oldRegistry) = FoldRegistry.decompose(storage)
+
+            // 2. Determine source-coord cursor target.
+            let cursorSource: Int
+            if let override = pendingCursorSourceOverride {
+                cursorSource = override
+                pendingCursorSourceOverride = nil
+            } else {
+                let displayLoc = tv.selectedRange().location
+                cursorSource = FoldRegistry.sourceLocation(forDisplay: displayLoc, registry: oldRegistry)
+            }
+
+            // 3. Push reconstructed source up to the binding.
+            if parent.text != currentSource {
+                parent.text = currentSource
+            }
+
+            guard !currentSource.isEmpty else {
+                tv.undoManager?.disableUndoRegistration()
+                storage.beginEditing()
+                storage.setAttributedString(NSAttributedString(string: ""))
+                storage.endEditing()
+                tv.undoManager?.enableUndoRegistration()
+                foldRegistry = []
+                return
+            }
+
+            // 4. Build base formatted attributed string from source.
             let font = tv.font ?? parent.font
-            let formatted = MarkdownFormatter.attributed(raw, font: font)
+            let formatted = MarkdownFormatter.attributed(currentSource, font: font)
             let mutable = NSMutableAttributedString(attributedString: formatted)
             parent.extraHighlighter?(mutable)
-            let saved = tv.selectedRanges
-            // Attribute-only pass — disable undo registration so formatting
-            // changes don't pollute the undo stack.
+
+            // 5. Decide per-fence whether to fold; substitute attachments in reverse order
+            //    so earlier nsRanges remain valid as we splice.
+            let blocks = DiagramRenderer.extractBlocks(from: currentSource)
+            let editorContentWidth = max(120, tv.bounds.width - tv.textContainerInset.width * 2)
+
+            struct Decision { let block: DiagramBlock; let fold: Bool; let image: NSImage?; let id: UUID }
+            var decisions: [Decision] = []
+            for block in blocks {
+                let inside = (cursorSource >= block.nsRange.location)
+                            && (cursorSource <= block.nsRange.location + block.nsRange.length)
+                if inside {
+                    decisions.append(Decision(block: block, fold: false, image: nil, id: UUID()))
+                    continue
+                }
+                let coord = self
+                let img = DiagramRenderer.shared.image(type: block.type, source: block.source) { [weak coord] in
+                    guard let coord, let tv = coord.textView else { return }
+                    coord.applyFormatting(to: tv)
+                }
+                if let img {
+                    decisions.append(Decision(block: block, fold: true, image: img, id: UUID()))
+                } else {
+                    // Render not ready (or failed) — leave source visible.
+                    decisions.append(Decision(block: block, fold: false, image: nil, id: UUID()))
+                }
+            }
+
+            for decision in decisions.reversed() where decision.fold {
+                guard let img = decision.image else { continue }
+                let attachment = NSTextAttachment()
+                attachment.image = img
+                let natural = img.size
+                let scale = (natural.width > 0) ? min(1.0, editorContentWidth / natural.width) : 1.0
+                attachment.bounds = NSRect(x: 0, y: 0,
+                                           width: natural.width * scale,
+                                           height: natural.height * scale)
+
+                let attString = NSMutableAttributedString(attachment: attachment)
+                let r = NSRange(location: 0, length: attString.length)
+                attString.addAttribute(.foldSource, value: decision.block.fullText, range: r)
+                attString.addAttribute(.foldId, value: decision.id, range: r)
+
+                mutable.replaceCharacters(in: decision.block.nsRange, with: attString)
+            }
+
+            let (_, newRegistry) = FoldRegistry.decompose(mutable)
+            foldRegistry = newRegistry
+
+            // 6. Apply to storage; restore selection mapped through new registry.
             tv.undoManager?.disableUndoRegistration()
             storage.beginEditing()
             storage.setAttributedString(mutable)
             storage.endEditing()
             tv.undoManager?.enableUndoRegistration()
             let len = storage.length
-            tv.selectedRanges = saved.map { v in
-                let r = v.rangeValue
-                return NSValue(range: NSRange(
-                    location: min(r.location, len),
-                    length: min(r.length, max(0, len - r.location))
-                ))
-            }
+            let newDisplay = FoldRegistry.displayLocation(forSource: cursorSource, registry: newRegistry)
+            let clamped = max(0, min(newDisplay, len))
+            tv.setSelectedRange(NSRange(location: clamped, length: 0))
             (tv as? MarkdownNSTextView)?.needsDisplay = true
         }
     }
@@ -427,7 +504,6 @@ final class MarkdownNSTextView: NSTextView {
                 super.insertNewline(sender)
                 insertText("> ", replacementRange: selectedRange())
             }
-            coord.parent.text = string
             coord.applyFormatting(to: self)
             return
         }
@@ -443,7 +519,6 @@ final class MarkdownNSTextView: NSTextView {
                 let next = Self.nextListPrefix(from: prefix)
                 insertText(next, replacementRange: selectedRange())
             }
-            coord.parent.text = string
             coord.applyFormatting(to: self)
             return
         }
@@ -464,12 +539,10 @@ final class MarkdownNSTextView: NSTextView {
             textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "  ")
             textStorage?.endEditing()
             setSelectedRange(NSRange(location: sel.location + 2, length: sel.length))
-            coord.parent.text = string
             coord.applyFormatting(to: self)
             return
         }
         insertText("  ", replacementRange: sel)
-        coord.parent.text = string
         coord.applyFormatting(to: self)
     }
 
@@ -487,7 +560,6 @@ final class MarkdownNSTextView: NSTextView {
             textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: strip), with: "")
             textStorage?.endEditing()
             setSelectedRange(NSRange(location: max(lineRange.location, sel.location - strip), length: sel.length))
-            coord.parent.text = string
             coord.applyFormatting(to: self)
             return
         }
