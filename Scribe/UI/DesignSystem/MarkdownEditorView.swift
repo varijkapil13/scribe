@@ -373,3 +373,48 @@ private extension String {
             .map { $0.firstMatch(in: self, range: NSRange(startIndex..., in: self)) != nil } ?? false
     }
 }
+
+// MARK: - Inline marker toggle (pure function — testable without AppKit)
+
+enum InlineMarkerEditor {
+
+    static func toggle(
+        in text: String,
+        selection: NSRange,
+        marker: String
+    ) -> (text: String, selection: NSRange) {
+        let ns = text as NSString
+        let mlen = marker.utf16.count
+
+        if selection.length == 0 {
+            let inserted = marker + marker
+            let newText = ns.replacingCharacters(in: selection, with: inserted)
+            let cursor = NSRange(location: selection.location + mlen, length: 0)
+            return (newText, cursor)
+        }
+
+        let selected = ns.substring(with: selection)
+
+        if selected.hasPrefix(marker) && selected.hasSuffix(marker) && selected.utf16.count > mlen * 2 {
+            let inner = String(selected.dropFirst(marker.count).dropLast(marker.count))
+            let newText = ns.replacingCharacters(in: selection, with: inner)
+            return (newText, NSRange(location: selection.location, length: inner.utf16.count))
+        }
+
+        let beforeLoc = selection.location - mlen
+        let afterLoc = selection.location + selection.length
+        if beforeLoc >= 0 && afterLoc + mlen <= ns.length {
+            let before = ns.substring(with: NSRange(location: beforeLoc, length: mlen))
+            let after  = ns.substring(with: NSRange(location: afterLoc, length: mlen))
+            if before == marker && after == marker {
+                let expandedRange = NSRange(location: beforeLoc, length: selection.length + mlen * 2)
+                let newText = ns.replacingCharacters(in: expandedRange, with: selected)
+                return (newText, NSRange(location: beforeLoc, length: selected.utf16.count))
+            }
+        }
+
+        let wrapped = marker + selected + marker
+        let newText = ns.replacingCharacters(in: selection, with: wrapped)
+        return (newText, NSRange(location: selection.location, length: wrapped.utf16.count))
+    }
+}
