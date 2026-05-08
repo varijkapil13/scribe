@@ -188,37 +188,12 @@ final class DiagramRenderer: NSObject {
         log.debug("bootstrap: starting WKWebView")
         let frame = NSRect(x: 0, y: 0, width: 800, height: 600)
 
-        // Inject beautiful-mermaid.js as a user script at document start. Loading it via
-        // <script src="./beautiful-mermaid.js"> against a file:// URL is unreliable on a
-        // headless WKWebView — the user script path bypasses the file loader entirely.
-        // We wrap the bundle with start/end markers + an onerror handler so the inline
-        // wrapper in diagram-renderer.html can report exactly where it stopped.
-        let config = WKWebViewConfiguration()
-        if let jsURL = Bundle.main.url(forResource: "beautiful-mermaid", withExtension: "js"),
-           let jsSource = try? String(contentsOf: jsURL, encoding: .utf8) {
-            let wrapped = """
-            window._userScriptStart = true;
-            try {
-              window.addEventListener('error', function(e) {
-                window._userScriptError = (e.error && e.error.message) ? e.error.message : (e.message || String(e));
-                window._userScriptErrorLine = e.lineno || -1;
-              });
-            } catch (e) { window._userScriptListenerError = String(e); }
-            \(jsSource)
-            window._userScriptEnd = true;
-            """
-            let userScript = WKUserScript(
-                source: wrapped,
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
-            )
-            config.userContentController.addUserScript(userScript)
-            log.debug("bootstrap: injected beautiful-mermaid.js as user script (\(jsSource.count) chars)")
-        } else {
-            log.error("bootstrap: beautiful-mermaid.js missing from bundle — Mermaid will fail")
-        }
-
-        let wv = WKWebView(frame: frame, configuration: config)
+        // We previously tried `WKUserScript(injectionTime: .atDocumentStart)` to inject the
+        // mermaid bundle, but on a headless WKWebView the user script silently fails to
+        // run (`scriptStart` never goes true). Instead, the bundle is injected via
+        // `evaluateJavaScript` from `didFinish` (see WKNavigationDelegate below) — that
+        // path is well-exercised because we use it for the render call itself.
+        let wv = WKWebView(frame: frame)
         wv.navigationDelegate = self
         webView = wv
 
@@ -282,7 +257,9 @@ final class DiagramRenderer: NSObject {
 extension DiagramRenderer: WKNavigationDelegate {
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
-            log.debug("bootstrap: didFinish — webView ready")
+            log.debug("bootstrap: didFinish — injecting mermaid bundle via evaluateJavaScript")
+            await self.injectMermaidBundle(into: webView)
+            log.debug("bootstrap: bundle injected — webView ready")
             self.webViewReady = true
             self.drainBootstrapWaiters()
         }
@@ -301,6 +278,26 @@ extension DiagramRenderer: WKNavigationDelegate {
             log.error("bootstrap: didFailProvisionalNavigation — \(error.localizedDescription, privacy: .public)")
             self.webViewReady = true
             self.drainBootstrapWaiters()
+        }
+    }
+
+    @MainActor
+    private func injectMermaidBundle(into webView: WKWebView) async {
+        guard let jsURL = Bundle.main.url(forResource: "beautiful-mermaid", withExtension: "js"),
+              let jsSource = try? String(contentsOf: jsURL, encoding: .utf8) else {
+            log.error("inject: beautiful-mermaid.js missing from bundle")
+            return
+        }
+        log.debug("inject: evaluating bundle (\(jsSource.count) chars)")
+        let errDesc: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            webView.evaluateJavaScript(jsSource) { _, error in
+                continuation.resume(returning: error?.localizedDescription)
+            }
+        }
+        if let errDesc {
+            log.error("inject: bundle evaluation threw: \(errDesc, privacy: .public)")
+        } else {
+            log.debug("inject: bundle evaluation succeeded")
         }
     }
 }
