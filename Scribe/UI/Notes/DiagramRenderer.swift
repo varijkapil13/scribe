@@ -118,7 +118,7 @@ final class DiagramRenderer: NSObject {
             log.error("mermaid: webView is nil after bootstrap")
             return nil
         }
-        let js = "renderMermaid(\(jsonString(source)))"
+        let js = "__scribeRender(\(jsonString(source)))"
         let outcome: (json: String?, errorDesc: String?) = await withCheckedContinuation { (continuation: CheckedContinuation<(String?, String?), Never>) in
             wv.evaluateJavaScript(js) { result, error in
                 continuation.resume(returning: (result as? String, error?.localizedDescription))
@@ -289,8 +289,13 @@ extension DiagramRenderer: WKNavigationDelegate {
             return
         }
         log.debug("inject: evaluating bundle (\(jsSource.count) chars)")
+        // The bundle ends with assignment expressions whose result values are
+        // functions; `evaluateJavaScript` can't bridge a function back to Swift and
+        // fails with "unsupported result type" even though the script ran cleanly.
+        // Append a trailing `null` so the last expression is bridgeable.
+        let evalScript = jsSource + "\nnull;"
         let errDesc: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-            webView.evaluateJavaScript(jsSource) { _, error in
+            webView.evaluateJavaScript(evalScript) { _, error in
                 continuation.resume(returning: error?.localizedDescription)
             }
         }

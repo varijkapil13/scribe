@@ -32,7 +32,10 @@
     const bg = isDark ? '#1e1e1e' : '#ffffff';
     const fg = isDark ? '#d4d4d4' : '#27272a';
 
-    window.renderMermaid = function(source) {
+    // The bundled mermaid script declares `var renderMermaid = renderMermaidSVGAsync;`
+    // at top level, which (in a classic script) attaches to window and would overwrite
+    // any wrapper we install on `window.renderMermaid`. Use a non-colliding name.
+    window.__scribeRender = function(source) {
       try {
         const fn = (typeof window.renderMermaidSVG === 'function')
             ? window.renderMermaidSVG
