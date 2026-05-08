@@ -80,8 +80,13 @@ struct MarkdownEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let tv = scrollView.documentView as? MarkdownNSTextView else { return }
         context.coordinator.parent = self
-        let live = tv.string
-        if live != text {
+        let liveSource: String
+        if let storage = tv.textStorage {
+            liveSource = FoldRegistry.decompose(storage).source
+        } else {
+            liveSource = tv.string
+        }
+        if liveSource != text {
             if text.isEmpty {
                 tv.textStorage?.beginEditing()
                 tv.textStorage?.setAttributedString(NSAttributedString(string: ""))
@@ -106,9 +111,9 @@ struct MarkdownEditorView: NSViewRepresentable {
         /// Most recent registry produced by applyFormatting. Used by hover overlay and Edit button (Task 6).
         var foldRegistry: [FoldEntry] = []
 
-        /// When set, applyFormatting uses this source-coord cursor target instead of reading
-        /// the current selection. Cleared after each apply.
-        var pendingCursorSourceOverride: Int? = nil
+        /// When set, applyFormatting uses this source-coord selection instead of reading
+        /// the current display selection. Cleared after each apply.
+        var pendingSourceSelectionOverride: NSRange? = nil
 
         /// Set during applyFormatting to suppress recursive selection-change reformat (Task 5).
         var isApplyingFormatting: Bool = false
@@ -124,128 +129,140 @@ struct MarkdownEditorView: NSViewRepresentable {
         }
 
         func applyMarker(_ marker: String) {
-            guard let tv = textView else { return }
-            let sel = tv.selectedRange()
-            let (newText, newSel) = InlineMarkerEditor.toggle(in: tv.string, selection: sel, marker: marker)
-            guard let storage = tv.textStorage else { return }
-            storage.beginEditing()
-            storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: newText)
-            storage.endEditing()
-            tv.setSelectedRange(newSel)
-            applyFormatting(to: tv)
+            editSource { source, sel in
+                let (newText, newSel) = InlineMarkerEditor.toggle(in: source, selection: sel, marker: marker)
+                return (newText, newSel)
+            }
         }
 
         func applyLinkFormat() {
-            guard let tv = textView else { return }
-            let sel = tv.selectedRange()
-            let selectedText = (tv.string as NSString).substring(with: sel)
-            let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
-            let isURL = URL(string: clipboard)?.scheme?.hasPrefix("http") == true
+            var afterEditWasNonURL = false
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let selectedText = sel.length > 0 ? nsSource.substring(with: sel) : ""
+                let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
+                let isURL = URL(string: clipboard)?.scheme?.hasPrefix("http") == true
+                afterEditWasNonURL = !isURL
 
-            let replacement = isURL
-                ? "[\(selectedText.isEmpty ? "link" : selectedText)](\(clipboard))"
-                : "[["
+                let replacement = isURL
+                    ? "[\(selectedText.isEmpty ? "link" : selectedText)](\(clipboard))"
+                    : "[["
 
-            guard let storage = tv.textStorage else { return }
-            storage.beginEditing()
-            storage.replaceCharacters(in: sel, with: replacement)
-            storage.endEditing()
-
-            if !isURL {
-                tv.setSelectedRange(NSRange(location: sel.location + 2, length: 0))
+                let newSource = nsSource.replacingCharacters(in: sel, with: replacement)
+                let newSel: NSRange
+                if isURL {
+                    let len = (replacement as NSString).length
+                    newSel = NSRange(location: sel.location + len, length: 0)
+                } else {
+                    newSel = NSRange(location: sel.location + 2, length: 0)
+                }
+                return (newSource, newSel)
             }
-            applyFormatting(to: tv)
-            if !isURL { detectWikiLinkTyping(in: tv) }
+            if afterEditWasNonURL, let tv = textView {
+                detectWikiLinkTyping(in: tv)
+            }
         }
 
         /// Toggles a line-level prefix (e.g. "- " or "> ") on all selected lines.
         func applyLinePrefix(_ prefix: String) {
-            guard let tv = textView else { return }
-            let nsText = tv.string as NSString
-            let sel = tv.selectedRange()
-            let startLine = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
-            let endLoc = max(sel.location, sel.location + sel.length - 1)
-            let endLine = nsText.lineRange(for: NSRange(location: min(endLoc, max(0, nsText.length - 1)), length: 0))
-            let blockRange = NSRange(location: startLine.location,
-                                     length: endLine.location + endLine.length - startLine.location)
-            let block = nsText.substring(with: blockRange)
-            var lines = block.components(separatedBy: "\n")
-            if lines.last == "" { lines.removeLast() }
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let startLine = nsSource.lineRange(for: NSRange(location: sel.location, length: 0))
+                let endLoc = max(sel.location, sel.location + sel.length - 1)
+                let endAnchor = min(endLoc, max(0, nsSource.length - 1))
+                let endLine = nsSource.lineRange(for: NSRange(location: endAnchor, length: 0))
+                let blockRange = NSRange(location: startLine.location,
+                                         length: endLine.location + endLine.length - startLine.location)
+                let block = nsSource.substring(with: blockRange)
+                var lines = block.components(separatedBy: "\n")
+                if lines.last == "" { lines.removeLast() }
 
-            let allHave = lines.allSatisfy { $0.hasPrefix(prefix) }
-            let newLines = lines.map { line -> String in
-                if allHave { return line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : line }
-                return line.hasPrefix(prefix) ? line : prefix + line
+                let allHave = lines.allSatisfy { $0.hasPrefix(prefix) }
+                let newLines = lines.map { line -> String in
+                    if allHave { return line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : line }
+                    return line.hasPrefix(prefix) ? line : prefix + line
+                }
+                let newBlock = newLines.joined(separator: "\n") + "\n"
+                let newSource = nsSource.replacingCharacters(in: blockRange, with: newBlock)
+                // Place cursor at end of edited block to preserve approximate position.
+                let newCursor = blockRange.location + (newBlock as NSString).length
+                return (newSource, NSRange(location: min(newCursor, (newSource as NSString).length), length: 0))
             }
-            let newBlock = newLines.joined(separator: "\n") + "\n"
-
-            guard let storage = tv.textStorage else { return }
-            storage.beginEditing()
-            storage.replaceCharacters(in: blockRange, with: newBlock)
-            storage.endEditing()
-            applyFormatting(to: tv)
         }
 
         func applyOrderedList() {
-            guard let tv = textView else { return }
-            let nsText = tv.string as NSString
-            let sel = tv.selectedRange()
-            let startLine = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
-            let endLoc = max(sel.location, sel.location + sel.length - 1)
-            let endLine = nsText.lineRange(for: NSRange(location: min(endLoc, max(0, nsText.length - 1)), length: 0))
-            let blockRange = NSRange(location: startLine.location,
-                                     length: endLine.location + endLine.length - startLine.location)
-            let block = nsText.substring(with: blockRange)
-            var lines = block.components(separatedBy: "\n")
-            if lines.last == "" { lines.removeLast() }
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let startLine = nsSource.lineRange(for: NSRange(location: sel.location, length: 0))
+                let endLoc = max(sel.location, sel.location + sel.length - 1)
+                let endAnchor = min(endLoc, max(0, nsSource.length - 1))
+                let endLine = nsSource.lineRange(for: NSRange(location: endAnchor, length: 0))
+                let blockRange = NSRange(location: startLine.location,
+                                         length: endLine.location + endLine.length - startLine.location)
+                let block = nsSource.substring(with: blockRange)
+                var lines = block.components(separatedBy: "\n")
+                if lines.last == "" { lines.removeLast() }
 
-            let olPattern = #"^\s*\d+\. "#
-            let allHave = lines.allSatisfy { $0.range(of: olPattern, options: .regularExpression) != nil }
-            let newLines: [String]
-            if allHave {
-                newLines = lines.map { line -> String in
-                    if let r = line.range(of: olPattern, options: .regularExpression) { return String(line[r.upperBound...]) }
-                    return line
+                let olPattern = #"^\s*\d+\. "#
+                let allHave = lines.allSatisfy { $0.range(of: olPattern, options: .regularExpression) != nil }
+                let newLines: [String]
+                if allHave {
+                    newLines = lines.map { line -> String in
+                        if let r = line.range(of: olPattern, options: .regularExpression) { return String(line[r.upperBound...]) }
+                        return line
+                    }
+                } else {
+                    newLines = lines.enumerated().map { i, line -> String in
+                        if line.range(of: olPattern, options: .regularExpression) != nil { return line }
+                        return "\(i + 1). \(line)"
+                    }
                 }
-            } else {
-                newLines = lines.enumerated().map { i, line -> String in
-                    if line.range(of: olPattern, options: .regularExpression) != nil { return line }
-                    return "\(i + 1). \(line)"
-                }
+                let newBlock = newLines.joined(separator: "\n") + "\n"
+                let newSource = nsSource.replacingCharacters(in: blockRange, with: newBlock)
+                let newCursor = blockRange.location + (newBlock as NSString).length
+                return (newSource, NSRange(location: min(newCursor, (newSource as NSString).length), length: 0))
             }
-            let newBlock = newLines.joined(separator: "\n") + "\n"
-
-            guard let storage = tv.textStorage else { return }
-            storage.beginEditing()
-            storage.replaceCharacters(in: blockRange, with: newBlock)
-            storage.endEditing()
-            applyFormatting(to: tv)
         }
 
         func setHeading(_ level: Int) {
-            guard let tv = textView else { return }
-            let nsText = tv.string as NSString
-            let cursorLoc = tv.selectedRange().location
-            let lineRange = nsText.lineRange(for: NSRange(location: min(cursorLoc, nsText.length), length: 0))
-            let line = nsText.substring(with: lineRange)
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let cursorLoc = sel.location
+                let lineRange = nsSource.lineRange(for: NSRange(location: min(cursorLoc, nsSource.length), length: 0))
+                let line = nsSource.substring(with: lineRange)
 
-            let stripped: String
-            if let match = line.range(of: #"^#{1,6} "#, options: .regularExpression) {
-                stripped = String(line[match.upperBound...])
-            } else {
-                stripped = line
+                let stripped: String
+                if let match = line.range(of: #"^#{1,6} "#, options: .regularExpression) {
+                    stripped = String(line[match.upperBound...])
+                } else {
+                    stripped = line
+                }
+                let newLine = level == 0 ? stripped : String(repeating: "#", count: level) + " " + stripped
+                let newSource = nsSource.replacingCharacters(in: lineRange, with: newLine)
+
+                let prefixLen = level == 0 ? 0 : level + 1
+                let newCursor = min(lineRange.location + prefixLen, (newSource as NSString).length)
+                return (newSource, NSRange(location: newCursor, length: 0))
             }
+        }
 
-            let newLine = level == 0 ? stripped : String(repeating: "#", count: level) + " " + stripped
+        /// Edits the markdown source. The closure receives current source + source-coord selection
+        /// and returns the new source + new source-coord selection. The helper decomposes storage,
+        /// translates the display selection to source coords, runs the closure, resets storage to
+        /// the new source (which clears any fold attachments — applyFormatting re-folds), and
+        /// restores the new selection through the rebuilt registry.
+        func editSource(_ edit: (String, NSRange) -> (newSource: String, newSelection: NSRange)) {
+            guard let tv = textView, let storage = tv.textStorage else { return }
+            let (currentSource, oldRegistry) = FoldRegistry.decompose(storage)
+            let displaySel = tv.selectedRange()
+            let s = FoldRegistry.sourceLocation(forDisplay: displaySel.location, registry: oldRegistry)
+            let e = FoldRegistry.sourceLocation(forDisplay: displaySel.location + displaySel.length, registry: oldRegistry)
+            let sourceSel = NSRange(location: s, length: max(0, e - s))
 
-            guard let storage = tv.textStorage else { return }
-            storage.beginEditing()
-            storage.replaceCharacters(in: lineRange, with: newLine)
-            storage.endEditing()
+            let (newSource, newSourceSel) = edit(currentSource, sourceSel)
 
-            let prefixLen = level == 0 ? 0 : level + 1
-            let newCursor = min(lineRange.location + prefixLen, (tv.string as NSString).length)
-            tv.setSelectedRange(NSRange(location: newCursor, length: 0))
+            tv.string = newSource
+            pendingSourceSelectionOverride = newSourceSel
             applyFormatting(to: tv)
         }
 
@@ -271,14 +288,16 @@ struct MarkdownEditorView: NSViewRepresentable {
             // 1. Decompose current display into source + old registry.
             let (currentSource, oldRegistry) = FoldRegistry.decompose(storage)
 
-            // 2. Determine source-coord cursor target.
-            let cursorSource: Int
-            if let override = pendingCursorSourceOverride {
-                cursorSource = override
-                pendingCursorSourceOverride = nil
+            // 2. Determine source-coord selection (start + end) round-trip target.
+            let sourceSel: NSRange
+            if let override = pendingSourceSelectionOverride {
+                sourceSel = override
+                pendingSourceSelectionOverride = nil
             } else {
-                let displayLoc = tv.selectedRange().location
-                cursorSource = FoldRegistry.sourceLocation(forDisplay: displayLoc, registry: oldRegistry)
+                let displaySel = tv.selectedRange()
+                let s = FoldRegistry.sourceLocation(forDisplay: displaySel.location, registry: oldRegistry)
+                let e = FoldRegistry.sourceLocation(forDisplay: displaySel.location + displaySel.length, registry: oldRegistry)
+                sourceSel = NSRange(location: s, length: max(0, e - s))
             }
 
             // 3. Push reconstructed source up to the binding.
@@ -310,8 +329,15 @@ struct MarkdownEditorView: NSViewRepresentable {
             struct Decision { let block: DiagramBlock; let fold: Bool; let image: NSImage?; let id: UUID }
             var decisions: [Decision] = []
             for block in blocks {
-                let inside = (cursorSource >= block.nsRange.location)
-                            && (cursorSource <= block.nsRange.location + block.nsRange.length)
+                let blockStart = block.nsRange.location
+                let blockEnd = blockStart + block.nsRange.length
+                let inside: Bool
+                if sourceSel.length == 0 {
+                    inside = (sourceSel.location >= blockStart && sourceSel.location <= blockEnd)
+                } else {
+                    let selEnd = sourceSel.location + sourceSel.length
+                    inside = sourceSel.location <= blockEnd && selEnd >= blockStart
+                }
                 if inside {
                     decisions.append(Decision(block: block, fold: false, image: nil, id: UUID()))
                     continue
@@ -357,9 +383,11 @@ struct MarkdownEditorView: NSViewRepresentable {
             storage.endEditing()
             tv.undoManager?.enableUndoRegistration()
             let len = storage.length
-            let newDisplay = FoldRegistry.displayLocation(forSource: cursorSource, registry: newRegistry)
-            let clamped = max(0, min(newDisplay, len))
-            tv.setSelectedRange(NSRange(location: clamped, length: 0))
+            let dispStart = FoldRegistry.displayLocation(forSource: sourceSel.location, registry: newRegistry)
+            let dispEnd = FoldRegistry.displayLocation(forSource: sourceSel.location + sourceSel.length, registry: newRegistry)
+            let cs = max(0, min(dispStart, len))
+            let ce = max(cs, min(dispEnd, len))
+            tv.setSelectedRange(NSRange(location: cs, length: ce - cs))
             (tv as? MarkdownNSTextView)?.needsDisplay = true
         }
     }
@@ -488,82 +516,83 @@ final class MarkdownNSTextView: NSTextView {
             super.insertNewline(sender)
             return
         }
-        let nsText = string as NSString
-        let sel = selectedRange()
-        let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
-        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+        coord.editSource { source, sel in
+            let nsSource = source as NSString
+            let lineRange = nsSource.lineRange(for: NSRange(location: sel.location, length: 0))
+            let line = nsSource.substring(with: lineRange).trimmingCharacters(in: .newlines)
 
-        if line.hasPrefix("> ") {
-            let content = String(line.dropFirst(2))
-            if content.isEmpty {
-                textStorage?.beginEditing()
-                textStorage?.replaceCharacters(in: lineRange, with: "\n")
-                textStorage?.endEditing()
-                setSelectedRange(NSRange(location: lineRange.location + 1, length: 0))
-            } else {
-                super.insertNewline(sender)
-                insertText("> ", replacementRange: selectedRange())
+            // Blockquote continuation
+            if line.hasPrefix("> ") {
+                let content = String(line.dropFirst(2))
+                if content.isEmpty {
+                    let newSource = nsSource.replacingCharacters(in: lineRange, with: "\n")
+                    return (newSource, NSRange(location: lineRange.location + 1, length: 0))
+                }
+                let insertion = "\n> "
+                let cursor = sel.location
+                let newSource = nsSource.replacingCharacters(in: NSRange(location: cursor, length: 0), with: insertion)
+                return (newSource, NSRange(location: cursor + (insertion as NSString).length, length: 0))
             }
-            coord.applyFormatting(to: self)
-            return
-        }
 
-        if let prefix = Self.listPrefix(from: line) {
-            if line == prefix {
-                textStorage?.beginEditing()
-                textStorage?.replaceCharacters(in: lineRange, with: "\n")
-                textStorage?.endEditing()
-                setSelectedRange(NSRange(location: lineRange.location + 1, length: 0))
-            } else {
-                super.insertNewline(sender)
+            // List continuation
+            if let prefix = Self.listPrefix(from: line) {
+                if line == prefix {
+                    let newSource = nsSource.replacingCharacters(in: lineRange, with: "\n")
+                    return (newSource, NSRange(location: lineRange.location + 1, length: 0))
+                }
                 let next = Self.nextListPrefix(from: prefix)
-                insertText(next, replacementRange: selectedRange())
+                let insertion = "\n" + next
+                let cursor = sel.location
+                let newSource = nsSource.replacingCharacters(in: NSRange(location: cursor, length: 0), with: insertion)
+                return (newSource, NSRange(location: cursor + (insertion as NSString).length, length: 0))
             }
-            coord.applyFormatting(to: self)
-            return
-        }
 
-        super.insertNewline(sender)
+            // Plain newline
+            let cursor = sel.location
+            let newSource = nsSource.replacingCharacters(in: NSRange(location: cursor, length: 0), with: "\n")
+            return (newSource, NSRange(location: cursor + 1, length: 0))
+        }
     }
 
     override func insertTab(_ sender: Any?) {
         guard let coord = delegate as? MarkdownEditorView.Coordinator else {
             super.insertTab(sender); return
         }
-        let nsText = string as NSString
-        let sel = selectedRange()
-        let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
-        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
-        if Self.listPrefix(from: line) != nil {
-            textStorage?.beginEditing()
-            textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "  ")
-            textStorage?.endEditing()
-            setSelectedRange(NSRange(location: sel.location + 2, length: sel.length))
-            coord.applyFormatting(to: self)
-            return
+        coord.editSource { source, sel in
+            let nsSource = source as NSString
+            let lineRange = nsSource.lineRange(for: NSRange(location: sel.location, length: 0))
+            let line = nsSource.substring(with: lineRange).trimmingCharacters(in: .newlines)
+            if Self.listPrefix(from: line) != nil {
+                let newSource = nsSource.replacingCharacters(in: NSRange(location: lineRange.location, length: 0), with: "  ")
+                return (newSource, NSRange(location: sel.location + 2, length: sel.length))
+            }
+            let newSource = nsSource.replacingCharacters(in: sel, with: "  ")
+            return (newSource, NSRange(location: sel.location + 2, length: 0))
         }
-        insertText("  ", replacementRange: sel)
-        coord.applyFormatting(to: self)
     }
 
     override func insertBacktab(_ sender: Any?) {
         guard let coord = delegate as? MarkdownEditorView.Coordinator else {
             super.insertBacktab(sender); return
         }
-        let nsText = string as NSString
-        let sel = selectedRange()
-        let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
-        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
-        if Self.listPrefix(from: line) != nil && (line.hasPrefix("  ") || line.hasPrefix("\t")) {
-            let strip = line.hasPrefix("\t") ? 1 : 2
-            textStorage?.beginEditing()
-            textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: strip), with: "")
-            textStorage?.endEditing()
-            setSelectedRange(NSRange(location: max(lineRange.location, sel.location - strip), length: sel.length))
-            coord.applyFormatting(to: self)
-            return
+        var didStrip = false
+        coord.editSource { source, sel in
+            let nsSource = source as NSString
+            let lineRange = nsSource.lineRange(for: NSRange(location: sel.location, length: 0))
+            let line = nsSource.substring(with: lineRange).trimmingCharacters(in: .newlines)
+            if Self.listPrefix(from: line) != nil && (line.hasPrefix("  ") || line.hasPrefix("\t")) {
+                let strip = line.hasPrefix("\t") ? 1 : 2
+                let stripRange = NSRange(location: lineRange.location, length: strip)
+                let newSource = nsSource.replacingCharacters(in: stripRange, with: "")
+                didStrip = true
+                let newCursor = max(lineRange.location, sel.location - strip)
+                return (newSource, NSRange(location: newCursor, length: max(0, sel.length)))
+            }
+            return (source, sel) // no change — fall through to super
         }
-        super.insertBacktab(sender)
+        if !didStrip {
+            super.insertBacktab(sender)
+        }
     }
 
     static func listPrefix(from line: String) -> String? {
