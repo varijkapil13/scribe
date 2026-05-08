@@ -23,17 +23,15 @@
     }
     #content { min-height: 100vh; }
   </style>
-  <script type="module">
-    import { renderMermaidSVG } from './beautiful-mermaid.js';
-
+  <script src="./beautiful-mermaid.js"></script>
+  <script>
     const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const bg = isDark ? '#1e1e1e' : '#ffffff';
     const fg = isDark ? '#d4d4d4' : '#27272a';
 
-    // Expose globally so evaluateJavaScript (non-module context) can call it.
     window.renderMermaid = function(source) {
       try {
-        const svg = renderMermaidSVG(source, { bg: bg, fg: fg, transparent: true });
+        const svg = window.renderMermaidSVG(source, { bg: bg, fg: fg, transparent: true });
         if (!svg) throw new Error('No SVG returned');
         return JSON.stringify({ ok: true, svg: svg });
       } catch (e) {
@@ -45,7 +43,6 @@
       document.getElementById('content').innerHTML = html;
     };
 
-    // Signal Swift that the module is ready.
     window._bmReady = true;
   </script>
 </head>

@@ -9281,15 +9281,6 @@ async function renderMermaidSVGAsync(text, options = {}) {
 }
 var renderMermaidSync = renderMermaidSVG;
 var renderMermaid = renderMermaidSVGAsync;
-export {
-  DEFAULTS,
-  THEMES,
-  fromShikiTheme,
-  parseMermaid,
-  renderMermaid,
-  renderMermaidASCII,
-  renderMermaidAscii,
-  renderMermaidSVG,
-  renderMermaidSVGAsync,
-  renderMermaidSync
-};
+// Expose globals for WKWebView (no ES module support on file:// URLs)
+window.renderMermaidSVG = renderMermaidSVG;
+window.renderMermaidSync = renderMermaidSync;
