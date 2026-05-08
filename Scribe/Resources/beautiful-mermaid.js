@@ -5888,7 +5888,19 @@ function renderMermaidASCII(text, options = {}) {
 var renderMermaidAscii = renderMermaidASCII;
 
 // src/index.ts
-import { decodeXML } from "entities";
+// Inline polyfill for `entities`'s decodeXML — original ESM import doesn't parse
+// in a classic-script context (WKWebView evaluateJavaScript / <script> tag).
+function decodeXML(s) {
+  if (typeof s !== 'string') return s;
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, function(_, n) { return String.fromCharCode(parseInt(n, 10)); })
+    .replace(/&#x([0-9a-fA-F]+);/g, function(_, n) { return String.fromCharCode(parseInt(n, 16)); });
+}
 
 // src/styles.ts
 function estimateTextWidth(text, fontSize, fontWeight) {
@@ -5933,7 +5945,13 @@ var ARROW_HEAD = {
 };
 
 // src/elk-instance.ts
-import ELKBundled from "elkjs/lib/elk.bundled.js";
+// ELK (Eclipse Layout Kernel) is used for advanced async layouts; we stub it
+// because `elkjs` couldn't be inlined in this bundle. Sync diagram paths
+// (flowchart, sequence, class, ER, xychart) don't need it. If anything calls
+// `new ELKBundled()`, it throws with a clear message.
+function ELKBundled() {
+  throw new Error('ELK layout unavailable in offline build — use sync diagram types');
+}
 var elk = null;
 var rawWorker = null;
 function ensureElk() {
