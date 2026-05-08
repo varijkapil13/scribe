@@ -34,7 +34,7 @@ struct DiagramPreviewPanel: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var webView: WKWebView?
         var pendingPublisher: AnyPublisher<String, Never>?
-        private var renderer = DiagramRenderer()
+        private var renderer = DiagramRenderer.shared
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard let publisher = pendingPublisher else { return }

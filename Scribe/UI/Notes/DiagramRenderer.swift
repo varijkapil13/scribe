@@ -1,6 +1,8 @@
 // Scribe/UI/Notes/DiagramRenderer.swift
+import AppKit
 import Foundation
 import Combine
+import CryptoKit
 import WebKit
 
 enum DiagramType: Equatable {
@@ -11,108 +13,173 @@ enum DiagramType: Equatable {
 struct DiagramBlock: Equatable {
     let type: DiagramType
     let source: String
+    /// Full fence text including ```fence``` markers, used for fold replacement.
+    let fullText: String
+    /// Range of `fullText` within the original body string (UTF-16 indices, NSRange-compatible).
+    let nsRange: NSRange
 }
 
 @MainActor
-final class DiagramRenderer: ObservableObject {
+final class DiagramRenderer: NSObject, ObservableObject {
 
-    @Published var renderedHTML: String = ""
+    static let shared = DiagramRenderer()
 
-    private var cancellable: AnyCancellable?
-    private weak var webView: WKWebView?
+    // MARK: - Cache
 
-    // MARK: - Public
+    private var cache: [String: NSImage] = [:]
+    private var inFlight: [String: [() -> Void]] = [:]
 
-    /// Attach to a note body publisher; renders after 500ms debounce.
-    func bind(bodyPublisher: AnyPublisher<String, Never>, webView: WKWebView) {
-        self.webView = webView
-        cancellable = bodyPublisher
-            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
-            .sink { [weak self] text in
-                guard let self else { return }
-                let blocks = Self.extractBlocks(from: text)
-                Task { await self.renderBlocks(blocks) }
-            }
+    // MARK: - WKWebView (lazy, headless, off-screen)
+
+    private var webView: WKWebView?
+    private var webViewReady = false
+    private var bootstrapWaiters: [() -> Void] = []
+
+    private override init() { super.init() }
+
+    // MARK: - Public API (new)
+
+    /// Returns a cached image immediately if present. Otherwise returns `nil` and starts an
+    /// async render; `onReady` fires on the main actor when the image lands in cache.
+    /// If the same (type, source) is already in flight, the new `onReady` is queued onto it.
+    func image(type: DiagramType, source: String, onReady: @escaping () -> Void) -> NSImage? {
+        let key = Self.cacheKey(type: type, source: source)
+        if let img = cache[key] { return img }
+
+        if inFlight[key] != nil {
+            inFlight[key]!.append(onReady)
+            return nil
+        }
+        inFlight[key] = [onReady]
+        Task { await self.renderToCache(type: type, source: source, key: key) }
+        return nil
     }
+
+    // MARK: - Public API (legacy — Task 9 deletes this)
+
+    private var legacyCancellable: AnyCancellable?
+    private weak var legacyWebView: WKWebView?
+
+    func bind(bodyPublisher: AnyPublisher<String, Never>, webView: WKWebView) {
+        self.legacyWebView = webView
+        legacyCancellable = bodyPublisher
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] _ in _ = self  /* no-op during migration */ }
+    }
+
+    // MARK: - Parsing (unchanged behaviour, returns richer blocks)
 
     nonisolated(unsafe) private static let blockRegex = try? NSRegularExpression(
         pattern: #"```(mermaid|plantuml)\n([\s\S]*?)```"#
     )
 
-    /// Parses fenced ```mermaid and ```plantuml blocks. Pure function — no side effects.
     nonisolated static func extractBlocks(from body: String) -> [DiagramBlock] {
         guard let regex = blockRegex else { return [] }
-
         var blocks: [DiagramBlock] = []
-        let fullRange = NSRange(body.startIndex..., in: body)
+        let nsBody = body as NSString
+        let fullRange = NSRange(location: 0, length: nsBody.length)
 
         for match in regex.matches(in: body, range: fullRange) {
-            guard match.numberOfRanges == 3,
-                  let typeRange   = Range(match.range(at: 1), in: body),
-                  let sourceRange = Range(match.range(at: 2), in: body) else { continue }
+            guard match.numberOfRanges == 3 else { continue }
+            let fullNS = match.range(at: 0)
+            let typeNS = match.range(at: 1)
+            let sourceNS = match.range(at: 2)
+            guard fullNS.location != NSNotFound,
+                  typeNS.location != NSNotFound,
+                  sourceNS.location != NSNotFound else { continue }
 
-            let typeStr = String(body[typeRange])
-            let source  = String(body[sourceRange]).trimmingCharacters(in: .newlines)
+            let fullText = nsBody.substring(with: fullNS)
+            let typeStr  = nsBody.substring(with: typeNS)
+            let source   = nsBody.substring(with: sourceNS).trimmingCharacters(in: .newlines)
             let type: DiagramType = typeStr == "mermaid" ? .mermaid : .plantuml
-            blocks.append(DiagramBlock(type: type, source: source))
+            blocks.append(DiagramBlock(type: type, source: source, fullText: fullText, nsRange: fullNS))
         }
         return blocks
     }
 
-    // MARK: - Private rendering
+    // MARK: - Rendering
 
-    private func renderBlocks(_ blocks: [DiagramBlock]) async {
-        guard !blocks.isEmpty else {
-            renderedHTML = ""
-            return
+    private func renderToCache(type: DiagramType, source: String, key: String) async {
+        var image: NSImage? = nil
+        switch type {
+        case .mermaid:  image = await renderMermaid(source)
+        case .plantuml: image = await fetchPlantUML(source)
         }
-
-        var parts: [String] = []
-        for block in blocks {
-            switch block.type {
-            case .mermaid:
-                let svg = await renderMermaid(block.source)
-                parts.append(svg ?? "<p class='error'>Mermaid render failed</p>")
-            case .plantuml:
-                let svg = await fetchPlantUMLSVG(block.source)
-                parts.append(svg ?? "<p class='error'>PlantUML unavailable (check internet)</p>")
-            }
-        }
-
-        let html = parts.joined(separator: "\n<hr>\n")
-        webView?.evaluateJavaScript("setContent(\(jsonString(html)))") { _, _ in }
-        renderedHTML = html
+        if let image { cache[key] = image }
+        let callbacks = inFlight.removeValue(forKey: key) ?? []
+        for cb in callbacks { cb() }
     }
 
-    private func renderMermaid(_ source: String) async -> String? {
+    private func renderMermaid(_ source: String) async -> NSImage? {
+        await ensureWebViewLoaded()
         guard let wv = webView else { return nil }
-        let escaped = jsonString(source)
-        let js = "renderMermaid(\(escaped))"
-        return await withCheckedContinuation { continuation in
+        let js = "renderMermaid(\(jsonString(source)))"
+        let svg: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             wv.evaluateJavaScript(js) { result, _ in
                 guard let jsonStr = result as? String,
                       let data = jsonStr.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let ok = obj["ok"] as? Bool, ok,
-                      let svg = obj["svg"] as? String else {
+                      let svgStr = obj["svg"] as? String else {
                     continuation.resume(returning: nil)
                     return
                 }
-                continuation.resume(returning: svg)
+                continuation.resume(returning: svgStr)
             }
         }
+        guard let svg, let data = svg.data(using: .utf8) else { return nil }
+        return NSImage(data: data)
     }
 
-    private func fetchPlantUMLSVG(_ source: String) async -> String? {
+    private func fetchPlantUML(_ source: String) async -> NSImage? {
         guard let encoded = PlantUMLEncoder.encode(source) else { return nil }
-        let urlString = "https://www.plantuml.com/plantuml/svg/\(encoded)"
-        guard let url = URL(string: urlString) else { return nil }
+        guard let url = URL(string: "https://www.plantuml.com/plantuml/svg/\(encoded)") else { return nil }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            return String(data: data, encoding: .utf8)
+            return NSImage(data: data)
         } catch {
             return nil
         }
+    }
+
+    // MARK: - WKWebView bootstrap
+
+    private func ensureWebViewLoaded() async {
+        if webViewReady { return }
+        if webView == nil { startWebViewBootstrap() }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if webViewReady { continuation.resume(); return }
+            bootstrapWaiters.append { continuation.resume() }
+        }
+    }
+
+    private func startWebViewBootstrap() {
+        let wv = WKWebView(frame: .zero)
+        wv.navigationDelegate = self
+        webView = wv
+        guard let resourceDir = Bundle.main.resourceURL,
+              let htmlURL = Bundle.main.url(forResource: "diagram-renderer", withExtension: "html") else {
+            // Resource missing — fail all waiters with no-op so callers move on.
+            webViewReady = true
+            drainBootstrapWaiters()
+            return
+        }
+        wv.loadFileURL(htmlURL, allowingReadAccessTo: resourceDir)
+    }
+
+    private func drainBootstrapWaiters() {
+        let waiters = bootstrapWaiters
+        bootstrapWaiters = []
+        for w in waiters { w() }
+    }
+
+    // MARK: - Helpers
+
+    private static func cacheKey(type: DiagramType, source: String) -> String {
+        let typeStr = type == .mermaid ? "mermaid" : "plantuml"
+        let digest = SHA256.hash(data: Data(source.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "\(typeStr):\(hex)"
     }
 
     private func jsonString(_ value: String) -> String {
@@ -124,5 +191,14 @@ final class DiagramRenderer: ObservableObject {
             .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
             .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
         return "\"\(escaped)\""
+    }
+}
+
+extension DiagramRenderer: WKNavigationDelegate {
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in
+            self.webViewReady = true
+            self.drainBootstrapWaiters()
+        }
     }
 }
