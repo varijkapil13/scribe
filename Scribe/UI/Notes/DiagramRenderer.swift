@@ -118,27 +118,28 @@ final class DiagramRenderer: NSObject {
             log.error("mermaid: webView is nil after bootstrap")
             return nil
         }
-        let js = "__scribeRender(\(jsonString(source)))"
-        let outcome: (json: String?, errorDesc: String?) = await withCheckedContinuation { (continuation: CheckedContinuation<(String?, String?), Never>) in
-            wv.evaluateJavaScript(js) { result, error in
-                continuation.resume(returning: (result as? String, error?.localizedDescription))
-            }
-        }
-        if let errDesc = outcome.errorDesc {
-            log.error("mermaid: evaluateJavaScript error: \(errDesc, privacy: .public)")
-        }
-        guard let jsonStr = outcome.json else {
-            log.error("mermaid: evaluateJavaScript returned non-string (or nil)")
+        // callAsyncJavaScript awaits the Promise returned by __scribeRender and bridges
+        // the resulting Dictionary back to Swift. The wrapper rasterizes mermaid's SVG
+        // to PNG via canvas because NSImage's SVG parser doesn't support CSS variables.
+        let result: Any?
+        do {
+            result = try await wv.callAsyncJavaScript(
+                "return await __scribeRender(source)",
+                arguments: ["source": source],
+                in: nil,
+                contentWorld: .page
+            )
+        } catch {
+            log.error("mermaid: callAsyncJavaScript threw: \(error.localizedDescription, privacy: .public)")
             return nil
         }
-        guard let data = jsonStr.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            log.error("mermaid: response not JSON: \(jsonStr.prefix(200), privacy: .public)")
+        guard let dict = result as? [String: Any] else {
+            log.error("mermaid: callAsyncJavaScript returned non-dictionary (\(String(describing: result), privacy: .public))")
             return nil
         }
-        guard let ok = obj["ok"] as? Bool, ok else {
-            let err = (obj["error"] as? String) ?? "unknown"
-            if let diag = obj["diag"] as? [String: Any] {
+        guard let ok = dict["ok"] as? Bool, ok else {
+            let err = (dict["error"] as? String) ?? "unknown"
+            if let diag = dict["diag"] as? [String: Any] {
                 let diagStr = (try? JSONSerialization.data(withJSONObject: diag, options: []))
                     .flatMap { String(data: $0, encoding: .utf8) } ?? "?"
                 log.error("mermaid: render returned ok=false error=\(err, privacy: .public) diag=\(diagStr, privacy: .public)")
@@ -147,18 +148,20 @@ final class DiagramRenderer: NSObject {
             }
             return nil
         }
-        guard let svgStr = obj["svg"] as? String, let svgData = svgStr.data(using: .utf8) else {
-            log.error("mermaid: svg missing in response")
+        guard let pngBase64 = dict["png"] as? String,
+              let pngData = Data(base64Encoded: pngBase64) else {
+            log.error("mermaid: png missing or not base64 in response")
             return nil
         }
-        log.debug("mermaid: SVG produced (\(svgData.count) bytes); head=\(svgStr.prefix(400), privacy: .public)")
-        guard let img = NSImage(data: svgData) else {
-            log.error("mermaid: NSImage(data:) returned nil for \(svgData.count) bytes of SVG (first 80 chars: \(svgStr.prefix(80), privacy: .public))")
+        guard let img = NSImage(data: pngData) else {
+            log.error("mermaid: NSImage(data:) returned nil for \(pngData.count) bytes of PNG")
             return nil
         }
-        if img.size.width == 0 || img.size.height == 0 {
-            log.error("mermaid: NSImage has zero size; SVG likely lacks width/height attrs (first 200 chars: \(svgStr.prefix(200), privacy: .public))")
-            return nil
+        // Use the logical SVG dimensions for layout; the PNG itself is at 2x for retina.
+        if let w = (dict["w"] as? Double).map({ CGFloat($0) }),
+           let h = (dict["h"] as? Double).map({ CGFloat($0) }),
+           w > 0, h > 0 {
+            img.size = NSSize(width: w, height: h)
         }
         return img
     }
