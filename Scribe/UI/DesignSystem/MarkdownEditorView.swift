@@ -66,6 +66,10 @@ struct MarkdownEditorView: NSViewRepresentable {
             actions.italic        = { [weak coord] in coord?.applyMarker("*") }
             actions.strikethrough = { [weak coord] in coord?.applyMarker("~~") }
             actions.code          = { [weak coord] in coord?.applyMarker("`") }
+            actions.link          = { [weak coord] in coord?.applyLinkFormat() }
+            actions.blockquote    = { [weak coord] in coord?.applyLinePrefix("> ") }
+            actions.unorderedList = { [weak coord] in coord?.applyLinePrefix("- ") }
+            actions.orderedList   = { [weak coord] in coord?.applyOrderedList() }
             actions.setHeading    = { [weak coord] level in coord?.setHeading(level) }
         }
 
@@ -148,6 +152,72 @@ struct MarkdownEditorView: NSViewRepresentable {
             }
         }
 
+        /// Toggles a line-level prefix (e.g. "- " or "> ") on all selected lines.
+        func applyLinePrefix(_ prefix: String) {
+            guard let tv = textView else { return }
+            let nsText = tv.string as NSString
+            let sel = tv.selectedRange()
+            let startLine = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
+            let endLoc = max(sel.location, sel.location + sel.length - 1)
+            let endLine = nsText.lineRange(for: NSRange(location: min(endLoc, max(0, nsText.length - 1)), length: 0))
+            let blockRange = NSRange(location: startLine.location,
+                                     length: endLine.location + endLine.length - startLine.location)
+            let block = nsText.substring(with: blockRange)
+            var lines = block.components(separatedBy: "\n")
+            if lines.last == "" { lines.removeLast() }
+
+            let allHave = lines.allSatisfy { $0.hasPrefix(prefix) }
+            let newLines = lines.map { line -> String in
+                if allHave { return line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : line }
+                return line.hasPrefix(prefix) ? line : prefix + line
+            }
+            let newBlock = newLines.joined(separator: "\n") + "\n"
+
+            guard let storage = tv.textStorage else { return }
+            storage.beginEditing()
+            storage.replaceCharacters(in: blockRange, with: newBlock)
+            storage.endEditing()
+            parent.text = tv.string
+            applyFormatting(to: tv)
+        }
+
+        func applyOrderedList() {
+            guard let tv = textView else { return }
+            let nsText = tv.string as NSString
+            let sel = tv.selectedRange()
+            let startLine = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
+            let endLoc = max(sel.location, sel.location + sel.length - 1)
+            let endLine = nsText.lineRange(for: NSRange(location: min(endLoc, max(0, nsText.length - 1)), length: 0))
+            let blockRange = NSRange(location: startLine.location,
+                                     length: endLine.location + endLine.length - startLine.location)
+            let block = nsText.substring(with: blockRange)
+            var lines = block.components(separatedBy: "\n")
+            if lines.last == "" { lines.removeLast() }
+
+            let olPattern = #"^\s*\d+\. "#
+            let allHave = lines.allSatisfy { $0.range(of: olPattern, options: .regularExpression) != nil }
+            let newLines: [String]
+            if allHave {
+                newLines = lines.map { line -> String in
+                    if let r = line.range(of: olPattern, options: .regularExpression) { return String(line[r.upperBound...]) }
+                    return line
+                }
+            } else {
+                newLines = lines.enumerated().map { i, line -> String in
+                    if line.range(of: olPattern, options: .regularExpression) != nil { return line }
+                    return "\(i + 1). \(line)"
+                }
+            }
+            let newBlock = newLines.joined(separator: "\n") + "\n"
+
+            guard let storage = tv.textStorage else { return }
+            storage.beginEditing()
+            storage.replaceCharacters(in: blockRange, with: newBlock)
+            storage.endEditing()
+            parent.text = tv.string
+            applyFormatting(to: tv)
+        }
+
         func setHeading(_ level: Int) {
             guard let tv = textView else { return }
             let nsText = tv.string as NSString
@@ -196,13 +266,16 @@ struct MarkdownEditorView: NSViewRepresentable {
             guard !raw.isEmpty else { return }
             let font = tv.font ?? parent.font
             let formatted = MarkdownFormatter.attributed(raw, font: font)
-            // Apply extra highlighting (e.g., [[wiki-links]])
             let mutable = NSMutableAttributedString(attributedString: formatted)
             parent.extraHighlighter?(mutable)
             let saved = tv.selectedRanges
+            // Attribute-only pass — disable undo registration so formatting
+            // changes don't pollute the undo stack (undo operates on text, not attrs).
+            tv.undoManager?.disableUndoRegistration()
             storage.beginEditing()
             storage.setAttributedString(mutable)
             storage.endEditing()
+            tv.undoManager?.enableUndoRegistration()
             let len = storage.length
             tv.selectedRanges = saved.map { v in
                 let r = v.rangeValue
@@ -230,7 +303,7 @@ final class MarkdownNSTextView: NSTextView {
         textContainerInset = newInset
     }
 
-    // MARK: - List continuation
+    // MARK: - Smart Enter, Tab, Backtab
 
     override func insertNewline(_ sender: Any?) {
         guard let coord = delegate as? MarkdownEditorView.Coordinator else {
@@ -240,27 +313,93 @@ final class MarkdownNSTextView: NSTextView {
         let nsText = string as NSString
         let sel = selectedRange()
         let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
-        let lineWithNL = nsText.substring(with: lineRange)
-        let line = lineWithNL.trimmingCharacters(in: .newlines)
+        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
 
-        guard let prefix = Self.listPrefix(from: line) else {
-            super.insertNewline(sender)
+        // Blockquote continuation
+        if line.hasPrefix("> ") {
+            let content = String(line.dropFirst(2))
+            if content.isEmpty {
+                textStorage?.beginEditing()
+                textStorage?.replaceCharacters(in: lineRange, with: "\n")
+                textStorage?.endEditing()
+                setSelectedRange(NSRange(location: lineRange.location + 1, length: 0))
+            } else {
+                super.insertNewline(sender)
+                insertText("> ", replacementRange: selectedRange())
+            }
+            coord.parent.text = string
+            coord.applyFormatting(to: self)
             return
         }
 
-        if line == prefix {
-            // Empty list item — exit list mode: replace line with bare newline
-            textStorage?.beginEditing()
-            textStorage?.replaceCharacters(in: lineRange, with: "\n")
-            textStorage?.endEditing()
-            setSelectedRange(NSRange(location: lineRange.location + 1, length: 0))
-        } else {
-            super.insertNewline(sender)
-            let next = Self.nextListPrefix(from: prefix)
-            insertText(next, replacementRange: selectedRange())
+        // List continuation
+        if let prefix = Self.listPrefix(from: line) {
+            if line == prefix {
+                // Empty item — exit list mode
+                textStorage?.beginEditing()
+                textStorage?.replaceCharacters(in: lineRange, with: "\n")
+                textStorage?.endEditing()
+                setSelectedRange(NSRange(location: lineRange.location + 1, length: 0))
+            } else {
+                super.insertNewline(sender)
+                let next = Self.nextListPrefix(from: prefix)
+                insertText(next, replacementRange: selectedRange())
+            }
+            coord.parent.text = string
+            coord.applyFormatting(to: self)
+            return
         }
+
+        super.insertNewline(sender)
+    }
+
+    override func insertTab(_ sender: Any?) {
+        guard let coord = delegate as? MarkdownEditorView.Coordinator else {
+            super.insertTab(sender)
+            return
+        }
+        let nsText = string as NSString
+        let sel = selectedRange()
+        let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
+        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+
+        if Self.listPrefix(from: line) != nil {
+            textStorage?.beginEditing()
+            textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "  ")
+            textStorage?.endEditing()
+            setSelectedRange(NSRange(location: sel.location + 2, length: sel.length))
+            coord.parent.text = string
+            coord.applyFormatting(to: self)
+            return
+        }
+        // Soft tab
+        insertText("  ", replacementRange: sel)
         coord.parent.text = string
         coord.applyFormatting(to: self)
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        guard let coord = delegate as? MarkdownEditorView.Coordinator else {
+            super.insertBacktab(sender)
+            return
+        }
+        let nsText = string as NSString
+        let sel = selectedRange()
+        let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
+        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+
+        if Self.listPrefix(from: line) != nil && (line.hasPrefix("  ") || line.hasPrefix("\t")) {
+            let strip = line.hasPrefix("\t") ? 1 : 2
+            textStorage?.beginEditing()
+            textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: strip), with: "")
+            textStorage?.endEditing()
+            let newLoc = max(lineRange.location, sel.location - strip)
+            setSelectedRange(NSRange(location: newLoc, length: sel.length))
+            coord.parent.text = string
+            coord.applyFormatting(to: self)
+            return
+        }
+        super.insertBacktab(sender)
     }
 
     // Returns the list prefix of `line`, or nil if not a list item.
@@ -291,18 +430,36 @@ final class MarkdownNSTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-              let key = event.charactersIgnoringModifiers else {
-            return super.performKeyEquivalent(with: event)
-        }
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers ?? ""
         let coord = delegate as? MarkdownEditorView.Coordinator
-        switch key {
-        case "b":  coord?.applyMarker("**"); return true
-        case "i":  coord?.applyMarker("*");  return true
-        case "`":  coord?.applyMarker("`");  return true
-        case "k":  coord?.applyLinkFormat(); return true
-        default:   return super.performKeyEquivalent(with: event)
+
+        if mods == .command {
+            switch key {
+            case "b":  coord?.applyMarker("**");    return true
+            case "i":  coord?.applyMarker("*");     return true
+            case "`":  coord?.applyMarker("`");     return true
+            case "k":  coord?.applyLinkFormat();    return true
+            case "z":  undoManager?.undo();         return true
+            default: break
+            }
         }
+
+        if mods == [.command, .shift] {
+            switch key {
+            case "x", "X": coord?.applyMarker("~~");          return true
+            case ".":       coord?.applyLinePrefix("> ");      return true
+            case "8":       coord?.applyLinePrefix("- ");      return true
+            case "7":       coord?.applyOrderedList();         return true
+            default: break
+            }
+        }
+
+        if mods == [.command, .shift] && key == "z" {
+            undoManager?.redo(); return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
 
     override func mouseDown(with event: NSEvent) {

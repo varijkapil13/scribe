@@ -7,6 +7,10 @@ final class EditorActions {
     var italic: (() -> Void)?
     var strikethrough: (() -> Void)?
     var code: (() -> Void)?
+    var link: (() -> Void)?
+    var blockquote: (() -> Void)?
+    var unorderedList: (() -> Void)?
+    var orderedList: (() -> Void)?
     var setHeading: ((Int) -> Void)?  // 0 = paragraph, 1–3 = H1–H3
 }
 
@@ -15,10 +19,12 @@ struct FormatToolbar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ToolbarButton(systemImage: "bold", tooltip: "Bold (⌘B)")            { actions.bold?() }
-            ToolbarButton(systemImage: "italic", tooltip: "Italic (⌘I)")         { actions.italic?() }
-            ToolbarButton(systemImage: "strikethrough", tooltip: "Strikethrough") { actions.strikethrough?() }
-            ToolbarButton(systemImage: "chevron.left.forwardslash.chevron.right", tooltip: "Inline Code (⌘`)") { actions.code?() }
+            ToolbarButton(systemImage: "bold",          tooltip: "Bold (⌘B)")              { actions.bold?() }
+            ToolbarButton(systemImage: "italic",        tooltip: "Italic (⌘I)")             { actions.italic?() }
+            ToolbarButton(systemImage: "strikethrough", tooltip: "Strikethrough (⌘⇧X)")    { actions.strikethrough?() }
+            ToolbarButton(systemImage: "chevron.left.forwardslash.chevron.right",
+                                                        tooltip: "Inline Code (⌘`)")       { actions.code?() }
+            ToolbarButton(systemImage: "link",          tooltip: "Link (⌘K)")              { actions.link?() }
 
             Divider().frame(height: 20).padding(.horizontal, 6)
 
@@ -41,6 +47,12 @@ struct FormatToolbar: View {
             .menuStyle(.borderlessButton)
             .help("Paragraph style")
             .fixedSize()
+
+            Divider().frame(height: 20).padding(.horizontal, 6)
+
+            ToolbarButton(systemImage: "text.quote",   tooltip: "Blockquote (⌘⇧.)")       { actions.blockquote?() }
+            ToolbarButton(systemImage: "list.bullet",  tooltip: "Bullet List (⌘⇧8)")      { actions.unorderedList?() }
+            ToolbarButton(systemImage: "list.number",  tooltip: "Numbered List (⌘⇧7)")    { actions.orderedList?() }
 
             Spacer()
         }
