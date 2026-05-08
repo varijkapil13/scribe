@@ -151,6 +151,7 @@ final class DiagramRenderer: NSObject {
             log.error("mermaid: svg missing in response")
             return nil
         }
+        log.debug("mermaid: SVG produced (\(svgData.count) bytes); head=\(svgStr.prefix(400), privacy: .public)")
         guard let img = NSImage(data: svgData) else {
             log.error("mermaid: NSImage(data:) returned nil for \(svgData.count) bytes of SVG (first 80 chars: \(svgStr.prefix(80), privacy: .public))")
             return nil
