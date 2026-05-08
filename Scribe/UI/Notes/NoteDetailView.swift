@@ -54,7 +54,7 @@ struct NoteDetailView: View {
 
                     Spacer()
 
-                    if !DiagramRenderer.extractBlocks(from: vm.note.body).isEmpty {
+                    if showDiagramPanel || !DiagramRenderer.extractBlocks(from: vm.note.body).isEmpty {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) { showDiagramPanel.toggle() }
                         } label: {
