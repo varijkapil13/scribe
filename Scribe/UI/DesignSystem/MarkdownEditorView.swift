@@ -128,6 +128,14 @@ struct MarkdownEditorView: NSViewRepresentable {
             detectWikiLinkTyping(in: tv)
         }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isApplyingFormatting,
+                  let tv = notification.object as? MarkdownNSTextView else { return }
+            // Selection changed — fold/unfold decision depends on cursor position, so reformat.
+            // The work is bounded by note size and image renders are cached.
+            applyFormatting(to: tv)
+        }
+
         func applyMarker(_ marker: String) {
             editSource { source, sel in
                 let (newText, newSel) = InlineMarkerEditor.toggle(in: source, selection: sel, marker: marker)
