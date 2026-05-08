@@ -1,17 +1,18 @@
 import AppKit
 import SwiftUI
 
-// Custom attribute key storing the anchor text for [[wiki-links]].
-// Set during extraHighlighter; read in mouseDown — no scanning needed.
+// MARK: - Custom attribute keys
+
 extension NSAttributedString.Key {
-    static let wikiAnchor = NSAttributedString.Key("scribe.wikiAnchor")
+    static let wikiAnchor    = NSAttributedString.Key("scribe.wikiAnchor")
+    static let codeBlockLine = NSAttributedString.Key("scribe.codeBlock")    // Bool: inside fenced block
+    static let blockquoteLine = NSAttributedString.Key("scribe.blockquote")  // Bool: blockquote line
+    static let horizontalRule = NSAttributedString.Key("scribe.hr")          // Bool: HR line
 }
 
 /// Bear-style inline markdown editor: a single NSTextView that formats
 /// markdown syntax visually as you type. Syntax markers (**, *, #, etc.)
 /// are dimmed; content (bold, italic, heading text) is styled.
-///
-/// No mode-switching. Always editable. Binding holds raw markdown string.
 struct MarkdownEditorView: NSViewRepresentable {
 
     @Binding var text: String
@@ -147,9 +148,7 @@ struct MarkdownEditorView: NSViewRepresentable {
             }
             parent.text = tv.string
             applyFormatting(to: tv)
-            if !isURL {
-                detectWikiLinkTyping(in: tv)
-            }
+            if !isURL { detectWikiLinkTyping(in: tv) }
         }
 
         /// Toggles a line-level prefix (e.g. "- " or "> ") on all selected lines.
@@ -270,7 +269,7 @@ struct MarkdownEditorView: NSViewRepresentable {
             parent.extraHighlighter?(mutable)
             let saved = tv.selectedRanges
             // Attribute-only pass — disable undo registration so formatting
-            // changes don't pollute the undo stack (undo operates on text, not attrs).
+            // changes don't pollute the undo stack.
             tv.undoManager?.disableUndoRegistration()
             storage.beginEditing()
             storage.setAttributedString(mutable)
@@ -289,7 +288,7 @@ struct MarkdownEditorView: NSViewRepresentable {
     }
 }
 
-// MARK: - NSTextView with placeholder
+// MARK: - NSTextView subclass
 
 final class MarkdownNSTextView: NSTextView {
     var placeholderString: String = ""
@@ -300,6 +299,109 @@ final class MarkdownNSTextView: NSTextView {
         let newInset = NSSize(width: 20, height: 16)
         guard newInset != textContainerInset else { return }
         textContainerInset = newInset
+    }
+
+    // MARK: - Custom background drawing
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let storage = textStorage, let lm = layoutManager, let tc = textContainer else { return }
+        lm.ensureLayout(for: tc)
+        let origin = textContainerOrigin
+
+        drawCodeBlocks(storage: storage, lm: lm, tc: tc, origin: origin)
+        drawBlockquotes(storage: storage, lm: lm, tc: tc, origin: origin)
+        drawHorizontalRules(storage: storage, lm: lm, tc: tc, origin: origin)
+    }
+
+    private func drawCodeBlocks(storage: NSTextStorage, lm: NSLayoutManager,
+                                  tc: NSTextContainer, origin: NSPoint) {
+        let bgColor = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.09)
+                : NSColor(white: 0.0, alpha: 0.06)
+        }
+
+        forContiguousRanges(in: storage, key: .codeBlockLine) { charRange in
+            let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+            var cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            let blockRect = NSRect(
+                x: 4,
+                y: cr.minY + origin.y - 6,
+                width: bounds.width - 8,
+                height: cr.height + 12
+            )
+            let path = NSBezierPath(roundedRect: blockRect, xRadius: 6, yRadius: 6)
+            bgColor.setFill()
+            path.fill()
+            _ = cr  // suppress unused warning
+        }
+    }
+
+    private func drawBlockquotes(storage: NSTextStorage, lm: NSLayoutManager,
+                                   tc: NSTextContainer, origin: NSPoint) {
+        let borderColor = NSColor.secondaryLabelColor.withAlphaComponent(0.45)
+        let bgColor = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.04)
+                : NSColor(white: 0.0, alpha: 0.03)
+        }
+
+        forContiguousRanges(in: storage, key: .blockquoteLine) { charRange in
+            let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+            let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            let blockRect = NSRect(
+                x: origin.x,
+                y: cr.minY + origin.y - 3,
+                width: bounds.width - origin.x * 2,
+                height: cr.height + 6
+            )
+            bgColor.setFill()
+            NSBezierPath(roundedRect: blockRect, xRadius: 4, yRadius: 4).fill()
+
+            let borderRect = NSRect(x: origin.x, y: blockRect.minY, width: 3, height: blockRect.height)
+            borderColor.setFill()
+            NSBezierPath(roundedRect: borderRect, xRadius: 1.5, yRadius: 1.5).fill()
+        }
+    }
+
+    private func drawHorizontalRules(storage: NSTextStorage, lm: NSLayoutManager,
+                                       tc: NSTextContainer, origin: NSPoint) {
+        let lineColor = NSColor.separatorColor
+        forContiguousRanges(in: storage, key: .horizontalRule) { charRange in
+            let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+            let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            let midY = cr.midY + origin.y
+            let hrRect = NSRect(x: origin.x, y: midY - 0.5,
+                                width: bounds.width - origin.x * 2, height: 1)
+            lineColor.setFill()
+            hrRect.fill()
+        }
+    }
+
+    /// Iterates contiguous character ranges marked with `key` and calls `body` for each block.
+    private func forContiguousRanges(in storage: NSTextStorage,
+                                      key: NSAttributedString.Key,
+                                      body: (NSRange) -> Void) {
+        var i = 0
+        let total = storage.length
+        while i < total {
+            var effectiveRange = NSRange()
+            let hasAttr = storage.attribute(key, at: i, effectiveRange: &effectiveRange) != nil
+            if hasAttr {
+                var blockEnd = NSMaxRange(effectiveRange)
+                while blockEnd < total {
+                    var nextRange = NSRange()
+                    if storage.attribute(key, at: blockEnd, effectiveRange: &nextRange) != nil {
+                        blockEnd = NSMaxRange(nextRange)
+                    } else { break }
+                }
+                body(NSRange(location: effectiveRange.location, length: blockEnd - effectiveRange.location))
+                i = blockEnd
+            } else {
+                i = NSMaxRange(effectiveRange)
+            }
+        }
     }
 
     // MARK: - Smart Enter, Tab, Backtab
@@ -314,7 +416,6 @@ final class MarkdownNSTextView: NSTextView {
         let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
         let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
 
-        // Blockquote continuation
         if line.hasPrefix("> ") {
             let content = String(line.dropFirst(2))
             if content.isEmpty {
@@ -331,10 +432,8 @@ final class MarkdownNSTextView: NSTextView {
             return
         }
 
-        // List continuation
         if let prefix = Self.listPrefix(from: line) {
             if line == prefix {
-                // Empty item — exit list mode
                 textStorage?.beginEditing()
                 textStorage?.replaceCharacters(in: lineRange, with: "\n")
                 textStorage?.endEditing()
@@ -354,14 +453,12 @@ final class MarkdownNSTextView: NSTextView {
 
     override func insertTab(_ sender: Any?) {
         guard let coord = delegate as? MarkdownEditorView.Coordinator else {
-            super.insertTab(sender)
-            return
+            super.insertTab(sender); return
         }
         let nsText = string as NSString
         let sel = selectedRange()
         let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
         let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
-
         if Self.listPrefix(from: line) != nil {
             textStorage?.beginEditing()
             textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "  ")
@@ -371,7 +468,6 @@ final class MarkdownNSTextView: NSTextView {
             coord.applyFormatting(to: self)
             return
         }
-        // Soft tab
         insertText("  ", replacementRange: sel)
         coord.parent.text = string
         coord.applyFormatting(to: self)
@@ -379,21 +475,18 @@ final class MarkdownNSTextView: NSTextView {
 
     override func insertBacktab(_ sender: Any?) {
         guard let coord = delegate as? MarkdownEditorView.Coordinator else {
-            super.insertBacktab(sender)
-            return
+            super.insertBacktab(sender); return
         }
         let nsText = string as NSString
         let sel = selectedRange()
         let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
         let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
-
         if Self.listPrefix(from: line) != nil && (line.hasPrefix("  ") || line.hasPrefix("\t")) {
             let strip = line.hasPrefix("\t") ? 1 : 2
             textStorage?.beginEditing()
             textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: strip), with: "")
             textStorage?.endEditing()
-            let newLoc = max(lineRange.location, sel.location - strip)
-            setSelectedRange(NSRange(location: newLoc, length: sel.length))
+            setSelectedRange(NSRange(location: max(lineRange.location, sel.location - strip), length: sel.length))
             coord.parent.text = string
             coord.applyFormatting(to: self)
             return
@@ -401,20 +494,16 @@ final class MarkdownNSTextView: NSTextView {
         super.insertBacktab(sender)
     }
 
-    // Returns the list prefix of `line`, or nil if not a list item.
     static func listPrefix(from line: String) -> String? {
-        // Unordered (optional leading spaces, optional checkbox)
         if let r = line.range(of: #"^(\s*[-*+] (\[[ xX]\] )?)"#, options: .regularExpression) {
             return String(line[r])
         }
-        // Ordered: "1. ", "22. " …
         if let r = line.range(of: #"^\s*\d+\. "#, options: .regularExpression) {
             return String(line[r])
         }
         return nil
     }
 
-    // For ordered lists increments the counter; resets checked checkboxes to unchecked.
     static func nextListPrefix(from prefix: String) -> String {
         if let r = prefix.range(of: #"\d+"#, options: .regularExpression),
            let num = Int(prefix[r]) {
@@ -443,21 +532,16 @@ final class MarkdownNSTextView: NSTextView {
             default: break
             }
         }
-
         if mods == [.command, .shift] {
             switch key {
-            case "x", "X": coord?.applyMarker("~~");          return true
-            case ".":       coord?.applyLinePrefix("> ");      return true
-            case "8":       coord?.applyLinePrefix("- ");      return true
-            case "7":       coord?.applyOrderedList();         return true
+            case "x", "X": coord?.applyMarker("~~");       return true
+            case ".":       coord?.applyLinePrefix("> ");   return true
+            case "8":       coord?.applyLinePrefix("- ");   return true
+            case "7":       coord?.applyOrderedList();      return true
+            case "z", "Z":  undoManager?.redo();            return true
             default: break
             }
         }
-
-        if mods == [.command, .shift] && key == "z" {
-            undoManager?.redo(); return true
-        }
-
         return super.performKeyEquivalent(with: event)
     }
 
@@ -470,7 +554,6 @@ final class MarkdownNSTextView: NSTextView {
         guard glyphIdx < lm.numberOfGlyphs else { return }
         let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
         guard charIdx < storage.length else { return }
-        // Read the wikiAnchor attribute set by extraHighlighter — no scanning needed.
         let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
         guard let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty else { return }
         onLinkClick(anchor)
@@ -504,28 +587,37 @@ enum MarkdownFormatter {
         let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
         let dim = NSColor.tertiaryLabelColor
         var inFence = false
-        var fenceStart = -1   // index of opening ``` line
 
         for (i, line) in lines.enumerated() {
-            if i > 0 { result.append(.init(string: "\n")) }
+            if i > 0 {
+                // Mark the inter-line newline as codeBlock when inside a fence,
+                // so drawBackground finds one contiguous range per block.
+                let nl = NSMutableAttributedString(string: "\n")
+                if inFence {
+                    nl.addAttribute(.codeBlockLine, value: true,
+                                    range: NSRange(location: 0, length: 1))
+                    nl.addAttributes(codeLineAttrs(font: monoFont),
+                                     range: NSRange(location: 0, length: 1))
+                }
+                result.append(nl)
+            }
 
             if line.hasPrefix("```") {
-                let isFenceOpen = !inFence
                 inFence.toggle()
-                if isFenceOpen { fenceStart = i }
-
-                // Fence marker line
-                let attrs = codeBlockBase(font: monoFont,
-                                          spacingBefore: isFenceOpen ? 6 : 0,
-                                          spacingAfter:  isFenceOpen ? 0 : 6)
-                let fenceAttr = NSMutableAttributedString(string: line, attributes: attrs)
-                let full = NSRange(location: 0, length: line.utf16.count)
+                let display = line.isEmpty ? " " : line
+                let fenceAttr = NSMutableAttributedString(string: display,
+                                                           attributes: codeLineAttrs(font: monoFont))
+                let full = NSRange(location: 0, length: fenceAttr.length)
                 fenceAttr.addAttribute(.foregroundColor, value: dim, range: full)
+                fenceAttr.addAttribute(.codeBlockLine, value: true, range: full)
                 result.append(fenceAttr)
-                _ = fenceStart   // suppress unused-var warning
             } else if inFence {
-                let attrs = codeBlockBase(font: monoFont, spacingBefore: 0, spacingAfter: 0)
-                result.append(NSMutableAttributedString(string: line, attributes: attrs))
+                let display = line.isEmpty ? " " : line
+                let codeAttr = NSMutableAttributedString(string: display,
+                                                          attributes: codeLineAttrs(font: monoFont))
+                codeAttr.addAttribute(.codeBlockLine, value: true,
+                                      range: NSRange(location: 0, length: codeAttr.length))
+                result.append(codeAttr)
             } else {
                 result.append(formattedLine(line, font: font))
             }
@@ -533,72 +625,107 @@ enum MarkdownFormatter {
         return result
     }
 
-    private static func codeBlockBase(font: NSFont,
-                                       spacingBefore: CGFloat,
-                                       spacingAfter: CGFloat) -> [NSAttributedString.Key: Any] {
+    private static func codeLineAttrs(font: NSFont) -> [NSAttributedString.Key: Any] {
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.25
-        style.paragraphSpacing = spacingAfter
-        style.paragraphSpacingBefore = spacingBefore
-        // Small left indent so code feels inset from prose
-        style.headIndent = 6
-        style.firstLineHeadIndent = 6
-        return [
-            .font: font,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: style,
-            .backgroundColor: codeBackground
-        ]
-    }
-
-    private static let codeBackground: NSColor = NSColor(name: nil) { appearance in
-        switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
-        case .darkAqua: return NSColor(white: 1.0, alpha: 0.07)
-        default:        return NSColor(white: 0.0, alpha: 0.05)
-        }
+        style.lineHeightMultiple = 1.4
+        style.paragraphSpacing = 0
+        style.paragraphSpacingBefore = 0
+        style.headIndent = 14
+        style.firstLineHeadIndent = 14
+        return [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style]
     }
 
     // MARK: Per-line
 
     private static func formattedLine(_ line: String, font: NSFont) -> NSAttributedString {
-        let result = NSMutableAttributedString(string: line, attributes: base(font))
-        let dim    = NSColor.tertiaryLabelColor
-        let mono   = NSFont.monospacedSystemFont(ofSize: font.pointSize - 0.5, weight: .regular)
+        let dim  = NSColor.tertiaryLabelColor
+        let mono = NSFont.monospacedSystemFont(ofSize: font.pointSize - 0.5, weight: .regular)
 
-        // Headings: up to 3 levels
+        // Horizontal rule — invisible text, drawn by drawBackground
+        if line.trimmingCharacters(in: .whitespaces).matches(#"^[-*_]{3,}$"#) {
+            let hrStyle = NSMutableParagraphStyle()
+            hrStyle.paragraphSpacingBefore = 8
+            hrStyle.paragraphSpacing = 8
+            let result = NSMutableAttributedString(string: line, attributes: [
+                .font: font, .foregroundColor: NSColor.clear, .paragraphStyle: hrStyle
+            ])
+            result.addAttribute(.horizontalRule, value: true,
+                                range: NSRange(location: 0, length: line.utf16.count))
+            return result
+        }
+
+        // Headings
         if let (hashes, rest) = parseHeading(line) {
             let level = min(hashes, 3)
-            let size: CGFloat = font.pointSize + CGFloat([4, 2, 1][level - 1])
+            let sizes: [CGFloat] = [28, 22, 18]
+            let spacingsBefore: [CGFloat] = [24, 18, 12]
+            let size = sizes[level - 1]
             let headFont = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.bold), size: size)
                         ?? NSFont.boldSystemFont(ofSize: size)
-            let prefixLen = hashes + 1            // "# " or "## " etc.
+            let headMono = NSFont.monospacedSystemFont(ofSize: size - 1, weight: .regular)
+
+            let style = NSMutableParagraphStyle()
+            style.lineHeightMultiple = 1.2
+            style.paragraphSpacingBefore = spacingsBefore[level - 1]
+            style.paragraphSpacing = 6
+
+            let result = NSMutableAttributedString(string: line, attributes: [
+                .font: headFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style
+            ])
+            let prefixLen = hashes + 1
             let prefixRange = NSRange(location: 0, length: min(prefixLen, line.utf16.count))
-            let textRange  = NSRange(location: prefixLen, length: max(0, line.utf16.count - prefixLen))
-            result.addAttribute(.foregroundColor, value: dim, range: prefixRange)
-            if textRange.length > 0 { result.addAttribute(.font, value: headFont, range: textRange) }
-            // Inline on the heading text
-            applyInline(to: result, offset: prefixLen, text: rest, baseFont: headFont, dim: dim, mono: mono)
+            let textRange = NSRange(location: min(prefixLen, line.utf16.count),
+                                    length: max(0, line.utf16.count - prefixLen))
+            // Dim the # markers heavily
+            result.addAttribute(.foregroundColor, value: NSColor.quaternaryLabelColor, range: prefixRange)
+            result.addAttribute(.font, value: NSFont.systemFont(ofSize: font.pointSize - 1), range: prefixRange)
+            if textRange.length > 0 {
+                applyInline(to: result, offset: prefixLen, text: rest,
+                            baseFont: headFont, dim: dim, mono: headMono)
+            }
             return result
         }
 
-        // Blockquote: > text
+        // Blockquote
         if line.hasPrefix("> ") {
-            let quoteRange = NSRange(location: 0, length: 2)
-            result.addAttribute(.foregroundColor, value: dim, range: quoteRange)
-            result.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor,
-                                range: NSRange(location: 2, length: max(0, line.utf16.count - 2)))
-        }
+            let style = NSMutableParagraphStyle()
+            style.lineHeightMultiple = 1.5
+            style.paragraphSpacing = 1
+            style.headIndent = 28
+            style.firstLineHeadIndent = 28
 
-        // List bullets: - / * / + / 1.
-        if let prefixLen = listPrefixLength(line) {
-            let bulletRange = NSRange(location: 0, length: prefixLen)
-            result.addAttribute(.foregroundColor, value: dim, range: bulletRange)
-        }
-
-        // Horizontal rule: --- or *** (whole line)
-        if line.trimmingCharacters(in: .whitespaces).matches(#"^[-*_]{3,}$"#) {
-            result.addAttribute(.foregroundColor, value: dim, range: NSRange(location: 0, length: line.utf16.count))
+            let result = NSMutableAttributedString(string: line, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: style
+            ])
+            let prefixLen = min(2, line.utf16.count)
+            result.addAttribute(.foregroundColor, value: NSColor.quaternaryLabelColor,
+                                range: NSRange(location: 0, length: prefixLen))
+            result.addAttribute(.blockquoteLine, value: true,
+                                range: NSRange(location: 0, length: line.utf16.count))
+            if line.utf16.count > 2 {
+                let content = String(line.dropFirst(2))
+                applyInline(to: result, offset: 2, text: content,
+                            baseFont: font, dim: dim, mono: mono)
+            }
             return result
+        }
+
+        // Lists — hanging indent so text wraps under content, not under bullet
+        let result = NSMutableAttributedString(string: line, attributes: base(font))
+        if let prefixLen = listPrefixLength(line) {
+            let leadingSpaces = line.prefix(while: { $0 == " " }).count
+            let indentBase: CGFloat = CGFloat(leadingSpaces / 2) * 20
+            let style = NSMutableParagraphStyle()
+            style.lineHeightMultiple = 1.5
+            style.paragraphSpacing = 1
+            style.firstLineHeadIndent = indentBase
+            style.headIndent = indentBase + 18
+            result.addAttribute(.paragraphStyle, value: style,
+                                range: NSRange(location: 0, length: line.utf16.count))
+            result.addAttribute(.foregroundColor, value: dim,
+                                range: NSRange(location: 0, length: prefixLen))
         }
 
         applyInline(to: result, offset: 0, text: line, baseFont: font, dim: dim, mono: mono)
@@ -609,67 +736,60 @@ enum MarkdownFormatter {
 
     private static func applyInline(
         to str: NSMutableAttributedString,
-        offset: Int,
-        text: String,
-        baseFont: NSFont,
-        dim: NSColor,
-        mono: NSFont
+        offset: Int, text: String, baseFont: NSFont, dim: NSColor, mono: NSFont
     ) {
-        let boldItalic = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits([.bold, .italic]), size: baseFont.pointSize) ?? baseFont
-        let bold       = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits(.bold), size: baseFont.pointSize) ?? baseFont
-        let italic     = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits(.italic), size: baseFont.pointSize) ?? baseFont
+        let boldItalic = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits([.bold, .italic]),
+                                size: baseFont.pointSize) ?? baseFont
+        let bold   = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits(.bold),   size: baseFont.pointSize) ?? baseFont
+        let italic = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits(.italic), size: baseFont.pointSize) ?? baseFont
 
-        // Order matters: process longest markers first to avoid partial matches.
-        // Bold-italic ***...***
-        apply(pattern: #"\*{3}([^*\n]+?)\*{3}"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: boldItalic, range: contentRange)
+        apply(pattern: #"\*{3}([^*\n]+?)\*{3}"#, in: text, offset: offset, to: str) { m, c in
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            str.addAttribute(.font, value: boldItalic, range: c)
         }
-        // Bold **...**
-        apply(pattern: #"\*{2}([^*\n]+?)\*{2}"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: bold, range: contentRange)
+        apply(pattern: #"\*{2}([^*\n]+?)\*{2}"#, in: text, offset: offset, to: str) { m, c in
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            str.addAttribute(.font, value: bold, range: c)
         }
-        // Bold __...__
-        apply(pattern: #"_{2}([^_\n]+?)_{2}"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: bold, range: contentRange)
+        apply(pattern: #"_{2}([^_\n]+?)_{2}"#, in: text, offset: offset, to: str) { m, c in
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            str.addAttribute(.font, value: bold, range: c)
         }
-        // Italic *...*
-        apply(pattern: #"(?<!\*)\*([^*\n]+?)\*(?!\*)"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: italic, range: contentRange)
+        apply(pattern: #"(?<!\*)\*([^*\n]+?)\*(?!\*)"#, in: text, offset: offset, to: str) { m, c in
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            str.addAttribute(.font, value: italic, range: c)
         }
-        // Italic _..._
-        apply(pattern: #"(?<!_)_([^_\n]+?)_(?!_)"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: italic, range: contentRange)
+        apply(pattern: #"(?<!_)_([^_\n]+?)_(?!_)"#, in: text, offset: offset, to: str) { m, c in
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            str.addAttribute(.font, value: italic, range: c)
         }
-        // Inline code `...`
-        apply(pattern: #"`([^`\n]+?)`"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach {
-                str.addAttribute(.foregroundColor, value: dim, range: $0)
-                str.addAttribute(.backgroundColor, value: codeBackground, range: $0)
-            }
-            str.addAttribute(.font, value: mono, range: contentRange)
-            str.addAttribute(.foregroundColor, value: NSColor.systemOrange, range: contentRange)
-            str.addAttribute(.backgroundColor, value: codeBackground, range: contentRange)
+        // Inline code — subtle box, secondary color (no orange)
+        let inlineCodeBg = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.10)
+                : NSColor(white: 0.0, alpha: 0.07)
         }
-        // Strikethrough ~~...~~
-        apply(pattern: #"~~([^~\n]+?)~~"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: contentRange)
+        apply(pattern: #"`([^`\n]+?)`"#, in: text, offset: offset, to: str) { m, c in
+            let fullRange = NSRange(location: m.first?.location ?? c.location,
+                                    length: (m.last.map { $0.location + $0.length } ?? (c.location + c.length))
+                                           - (m.first?.location ?? c.location))
+            str.addAttribute(.font, value: mono, range: c)
+            str.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: c)
+            str.addAttribute(.backgroundColor, value: inlineCodeBg, range: fullRange)
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+        }
+        apply(pattern: #"~~([^~\n]+?)~~"#, in: text, offset: offset, to: str) { m, c in
+            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            str.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: c)
         }
     }
 
     // MARK: Pattern helper
 
     private static func apply(
-        pattern: String,
-        in text: String,
-        offset: Int,
+        pattern: String, in text: String, offset: Int,
         to str: NSMutableAttributedString,
-        _ apply: ([NSRange], NSRange) -> Void
+        _ body: ([NSRange], NSRange) -> Void
     ) {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
         let fullText = NSRange(text.startIndex..., in: text)
@@ -678,48 +798,36 @@ enum MarkdownFormatter {
             let fullNS    = match.range
             let captureNS = match.range(at: 1)
             guard captureNS.location != NSNotFound, fullNS.location != NSNotFound else { continue }
-
             let fullOff    = NSRange(location: fullNS.location + offset,    length: fullNS.length)
             let captureOff = NSRange(location: captureNS.location + offset, length: captureNS.length)
-
             let prefixLen = captureOff.location - fullOff.location
             let suffixLen = (fullOff.location + fullOff.length) - (captureOff.location + captureOff.length)
             var markers: [NSRange] = []
             if prefixLen > 0 { markers.append(NSRange(location: fullOff.location, length: prefixLen)) }
             if suffixLen > 0 { markers.append(NSRange(location: captureOff.location + captureOff.length, length: suffixLen)) }
-
-            apply(markers, captureOff)
+            body(markers, captureOff)
         }
     }
 
-    // MARK: Small helpers
+    // MARK: Helpers
 
     private static func base(_ font: NSFont) -> [NSAttributedString.Key: Any] {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = 1.5
         style.paragraphSpacing = 2
-        return [
-            .font: font,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: style
-        ]
+        return [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style]
     }
 
     private static func parseHeading(_ line: String) -> (Int, String)? {
         guard line.hasPrefix("#") else { return nil }
         var i = line.startIndex
         var count = 0
-        while i < line.endIndex, line[i] == "#" {
-            count += 1
-            i = line.index(after: i)
-        }
+        while i < line.endIndex, line[i] == "#" { count += 1; i = line.index(after: i) }
         guard count <= 6, i < line.endIndex, line[i] == " " else { return nil }
-        let rest = String(line[line.index(after: i)...])
-        return (count, rest)
+        return (count, String(line[line.index(after: i)...]))
     }
 
     private static func listPrefixLength(_ line: String) -> Int? {
-        // "- ", "* ", "+ ", "  - ", numbered "1. "
         if let r = line.range(of: #"^\s*[-*+] "#, options: .regularExpression) {
             return line.distance(from: line.startIndex, to: r.upperBound)
         }
@@ -737,14 +845,12 @@ private extension String {
     }
 }
 
-// MARK: - Inline marker toggle (pure function — testable without AppKit)
+// MARK: - Inline marker toggle
 
 enum InlineMarkerEditor {
 
     static func toggle(
-        in text: String,
-        selection: NSRange,
-        marker: String
+        in text: String, selection: NSRange, marker: String
     ) -> (text: String, selection: NSRange) {
         let ns = text as NSString
         let mlen = marker.utf16.count
@@ -752,32 +858,30 @@ enum InlineMarkerEditor {
         if selection.length == 0 {
             let inserted = marker + marker
             let newText = ns.replacingCharacters(in: selection, with: inserted)
-            let cursor = NSRange(location: selection.location + mlen, length: 0)
-            return (newText, cursor)
+            return (newText, NSRange(location: selection.location + mlen, length: 0))
         }
 
         let selected = ns.substring(with: selection)
-
         if selected.hasPrefix(marker) && selected.hasSuffix(marker) && selected.utf16.count > mlen * 2 {
             let inner = String(selected.dropFirst(marker.count).dropLast(marker.count))
-            let newText = ns.replacingCharacters(in: selection, with: inner)
-            return (newText, NSRange(location: selection.location, length: inner.utf16.count))
+            return (ns.replacingCharacters(in: selection, with: inner),
+                    NSRange(location: selection.location, length: inner.utf16.count))
         }
 
         let beforeLoc = selection.location - mlen
         let afterLoc = selection.location + selection.length
         if beforeLoc >= 0 && afterLoc + mlen <= ns.length {
             let before = ns.substring(with: NSRange(location: beforeLoc, length: mlen))
-            let after  = ns.substring(with: NSRange(location: afterLoc, length: mlen))
+            let after  = ns.substring(with: NSRange(location: afterLoc,  length: mlen))
             if before == marker && after == marker {
                 let expandedRange = NSRange(location: beforeLoc, length: selection.length + mlen * 2)
-                let newText = ns.replacingCharacters(in: expandedRange, with: selected)
-                return (newText, NSRange(location: beforeLoc, length: selected.utf16.count))
+                return (ns.replacingCharacters(in: expandedRange, with: selected),
+                        NSRange(location: beforeLoc, length: selected.utf16.count))
             }
         }
 
         let wrapped = marker + selected + marker
-        let newText = ns.replacingCharacters(in: selection, with: wrapped)
-        return (newText, NSRange(location: selection.location, length: wrapped.utf16.count))
+        return (ns.replacingCharacters(in: selection, with: wrapped),
+                NSRange(location: selection.location, length: wrapped.utf16.count))
     }
 }
