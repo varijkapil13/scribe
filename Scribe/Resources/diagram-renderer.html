@@ -23,15 +23,24 @@
     }
     #content { min-height: 100vh; }
   </style>
-  <script src="./beautiful-mermaid.js"></script>
   <script>
+    // beautiful-mermaid.js is injected as a WKUserScript at document-start by the host
+    // app — relying on <script src> against a file:// URL is unreliable for headless
+    // WKWebViews. By the time this inline script runs, renderMermaidSVG is already
+    // defined on the global object.
     const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const bg = isDark ? '#1e1e1e' : '#ffffff';
     const fg = isDark ? '#d4d4d4' : '#27272a';
 
     window.renderMermaid = function(source) {
       try {
-        const svg = window.renderMermaidSVG(source, { bg: bg, fg: fg, transparent: true });
+        const fn = (typeof window.renderMermaidSVG === 'function')
+            ? window.renderMermaidSVG
+            : (typeof renderMermaidSVG === 'function' ? renderMermaidSVG : null);
+        if (!fn) {
+          return JSON.stringify({ ok: false, error: 'renderMermaidSVG not loaded — user script injection failed' });
+        }
+        const svg = fn(source, { bg: bg, fg: fg, transparent: true });
         if (!svg) throw new Error('No SVG returned');
         return JSON.stringify({ ok: true, svg: svg });
       } catch (e) {

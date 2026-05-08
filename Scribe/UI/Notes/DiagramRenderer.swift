@@ -181,7 +181,25 @@ final class DiagramRenderer: NSObject {
     private func startWebViewBootstrap() {
         log.debug("bootstrap: starting WKWebView")
         let frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        let wv = WKWebView(frame: frame)
+
+        // Inject beautiful-mermaid.js as a user script at document start. Loading it via
+        // <script src="./beautiful-mermaid.js"> against a file:// URL is unreliable on a
+        // headless WKWebView — the user script path bypasses the file loader entirely.
+        let config = WKWebViewConfiguration()
+        if let jsURL = Bundle.main.url(forResource: "beautiful-mermaid", withExtension: "js"),
+           let jsSource = try? String(contentsOf: jsURL, encoding: .utf8) {
+            let userScript = WKUserScript(
+                source: jsSource,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            config.userContentController.addUserScript(userScript)
+            log.debug("bootstrap: injected beautiful-mermaid.js as user script (\(jsSource.count) chars)")
+        } else {
+            log.error("bootstrap: beautiful-mermaid.js missing from bundle — Mermaid will fail")
+        }
+
+        let wv = WKWebView(frame: frame, configuration: config)
         wv.navigationDelegate = self
         webView = wv
 
