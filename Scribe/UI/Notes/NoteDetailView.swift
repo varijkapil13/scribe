@@ -6,6 +6,14 @@ struct NoteDetailView: View {
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
+    @State private var showDiagramPanel: Bool = false
+
+    private var bodyPublisher: AnyPublisher<String, Never> {
+        vm.$note
+            .map(\.body)
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -43,6 +51,20 @@ struct NoteDetailView: View {
                             }
                         ))
                     }
+
+                    Spacer()
+
+                    if !DiagramRenderer.extractBlocks(from: vm.note.body).isEmpty {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { showDiagramPanel.toggle() }
+                        } label: {
+                            Image(systemName: showDiagramPanel ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                                .imageScale(.small)
+                                .foregroundStyle(showDiagramPanel ? Color.accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(showDiagramPanel ? "Hide diagram panel" : "Show diagram panel")
+                    }
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xxxl)
@@ -52,15 +74,22 @@ struct NoteDetailView: View {
             Divider()
 
             // ── Body editor (reading-width constrained) ────────────────────
-            NoteEditorView(
-                text: Binding(
-                    get: { vm.note.body },
-                    set: { vm.note.body = $0; vm.markDirty() }
-                ),
-                noteStore: .shared,
-                onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
-            )
-            .padding(.vertical, DesignTokens.Spacing.lg)
+            HSplitView {
+                NoteEditorView(
+                    text: Binding(
+                        get: { vm.note.body },
+                        set: { vm.note.body = $0; vm.markDirty() }
+                    ),
+                    noteStore: .shared,
+                    onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
+                )
+                .padding(.vertical, DesignTokens.Spacing.lg)
+
+                if showDiagramPanel {
+                    DiagramPreviewPanel(bodyPublisher: bodyPublisher)
+                        .frame(minWidth: 300)
+                }
+            }
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
             if !vm.backlinks.isEmpty {
