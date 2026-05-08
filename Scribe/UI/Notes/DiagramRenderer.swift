@@ -20,7 +20,7 @@ struct DiagramBlock: Equatable {
 }
 
 @MainActor
-final class DiagramRenderer: NSObject, ObservableObject {
+final class DiagramRenderer: NSObject {
 
     static let shared = DiagramRenderer()
 
@@ -28,6 +28,7 @@ final class DiagramRenderer: NSObject, ObservableObject {
 
     private var cache: [String: NSImage] = [:]
     private var inFlight: [String: [() -> Void]] = [:]
+    private var failedKeys: Set<String> = []
 
     // MARK: - WKWebView (lazy, headless, off-screen)
 
@@ -45,9 +46,10 @@ final class DiagramRenderer: NSObject, ObservableObject {
     func image(type: DiagramType, source: String, onReady: @escaping () -> Void) -> NSImage? {
         let key = Self.cacheKey(type: type, source: source)
         if let img = cache[key] { return img }
+        if failedKeys.contains(key) { return nil }
 
         if inFlight[key] != nil {
-            inFlight[key]!.append(onReady)
+            inFlight[key]?.append(onReady)
             return nil
         }
         inFlight[key] = [onReady]
@@ -58,10 +60,8 @@ final class DiagramRenderer: NSObject, ObservableObject {
     // MARK: - Public API (legacy — Task 9 deletes this)
 
     private var legacyCancellable: AnyCancellable?
-    private weak var legacyWebView: WKWebView?
 
     func bind(bodyPublisher: AnyPublisher<String, Never>, webView: WKWebView) {
-        self.legacyWebView = webView
         legacyCancellable = bodyPublisher
             .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { [weak self] _ in _ = self  /* no-op during migration */ }
@@ -105,7 +105,11 @@ final class DiagramRenderer: NSObject, ObservableObject {
         case .mermaid:  image = await renderMermaid(source)
         case .plantuml: image = await fetchPlantUML(source)
         }
-        if let image { cache[key] = image }
+        if let image {
+            cache[key] = image
+        } else {
+            failedKeys.insert(key)
+        }
         let callbacks = inFlight.removeValue(forKey: key) ?? []
         for cb in callbacks { cb() }
     }
