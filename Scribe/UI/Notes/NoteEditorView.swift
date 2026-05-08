@@ -11,37 +11,43 @@ struct NoteEditorView: View {
     @State private var wikiQuery: String = ""
     @State private var showPopup: Bool = false
     @State private var suggestions: [Note] = []
+    @State private var editorActions = EditorActions()
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            MarkdownEditorView(
-                text: $text,
-                placeholder: "Write your note…",
-                extraHighlighter: highlightWikiLinks(_:),
-                onWikiLinkTyped: { query in
-                    wikiQuery = query
-                    if query.isEmpty {
-                        showPopup = false
-                    } else {
-                        showPopup = true
-                        Task { await loadSuggestions(query: query) }
-                    }
-                },
-                onWikiLinkNavigate: { anchor in onNavigate(anchor) }
-            )
+        VStack(spacing: 0) {
+            FormatToolbar(actions: editorActions)
 
-            if showPopup && !suggestions.isEmpty {
-                WikiLinkPopup(
-                    suggestions: suggestions,
-                    onPick: { note in
-                        insertCompletion(note: note)
-                        showPopup = false
+            ZStack(alignment: .topLeading) {
+                MarkdownEditorView(
+                    text: $text,
+                    placeholder: "Write your note…",
+                    actions: editorActions,
+                    extraHighlighter: highlightWikiLinks(_:),
+                    onWikiLinkTyped: { query in
+                        wikiQuery = query
+                        if query.isEmpty {
+                            showPopup = false
+                        } else {
+                            showPopup = true
+                            Task { await loadSuggestions(query: query) }
+                        }
                     },
-                    onDismiss: { showPopup = false }
+                    onWikiLinkNavigate: { anchor in onNavigate(anchor) }
                 )
-                .padding(.top, 8)
-                .padding(.leading, 4)
-                .zIndex(1)
+
+                if showPopup && !suggestions.isEmpty {
+                    WikiLinkPopup(
+                        suggestions: suggestions,
+                        onPick: { note in
+                            insertCompletion(note: note)
+                            showPopup = false
+                        },
+                        onDismiss: { showPopup = false }
+                    )
+                    .padding(.top, 8)
+                    .padding(.leading, 4)
+                    .zIndex(1)
+                }
             }
         }
     }

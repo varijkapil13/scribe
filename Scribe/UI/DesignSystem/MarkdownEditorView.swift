@@ -17,6 +17,7 @@ struct MarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = "Notes…"
     var font: NSFont = .systemFont(ofSize: 15)
+    var actions: EditorActions? = nil
     var extraHighlighter: ((NSMutableAttributedString) -> Void)? = nil
     var onWikiLinkTyped: ((String) -> Void)? = nil
     var onWikiLinkNavigate: ((String) -> Void)? = nil
@@ -58,6 +59,16 @@ struct MarkdownEditorView: NSViewRepresentable {
         }
         context.coordinator.textView = tv
         context.coordinator.parent = self
+
+        if let actions = actions {
+            let coord = context.coordinator
+            actions.bold          = { [weak coord] in coord?.applyMarker("**") }
+            actions.italic        = { [weak coord] in coord?.applyMarker("*") }
+            actions.strikethrough = { [weak coord] in coord?.applyMarker("~~") }
+            actions.code          = { [weak coord] in coord?.applyMarker("`") }
+            actions.setHeading    = { [weak coord] level in coord?.setHeading(level) }
+        }
+
         return scrollView
     }
 
@@ -135,6 +146,34 @@ struct MarkdownEditorView: NSViewRepresentable {
             if !isURL {
                 detectWikiLinkTyping(in: tv)
             }
+        }
+
+        func setHeading(_ level: Int) {
+            guard let tv = textView else { return }
+            let nsText = tv.string as NSString
+            let cursorLoc = tv.selectedRange().location
+            let lineRange = nsText.lineRange(for: NSRange(location: min(cursorLoc, nsText.length), length: 0))
+            let line = nsText.substring(with: lineRange)
+
+            let stripped: String
+            if let match = line.range(of: #"^#{1,6} "#, options: .regularExpression) {
+                stripped = String(line[match.upperBound...])
+            } else {
+                stripped = line
+            }
+
+            let newLine = level == 0 ? stripped : String(repeating: "#", count: level) + " " + stripped
+
+            guard let storage = tv.textStorage else { return }
+            storage.beginEditing()
+            storage.replaceCharacters(in: lineRange, with: newLine)
+            storage.endEditing()
+
+            let prefixLen = level == 0 ? 0 : level + 1
+            let newCursor = min(lineRange.location + prefixLen, (tv.string as NSString).length)
+            tv.setSelectedRange(NSRange(location: newCursor, length: 0))
+            parent.text = tv.string
+            applyFormatting(to: tv)
         }
 
         private func detectWikiLinkTyping(in tv: NSTextView) {
