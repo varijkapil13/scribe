@@ -230,6 +230,66 @@ final class MarkdownNSTextView: NSTextView {
         textContainerInset = newInset
     }
 
+    // MARK: - List continuation
+
+    override func insertNewline(_ sender: Any?) {
+        guard let coord = delegate as? MarkdownEditorView.Coordinator else {
+            super.insertNewline(sender)
+            return
+        }
+        let nsText = string as NSString
+        let sel = selectedRange()
+        let lineRange = nsText.lineRange(for: NSRange(location: sel.location, length: 0))
+        let lineWithNL = nsText.substring(with: lineRange)
+        let line = lineWithNL.trimmingCharacters(in: .newlines)
+
+        guard let prefix = Self.listPrefix(from: line) else {
+            super.insertNewline(sender)
+            return
+        }
+
+        if line == prefix {
+            // Empty list item — exit list mode: replace line with bare newline
+            textStorage?.beginEditing()
+            textStorage?.replaceCharacters(in: lineRange, with: "\n")
+            textStorage?.endEditing()
+            setSelectedRange(NSRange(location: lineRange.location + 1, length: 0))
+        } else {
+            super.insertNewline(sender)
+            let next = Self.nextListPrefix(from: prefix)
+            insertText(next, replacementRange: selectedRange())
+        }
+        coord.parent.text = string
+        coord.applyFormatting(to: self)
+    }
+
+    // Returns the list prefix of `line`, or nil if not a list item.
+    static func listPrefix(from line: String) -> String? {
+        // Unordered (optional leading spaces, optional checkbox)
+        if let r = line.range(of: #"^(\s*[-*+] (\[[ xX]\] )?)"#, options: .regularExpression) {
+            return String(line[r])
+        }
+        // Ordered: "1. ", "22. " …
+        if let r = line.range(of: #"^\s*\d+\. "#, options: .regularExpression) {
+            return String(line[r])
+        }
+        return nil
+    }
+
+    // For ordered lists increments the counter; resets checked checkboxes to unchecked.
+    static func nextListPrefix(from prefix: String) -> String {
+        if let r = prefix.range(of: #"\d+"#, options: .regularExpression),
+           let num = Int(prefix[r]) {
+            return prefix.replacingCharacters(in: r, with: "\(num + 1)")
+        }
+        if prefix.contains("[x]") || prefix.contains("[X]") {
+            return prefix
+                .replacingOccurrences(of: "[x]", with: "[ ]")
+                .replacingOccurrences(of: "[X]", with: "[ ]")
+        }
+        return prefix
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
               let key = event.charactersIgnoringModifiers else {
@@ -285,9 +345,32 @@ enum MarkdownFormatter {
     static func attributed(_ text: String, font: NSFont) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = text.components(separatedBy: "\n")
+        let mono = NSFont.monospacedSystemFont(ofSize: font.pointSize - 0.5, weight: .regular)
+        let dim = NSColor.tertiaryLabelColor
+        var inFence = false
+
         for (i, line) in lines.enumerated() {
             if i > 0 { result.append(.init(string: "\n")) }
-            result.append(formattedLine(line, font: font))
+
+            if line.hasPrefix("```") {
+                // Fence open/close line — dim entirely, monospace
+                let fenceAttr = NSMutableAttributedString(string: line, attributes: base(font))
+                let full = NSRange(location: 0, length: line.utf16.count)
+                fenceAttr.addAttribute(.foregroundColor, value: dim, range: full)
+                fenceAttr.addAttribute(.font, value: mono, range: full)
+                result.append(fenceAttr)
+                inFence.toggle()
+            } else if inFence {
+                // Code body — monospace, no inline formatting
+                let codeAttr = NSMutableAttributedString(string: line, attributes: base(font))
+                if !line.isEmpty {
+                    codeAttr.addAttribute(.font, value: mono,
+                                         range: NSRange(location: 0, length: line.utf16.count))
+                }
+                result.append(codeAttr)
+            } else {
+                result.append(formattedLine(line, font: font))
+            }
         }
         return result
     }
