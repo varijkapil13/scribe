@@ -98,6 +98,45 @@ struct MarkdownEditorView: NSViewRepresentable {
             detectWikiLinkTyping(in: tv)
         }
 
+        func applyMarker(_ marker: String) {
+            guard let tv = textView else { return }
+            let sel = tv.selectedRange()
+            let (newText, newSel) = InlineMarkerEditor.toggle(in: tv.string, selection: sel, marker: marker)
+            guard let storage = tv.textStorage else { return }
+            storage.beginEditing()
+            storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: newText)
+            storage.endEditing()
+            tv.setSelectedRange(newSel)
+            parent.text = tv.string
+            applyFormatting(to: tv)
+        }
+
+        func applyLinkFormat() {
+            guard let tv = textView else { return }
+            let sel = tv.selectedRange()
+            let selectedText = (tv.string as NSString).substring(with: sel)
+            let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
+            let isURL = URL(string: clipboard)?.scheme?.hasPrefix("http") == true
+
+            let replacement = isURL
+                ? "[\(selectedText.isEmpty ? "link" : selectedText)](\(clipboard))"
+                : "[["
+
+            guard let storage = tv.textStorage else { return }
+            storage.beginEditing()
+            storage.replaceCharacters(in: sel, with: replacement)
+            storage.endEditing()
+
+            if !isURL {
+                tv.setSelectedRange(NSRange(location: sel.location + 2, length: 0))
+            }
+            parent.text = tv.string
+            applyFormatting(to: tv)
+            if !isURL {
+                detectWikiLinkTyping(in: tv)
+            }
+        }
+
         private func detectWikiLinkTyping(in tv: NSTextView) {
             let cursorPos = tv.selectedRange().location
             let text = tv.string
@@ -150,6 +189,21 @@ final class MarkdownNSTextView: NSTextView {
         let newInset = NSSize(width: sideInset, height: 12)
         guard newInset != textContainerInset else { return }
         textContainerInset = newInset
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              let key = event.charactersIgnoringModifiers else {
+            return super.performKeyEquivalent(with: event)
+        }
+        let coord = delegate as? MarkdownEditorView.Coordinator
+        switch key {
+        case "b":  coord?.applyMarker("**"); return true
+        case "i":  coord?.applyMarker("*");  return true
+        case "`":  coord?.applyMarker("`");  return true
+        case "k":  coord?.applyLinkFormat(); return true
+        default:   return super.performKeyEquivalent(with: event)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
