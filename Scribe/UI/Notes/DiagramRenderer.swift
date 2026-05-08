@@ -2,7 +2,10 @@
 import AppKit
 import Foundation
 import CryptoKit
+import OSLog
 import WebKit
+
+private let log = Logger(subsystem: "com.varij.scribe", category: "diagram-renderer")
 
 enum DiagramType: Equatable {
     case mermaid
@@ -90,14 +93,17 @@ final class DiagramRenderer: NSObject {
     // MARK: - Rendering
 
     private func renderToCache(type: DiagramType, source: String, key: String) async {
+        log.debug("render begin: type=\(String(describing: type), privacy: .public) key=\(key.prefix(20), privacy: .public)…")
         var image: NSImage? = nil
         switch type {
         case .mermaid:  image = await renderMermaid(source)
         case .plantuml: image = await fetchPlantUML(source)
         }
         if let image {
+            log.debug("render ok: key=\(key.prefix(20), privacy: .public)… size=\(image.size.width)x\(image.size.height)")
             cache[key] = image
         } else {
+            log.error("render FAILED: type=\(String(describing: type), privacy: .public) key=\(key.prefix(20), privacy: .public)…")
             failedKeys.insert(key)
         }
         let callbacks = inFlight.removeValue(forKey: key) ?? []
@@ -105,24 +111,49 @@ final class DiagramRenderer: NSObject {
     }
 
     private func renderMermaid(_ source: String) async -> NSImage? {
+        log.debug("mermaid: awaiting WKWebView ready (current=\(self.webViewReady))")
         await ensureWebViewLoaded()
-        guard let wv = webView else { return nil }
+        log.debug("mermaid: WKWebView ready=\(self.webViewReady) hasView=\(self.webView != nil)")
+        guard let wv = webView else {
+            log.error("mermaid: webView is nil after bootstrap")
+            return nil
+        }
         let js = "renderMermaid(\(jsonString(source)))"
-        let svg: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-            wv.evaluateJavaScript(js) { result, _ in
-                guard let jsonStr = result as? String,
-                      let data = jsonStr.data(using: .utf8),
-                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let ok = obj["ok"] as? Bool, ok,
-                      let svgStr = obj["svg"] as? String else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                continuation.resume(returning: svgStr)
+        let outcome: (json: String?, errorDesc: String?) = await withCheckedContinuation { (continuation: CheckedContinuation<(String?, String?), Never>) in
+            wv.evaluateJavaScript(js) { result, error in
+                continuation.resume(returning: (result as? String, error?.localizedDescription))
             }
         }
-        guard let svg, let data = svg.data(using: .utf8) else { return nil }
-        return NSImage(data: data)
+        if let errDesc = outcome.errorDesc {
+            log.error("mermaid: evaluateJavaScript error: \(errDesc, privacy: .public)")
+        }
+        guard let jsonStr = outcome.json else {
+            log.error("mermaid: evaluateJavaScript returned non-string (or nil)")
+            return nil
+        }
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            log.error("mermaid: response not JSON: \(jsonStr.prefix(200), privacy: .public)")
+            return nil
+        }
+        guard let ok = obj["ok"] as? Bool, ok else {
+            let err = (obj["error"] as? String) ?? "unknown"
+            log.error("mermaid: render returned ok=false error=\(err, privacy: .public)")
+            return nil
+        }
+        guard let svgStr = obj["svg"] as? String, let svgData = svgStr.data(using: .utf8) else {
+            log.error("mermaid: svg missing in response")
+            return nil
+        }
+        guard let img = NSImage(data: svgData) else {
+            log.error("mermaid: NSImage(data:) returned nil for \(svgData.count) bytes of SVG (first 80 chars: \(svgStr.prefix(80), privacy: .public))")
+            return nil
+        }
+        if img.size.width == 0 || img.size.height == 0 {
+            log.error("mermaid: NSImage has zero size; SVG likely lacks width/height attrs (first 200 chars: \(svgStr.prefix(200), privacy: .public))")
+            return nil
+        }
+        return img
     }
 
     private func fetchPlantUML(_ source: String) async -> NSImage? {
@@ -148,30 +179,39 @@ final class DiagramRenderer: NSObject {
     }
 
     private func startWebViewBootstrap() {
+        log.debug("bootstrap: starting WKWebView")
         let frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         let wv = WKWebView(frame: frame)
         wv.navigationDelegate = self
         webView = wv
 
-        // WKWebView needs a window/view hierarchy to reliably load file:// URLs and run
-        // JS on macOS 14+. Park it in an off-screen NSWindow that is never made visible.
+        // WebKit suspends the WebContent process for WKWebViews whose layers aren't in
+        // the visible compositor (logged as "WebProcess::markAllLayersVolatile"). An
+        // off-screen NSWindow at large negative coords is treated as not-visible and
+        // suspends the page; we instead place the host window on-screen, behind every
+        // other window, and fully transparent.
         let win = NSWindow(
-            contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
         win.isReleasedWhenClosed = false
+        win.alphaValue = 0.0
+        win.ignoresMouseEvents = true
+        win.collectionBehavior = [.transient, .ignoresCycle, .stationary]
         win.contentView?.addSubview(wv)
+        win.orderBack(nil)
         hostWindow = win
 
         guard let resourceDir = Bundle.main.resourceURL,
               let htmlURL = Bundle.main.url(forResource: "diagram-renderer", withExtension: "html") else {
-            // Resource missing — fail all waiters with no-op so callers move on.
+            log.error("bootstrap: diagram-renderer.html resource missing — Mermaid will not render")
             webViewReady = true
             drainBootstrapWaiters()
             return
         }
+        log.debug("bootstrap: loading \(htmlURL.lastPathComponent, privacy: .public)")
         wv.loadFileURL(htmlURL, allowingReadAccessTo: resourceDir)
     }
 
@@ -205,6 +245,23 @@ final class DiagramRenderer: NSObject {
 extension DiagramRenderer: WKNavigationDelegate {
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            log.debug("bootstrap: didFinish — webView ready")
+            self.webViewReady = true
+            self.drainBootstrapWaiters()
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        Task { @MainActor in
+            log.error("bootstrap: didFail — \(error.localizedDescription, privacy: .public)")
+            self.webViewReady = true
+            self.drainBootstrapWaiters()
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        Task { @MainActor in
+            log.error("bootstrap: didFailProvisionalNavigation — \(error.localizedDescription, privacy: .public)")
             self.webViewReady = true
             self.drainBootstrapWaiters()
         }
