@@ -32,6 +32,7 @@ final class DiagramRenderer: NSObject {
     // MARK: - WKWebView (lazy, headless, off-screen)
 
     private var webView: WKWebView?
+    private var hostWindow: NSWindow?
     private var webViewReady = false
     private var bootstrapWaiters: [() -> Void] = []
 
@@ -147,9 +148,23 @@ final class DiagramRenderer: NSObject {
     }
 
     private func startWebViewBootstrap() {
-        let wv = WKWebView(frame: .zero)
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let wv = WKWebView(frame: frame)
         wv.navigationDelegate = self
         webView = wv
+
+        // WKWebView needs a window/view hierarchy to reliably load file:// URLs and run
+        // JS on macOS 14+. Park it in an off-screen NSWindow that is never made visible.
+        let win = NSWindow(
+            contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 600),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        win.isReleasedWhenClosed = false
+        win.contentView?.addSubview(wv)
+        hostWindow = win
+
         guard let resourceDir = Bundle.main.resourceURL,
               let htmlURL = Bundle.main.url(forResource: "diagram-renderer", withExtension: "html") else {
             // Resource missing — fail all waiters with no-op so callers move on.
