@@ -398,6 +398,27 @@ struct MarkdownEditorView: NSViewRepresentable {
             tv.setSelectedRange(NSRange(location: cs, length: ce - cs))
             (tv as? MarkdownNSTextView)?.needsDisplay = true
         }
+
+        /// Place the cursor in the body of the fold's source range and trigger a reformat
+        /// so the fence expands to editable source.
+        func expandFold(id: UUID) {
+            guard let tv = textView,
+                  let fold = foldRegistry.first(where: { $0.id == id }) else { return }
+            // Read the fold's source from the storage attribute (carries the full fence text).
+            let foldSource = tv.textStorage?.attribute(.foldSource, at: fold.displayLocation,
+                                                       effectiveRange: nil) as? String
+            guard let src = foldSource else { return }
+            let nsSrc = src as NSString
+            // Body begins after the opening fence line — i.e., after the first newline.
+            let firstNL = nsSrc.range(of: "\n")
+            let bodyOffset = (firstNL.location != NSNotFound) ? (firstNL.location + 1) : 0
+
+            pendingSourceSelectionOverride = NSRange(
+                location: fold.sourceLocation + bodyOffset,
+                length: 0
+            )
+            applyFormatting(to: tv)
+        }
     }
 }
 
@@ -407,11 +428,96 @@ final class MarkdownNSTextView: NSTextView {
     var placeholderString: String = ""
     var onLinkClick: ((String) -> Void)? = nil
 
+    private var foldTrackingArea: NSTrackingArea?
+    private(set) var hoveredFoldId: UUID?
+
+    private lazy var editButton: NSButton = {
+        let b = NSButton(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
+        b.bezelStyle = .regularSquare
+        b.isBordered = false
+        b.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Edit diagram")
+        b.imagePosition = .imageOnly
+        b.imageScaling = .scaleProportionallyDown
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 4
+        b.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.85).cgColor
+        b.layer?.borderColor = NSColor.separatorColor.cgColor
+        b.layer?.borderWidth = 0.5
+        b.target = self
+        b.action = #selector(editButtonTapped(_:))
+        b.isHidden = true
+        return b
+    }()
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         let newInset = NSSize(width: 20, height: 16)
         guard newInset != textContainerInset else { return }
         textContainerInset = newInset
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = foldTrackingArea { removeTrackingArea(ta) }
+        let ta = NSTrackingArea(
+            rect: visibleRect,
+            options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(ta)
+        foldTrackingArea = ta
+        if editButton.superview == nil { addSubview(editButton) }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        updateHoverOverlay(at: viewPoint)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hideEditButton()
+    }
+
+    private func updateHoverOverlay(at viewPoint: NSPoint) {
+        guard let lm = layoutManager, let tc = textContainer, let storage = textStorage else {
+            hideEditButton(); return
+        }
+        // glyphIndex(for:in:) wants container coords, which differ from view coords
+        // by textContainerOrigin.
+        let inset = textContainerOrigin
+        let containerPoint = NSPoint(x: viewPoint.x - inset.x, y: viewPoint.y - inset.y)
+        let glyphIdx = lm.glyphIndex(for: containerPoint, in: tc)
+        guard glyphIdx < lm.numberOfGlyphs else { hideEditButton(); return }
+        let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
+        guard charIdx < storage.length,
+              let id = storage.attribute(.foldId, at: charIdx, effectiveRange: nil) as? UUID else {
+            hideEditButton(); return
+        }
+        // boundingRect(forGlyphRange:in:) returns container coords; convert back to view coords.
+        let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: charIdx, length: 1),
+                                        actualCharacterRange: nil)
+        let rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+        let frameInView = rect.offsetBy(dx: inset.x, dy: inset.y)
+        // Position button at top-right with 8pt inset.
+        let bx = frameInView.maxX - editButton.frame.width - 8
+        let by = frameInView.minY + 8
+        editButton.frame = NSRect(x: bx, y: by, width: 24, height: 24)
+        editButton.isHidden = false
+        hoveredFoldId = id
+    }
+
+    private func hideEditButton() {
+        editButton.isHidden = true
+        hoveredFoldId = nil
+    }
+
+    @objc private func editButtonTapped(_ sender: Any?) {
+        guard let id = hoveredFoldId,
+              let coord = delegate as? MarkdownEditorView.Coordinator else { return }
+        coord.expandFold(id: id)
     }
 
     // MARK: - Custom background drawing
