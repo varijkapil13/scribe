@@ -6,14 +6,6 @@ struct NoteDetailView: View {
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
-    @State private var showDiagramPanel: Bool = false
-
-    private var bodyPublisher: AnyPublisher<String, Never> {
-        vm.$note
-            .map(\.body)
-            .removeDuplicates()
-            .eraseToAnyPublisher()
-    }
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -53,18 +45,6 @@ struct NoteDetailView: View {
                     }
 
                     Spacer()
-
-                    if showDiagramPanel || !DiagramRenderer.extractBlocks(from: vm.note.body).isEmpty {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) { showDiagramPanel.toggle() }
-                        } label: {
-                            Image(systemName: showDiagramPanel ? "chart.bar.doc.horizontal.fill" : "chart.bar.doc.horizontal")
-                                .imageScale(.small)
-                                .foregroundStyle(showDiagramPanel ? Color.accentColor : .secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(showDiagramPanel ? "Hide diagram preview" : "Show diagram preview")
-                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -83,17 +63,6 @@ struct NoteDetailView: View {
                 onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
             )
             .padding(.vertical, DesignTokens.Spacing.xs)
-
-            // ── Diagram preview (bottom panel, always in hierarchy) ────────
-            // Height-clamped rather than conditional so WKWebView is never destroyed.
-            if showDiagramPanel || !DiagramRenderer.extractBlocks(from: vm.note.body).isEmpty {
-                Divider()
-                DiagramPanelBar(
-                    isExpanded: $showDiagramPanel,
-                    bodyPublisher: bodyPublisher
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
             if !vm.backlinks.isEmpty {
@@ -182,48 +151,6 @@ private struct BacklinksBar: View {
                     .padding(.vertical, DesignTokens.Spacing.sm)
                 }
             }
-        }
-        .background(DesignTokens.Palette.surfaceSunken)
-    }
-}
-
-// MARK: - Diagram panel bar
-
-private struct DiagramPanelBar: View {
-    @Binding var isExpanded: Bool
-    let bodyPublisher: AnyPublisher<String, Never>
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "chart.bar.doc.horizontal")
-                        .imageScale(.small)
-                    Text("Diagrams")
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .imageScale(.small)
-                        .foregroundStyle(.tertiary)
-                }
-                .font(DesignTokens.Typography.eyebrow)
-                .tracking(0.5)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 20)
-                .padding(.vertical, DesignTokens.Spacing.sm)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            // WKWebView must stay in hierarchy; use height clamping to hide.
-            DiagramPreviewPanel(bodyPublisher: bodyPublisher)
-                .frame(minHeight: isExpanded ? 260 : 0,
-                       maxHeight: isExpanded ? 400 : 0)
-                .opacity(isExpanded ? 1 : 0)
-                .clipped()
         }
         .background(DesignTokens.Palette.surfaceSunken)
     }
