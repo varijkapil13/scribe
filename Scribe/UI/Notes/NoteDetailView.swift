@@ -58,12 +58,12 @@ struct NoteDetailView: View {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) { showDiagramPanel.toggle() }
                         } label: {
-                            Image(systemName: showDiagramPanel ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                            Image(systemName: showDiagramPanel ? "chart.bar.doc.horizontal.fill" : "chart.bar.doc.horizontal")
                                 .imageScale(.small)
                                 .foregroundStyle(showDiagramPanel ? Color.accentColor : .secondary)
                         }
                         .buttonStyle(.plain)
-                        .help(showDiagramPanel ? "Hide diagram panel" : "Show diagram panel")
+                        .help(showDiagramPanel ? "Hide diagram preview" : "Show diagram preview")
                     }
                 }
             }
@@ -73,24 +73,26 @@ struct NoteDetailView: View {
 
             Divider()
 
-            // ── Body editor (reading-width constrained) ────────────────────
-            HSplitView {
-                NoteEditorView(
-                    text: Binding(
-                        get: { vm.note.body },
-                        set: { vm.note.body = $0; vm.markDirty() }
-                    ),
-                    noteStore: .shared,
-                    onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
-                )
-                .padding(.vertical, DesignTokens.Spacing.xs)
+            // ── Body editor (full width) ───────────────────────────────────
+            NoteEditorView(
+                text: Binding(
+                    get: { vm.note.body },
+                    set: { vm.note.body = $0; vm.markDirty() }
+                ),
+                noteStore: .shared,
+                onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
+            )
+            .padding(.vertical, DesignTokens.Spacing.xs)
 
-                // Keep in hierarchy (not conditional) so WKWebView survives hide/show cycles.
-                DiagramPreviewPanel(bodyPublisher: bodyPublisher)
-                    .frame(minWidth: showDiagramPanel ? 300 : 0,
-                           maxWidth: showDiagramPanel ? .infinity : 0)
-                    .opacity(showDiagramPanel ? 1 : 0)
-                    .clipped()
+            // ── Diagram preview (bottom panel, always in hierarchy) ────────
+            // Height-clamped rather than conditional so WKWebView is never destroyed.
+            if showDiagramPanel || !DiagramRenderer.extractBlocks(from: vm.note.body).isEmpty {
+                Divider()
+                DiagramPanelBar(
+                    isExpanded: $showDiagramPanel,
+                    bodyPublisher: bodyPublisher
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
@@ -180,6 +182,48 @@ private struct BacklinksBar: View {
                     .padding(.vertical, DesignTokens.Spacing.sm)
                 }
             }
+        }
+        .background(DesignTokens.Palette.surfaceSunken)
+    }
+}
+
+// MARK: - Diagram panel bar
+
+private struct DiagramPanelBar: View {
+    @Binding var isExpanded: Bool
+    let bodyPublisher: AnyPublisher<String, Never>
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                        .imageScale(.small)
+                    Text("Diagrams")
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                }
+                .font(DesignTokens.Typography.eyebrow)
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, DesignTokens.Spacing.xxxl)
+                .padding(.vertical, DesignTokens.Spacing.sm)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // WKWebView must stay in hierarchy; use height clamping to hide.
+            DiagramPreviewPanel(bodyPublisher: bodyPublisher)
+                .frame(minHeight: isExpanded ? 260 : 0,
+                       maxHeight: isExpanded ? 400 : 0)
+                .opacity(isExpanded ? 1 : 0)
+                .clipped()
         }
         .background(DesignTokens.Palette.surfaceSunken)
     }
