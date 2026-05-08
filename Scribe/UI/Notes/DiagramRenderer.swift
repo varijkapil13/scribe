@@ -1,7 +1,6 @@
 // Scribe/UI/Notes/DiagramRenderer.swift
 import AppKit
 import Foundation
-import Combine
 import CryptoKit
 import WebKit
 
@@ -55,16 +54,6 @@ final class DiagramRenderer: NSObject {
         inFlight[key] = [onReady]
         Task { await self.renderToCache(type: type, source: source, key: key) }
         return nil
-    }
-
-    // MARK: - Public API (legacy — Task 9 deletes this)
-
-    private var legacyCancellable: AnyCancellable?
-
-    func bind(bodyPublisher: AnyPublisher<String, Never>, webView: WKWebView) {
-        legacyCancellable = bodyPublisher
-            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
-            .sink { [weak self] _ in _ = self  /* no-op during migration */ }
     }
 
     // MARK: - Parsing (unchanged behaviour, returns richer blocks)
