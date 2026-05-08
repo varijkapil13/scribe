@@ -206,7 +206,7 @@ final class NoteStore: @unchecked Sendable {
 
     func searchNotes(query: String) throws -> [Note] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return [] }
+        guard !q.isEmpty else { return try fetchAllNotes() }
         let sanitized = Self.ftsQuery(from: q)
         guard !sanitized.isEmpty else { return [] }
         return try db.read { database in

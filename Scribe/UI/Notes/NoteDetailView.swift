@@ -28,7 +28,7 @@ struct NoteDetailView: View {
                     get: { vm.note.title },
                     set: { vm.note.title = $0; vm.markDirty() }
                 ))
-                .font(DesignTokens.Typography.title2)
+                .font(.system(size: 20, weight: .semibold, design: .serif))
                 .textFieldStyle(.plain)
                 .foregroundStyle(.primary)
 
@@ -68,8 +68,8 @@ struct NoteDetailView: View {
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xxxl)
-            .padding(.top, DesignTokens.Spacing.xl)
-            .padding(.bottom, DesignTokens.Spacing.lg)
+            .padding(.top, DesignTokens.Spacing.md)
+            .padding(.bottom, DesignTokens.Spacing.xs)
 
             Divider()
 
@@ -83,7 +83,7 @@ struct NoteDetailView: View {
                     noteStore: .shared,
                     onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
                 )
-                .padding(.vertical, DesignTokens.Spacing.lg)
+                .padding(.vertical, DesignTokens.Spacing.xs)
 
                 // Keep in hierarchy (not conditional) so WKWebView survives hide/show cycles.
                 DiagramPreviewPanel(bodyPublisher: bodyPublisher)

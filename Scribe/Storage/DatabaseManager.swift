@@ -365,6 +365,24 @@ final class DatabaseManager: @unchecked Sendable {
             try db.create(index: "notes_notebookId_idx", on: "notes", columns: ["notebookId"])
         }
 
+        // v5_fix_note_links_pk dropped FK constraints; restore them so cascade delete works.
+        migrator.registerMigration("v9_restore_note_links_fk") { db in
+            try db.execute(sql: """
+                CREATE TABLE note_links_fk (
+                    sourceNoteId TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+                    targetNoteId TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+                    anchorText   TEXT NOT NULL,
+                    PRIMARY KEY (sourceNoteId, targetNoteId)
+                )
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO note_links_fk
+                SELECT sourceNoteId, targetNoteId, anchorText FROM note_links
+                """)
+            try db.execute(sql: "DROP TABLE note_links")
+            try db.execute(sql: "ALTER TABLE note_links_fk RENAME TO note_links")
+        }
+
         try migrator.migrate(database)
     }
 }

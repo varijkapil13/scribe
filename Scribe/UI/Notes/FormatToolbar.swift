@@ -14,31 +14,37 @@ struct FormatToolbar: View {
     let actions: EditorActions
 
     var body: some View {
-        HStack(spacing: 2) {
-            ToolbarButton(systemImage: "bold", tooltip: "Bold (⌘B)")        { actions.bold?() }
-            ToolbarButton(systemImage: "italic", tooltip: "Italic (⌘I)")     { actions.italic?() }
+        HStack(spacing: 0) {
+            ToolbarButton(systemImage: "bold", tooltip: "Bold (⌘B)")            { actions.bold?() }
+            ToolbarButton(systemImage: "italic", tooltip: "Italic (⌘I)")         { actions.italic?() }
             ToolbarButton(systemImage: "strikethrough", tooltip: "Strikethrough") { actions.strikethrough?() }
             ToolbarButton(systemImage: "chevron.left.forwardslash.chevron.right", tooltip: "Inline Code (⌘`)") { actions.code?() }
 
-            Divider().frame(height: 16).padding(.horizontal, 4)
+            Divider().frame(height: 20).padding(.horizontal, 6)
 
             Menu {
-                Button("Paragraph") { actions.setHeading?(0) }
-                Button("Heading 1") { actions.setHeading?(1) }
-                Button("Heading 2") { actions.setHeading?(2) }
-                Button("Heading 3") { actions.setHeading?(3) }
+                Button("Paragraph")  { actions.setHeading?(0) }
+                Divider()
+                Button("Heading 1")  { actions.setHeading?(1) }
+                Button("Heading 2")  { actions.setHeading?(2) }
+                Button("Heading 3")  { actions.setHeading?(3) }
             } label: {
-                Text("¶ T")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36)
+                HStack(spacing: 4) {
+                    Image(systemName: "textformat.size")
+                    Image(systemName: "chevron.down")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(height: 32)
+                .padding(.horizontal, 8)
             }
             .menuStyle(.borderlessButton)
             .help("Paragraph style")
+            .fixedSize()
 
             Spacer()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
@@ -53,7 +59,9 @@ private struct ToolbarButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .frame(width: 28, height: 24)
+                .imageScale(.medium)
+                .frame(width: 36, height: 32)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(tooltip)
