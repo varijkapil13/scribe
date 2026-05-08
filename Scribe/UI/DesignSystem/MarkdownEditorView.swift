@@ -256,9 +256,14 @@ struct MarkdownEditorView: NSViewRepresentable {
 
         /// Edits the markdown source. The closure receives current source + source-coord selection
         /// and returns the new source + new source-coord selection. The helper decomposes storage,
-        /// translates the display selection to source coords, runs the closure, resets storage to
-        /// the new source (which clears any fold attachments — applyFormatting re-folds), and
-        /// restores the new selection through the rebuilt registry.
+        /// translates the display selection to source coords, runs the closure, then hands the
+        /// new source straight to `applyFormatting` which is the single point that touches storage.
+        ///
+        /// We deliberately do NOT do `tv.string = newSource` here: that would queue a second
+        /// `setAttributedString`-equivalent in addition to the one inside applyFormatting, and a
+        /// double invalidation in quick succession leaves NSLayoutManager's glyph cache in a
+        /// transient state that crashes the next `drawBackground`-driven `ensureLayout` with
+        /// `[NSRLEArray objectAtRunIndex:length:]`.
         func editSource(_ edit: (String, NSRange) -> (newSource: String, newSelection: NSRange)) {
             guard let tv = textView, let storage = tv.textStorage else { return }
             let (currentSource, oldRegistry) = FoldRegistry.decompose(storage)
@@ -269,9 +274,8 @@ struct MarkdownEditorView: NSViewRepresentable {
 
             let (newSource, newSourceSel) = edit(currentSource, sourceSel)
 
-            tv.string = newSource
             pendingSourceSelectionOverride = newSourceSel
-            applyFormatting(to: tv)
+            applyFormatting(to: tv, sourceOverride: newSource)
         }
 
         private func detectWikiLinkTyping(in tv: NSTextView) {
@@ -288,13 +292,32 @@ struct MarkdownEditorView: NSViewRepresentable {
             parent.onWikiLinkTyped?("")
         }
 
-        func applyFormatting(to tv: NSTextView) {
+        /// Reformat the editor.
+        ///
+        /// When `sourceOverride` is provided, the source is taken verbatim and the storage is
+        /// replaced exactly once (with the freshly-built display attributed string). When it's
+        /// nil, the source is reconstructed from the current storage's `.foldSource`-tagged runs.
+        /// `editSource` and other source-mutating callers MUST pass `sourceOverride` so we
+        /// avoid a `tv.string = …` write followed by a `setAttributedString` write in quick
+        /// succession — that double-invalidation can crash `drawBackground`'s `ensureLayout`.
+        func applyFormatting(to tv: NSTextView, sourceOverride: String? = nil) {
             guard let storage = tv.textStorage else { return }
             isApplyingFormatting = true
             defer { isApplyingFormatting = false }
 
-            // 1. Decompose current display into source + old registry.
-            let (currentSource, oldRegistry) = FoldRegistry.decompose(storage)
+            // 1. Determine the source — either provided directly or decomposed from storage.
+            //    When provided, oldRegistry is empty (caller must supply pendingSourceSelectionOverride
+            //    so we don't try to map a display-coord selection through an empty registry).
+            let currentSource: String
+            let oldRegistry: [FoldEntry]
+            if let s = sourceOverride {
+                currentSource = s
+                oldRegistry = []
+            } else {
+                let decomposed = FoldRegistry.decompose(storage)
+                currentSource = decomposed.source
+                oldRegistry = decomposed.registry
+            }
 
             // 2. Determine source-coord selection (start + end) round-trip target.
             let sourceSel: NSRange
