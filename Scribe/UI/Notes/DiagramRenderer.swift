@@ -35,11 +35,13 @@ final class DiagramRenderer: ObservableObject {
             }
     }
 
+    nonisolated(unsafe) private static let blockRegex = try? NSRegularExpression(
+        pattern: #"```(mermaid|plantuml)\n([\s\S]*?)```"#
+    )
+
     /// Parses fenced ```mermaid and ```plantuml blocks. Pure function — no side effects.
     nonisolated static func extractBlocks(from body: String) -> [DiagramBlock] {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"```(mermaid|plantuml)\n([\s\S]*?)```"#
-        ) else { return [] }
+        guard let regex = blockRegex else { return [] }
 
         var blocks: [DiagramBlock] = []
         let fullRange = NSRange(body.startIndex..., in: body)

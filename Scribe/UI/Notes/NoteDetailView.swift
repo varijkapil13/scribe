@@ -85,10 +85,12 @@ struct NoteDetailView: View {
                 )
                 .padding(.vertical, DesignTokens.Spacing.lg)
 
-                if showDiagramPanel {
-                    DiagramPreviewPanel(bodyPublisher: bodyPublisher)
-                        .frame(minWidth: 300)
-                }
+                // Keep in hierarchy (not conditional) so WKWebView survives hide/show cycles.
+                DiagramPreviewPanel(bodyPublisher: bodyPublisher)
+                    .frame(minWidth: showDiagramPanel ? 300 : 0,
+                           maxWidth: showDiagramPanel ? .infinity : 0)
+                    .opacity(showDiagramPanel ? 1 : 0)
+                    .clipped()
             }
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
