@@ -126,7 +126,6 @@ private struct DraftDailyNoteView: View {
                 noteStore: .shared,
                 onNavigate: onNavigate
             )
-            .padding(.horizontal, DesignTokens.Spacing.xxxl)
             .padding(.vertical, DesignTokens.Spacing.lg)
         }
         .onChange(of: bodyText) { _, newValue in

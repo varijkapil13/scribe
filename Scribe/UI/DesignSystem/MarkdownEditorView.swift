@@ -147,7 +147,9 @@ final class MarkdownNSTextView: NSTextView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         let sideInset = max(16, (newSize.width - 640) / 2)
-        textContainerInset = NSSize(width: sideInset, height: 12)
+        let newInset = NSSize(width: sideInset, height: 12)
+        guard newInset != textContainerInset else { return }
+        textContainerInset = newInset
     }
 
     override func mouseDown(with event: NSEvent) {
