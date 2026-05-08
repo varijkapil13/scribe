@@ -9293,4 +9293,3 @@ export {
   renderMermaidSVGAsync,
   renderMermaidSync
 };
-//# sourceMappingURL=index.js.map

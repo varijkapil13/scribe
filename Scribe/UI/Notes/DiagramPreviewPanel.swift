@@ -11,10 +11,7 @@ struct DiagramPreviewPanel: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-
-        let wv = WKWebView(frame: .zero, configuration: config)
+        let wv = WKWebView(frame: .zero)
         wv.navigationDelegate = context.coordinator
 
         guard
