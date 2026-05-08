@@ -38,7 +38,18 @@
             ? window.renderMermaidSVG
             : (typeof renderMermaidSVG === 'function' ? renderMermaidSVG : null);
         if (!fn) {
-          return JSON.stringify({ ok: false, error: 'renderMermaidSVG not loaded — user script injection failed' });
+          // Build a diagnostic so the Swift caller can see exactly what state the page is in.
+          const diag = {
+            scriptStart: window._userScriptStart === true,
+            scriptEnd: window._userScriptEnd === true,
+            scriptError: window._userScriptError || null,
+            scriptErrorLine: window._userScriptErrorLine || null,
+            listenerErr: window._userScriptListenerError || null,
+            wnFn: typeof window.renderMermaidSVG,
+            bareFn: typeof renderMermaidSVG,
+            mermaidKeys: Object.keys(window).filter(function(k){ return k.toLowerCase().indexOf('mermaid') !== -1; })
+          };
+          return JSON.stringify({ ok: false, error: 'renderMermaidSVG not loaded', diag: diag });
         }
         const svg = fn(source, { bg: bg, fg: fg, transparent: true });
         if (!svg) throw new Error('No SVG returned');

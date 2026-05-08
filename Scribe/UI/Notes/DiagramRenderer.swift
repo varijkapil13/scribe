@@ -138,7 +138,13 @@ final class DiagramRenderer: NSObject {
         }
         guard let ok = obj["ok"] as? Bool, ok else {
             let err = (obj["error"] as? String) ?? "unknown"
-            log.error("mermaid: render returned ok=false error=\(err, privacy: .public)")
+            if let diag = obj["diag"] as? [String: Any] {
+                let diagStr = (try? JSONSerialization.data(withJSONObject: diag, options: []))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "?"
+                log.error("mermaid: render returned ok=false error=\(err, privacy: .public) diag=\(diagStr, privacy: .public)")
+            } else {
+                log.error("mermaid: render returned ok=false error=\(err, privacy: .public)")
+            }
             return nil
         }
         guard let svgStr = obj["svg"] as? String, let svgData = svgStr.data(using: .utf8) else {
@@ -185,11 +191,24 @@ final class DiagramRenderer: NSObject {
         // Inject beautiful-mermaid.js as a user script at document start. Loading it via
         // <script src="./beautiful-mermaid.js"> against a file:// URL is unreliable on a
         // headless WKWebView — the user script path bypasses the file loader entirely.
+        // We wrap the bundle with start/end markers + an onerror handler so the inline
+        // wrapper in diagram-renderer.html can report exactly where it stopped.
         let config = WKWebViewConfiguration()
         if let jsURL = Bundle.main.url(forResource: "beautiful-mermaid", withExtension: "js"),
            let jsSource = try? String(contentsOf: jsURL, encoding: .utf8) {
+            let wrapped = """
+            window._userScriptStart = true;
+            try {
+              window.addEventListener('error', function(e) {
+                window._userScriptError = (e.error && e.error.message) ? e.error.message : (e.message || String(e));
+                window._userScriptErrorLine = e.lineno || -1;
+              });
+            } catch (e) { window._userScriptListenerError = String(e); }
+            \(jsSource)
+            window._userScriptEnd = true;
+            """
             let userScript = WKUserScript(
-                source: jsSource,
+                source: wrapped,
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
