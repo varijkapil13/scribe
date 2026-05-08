@@ -16,7 +16,7 @@ struct MarkdownEditorView: NSViewRepresentable {
 
     @Binding var text: String
     var placeholder: String = "Notes…"
-    var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
+    var font: NSFont = .systemFont(ofSize: 15)
     var extraHighlighter: ((NSMutableAttributedString) -> Void)? = nil
     var onWikiLinkTyped: ((String) -> Void)? = nil
     var onWikiLinkNavigate: ((String) -> Void)? = nil
@@ -36,7 +36,6 @@ struct MarkdownEditorView: NSViewRepresentable {
         tv.isEditable = true
         tv.isSelectable = true
         tv.drawsBackground = false
-        tv.textContainerInset = NSSize(width: 4, height: 8)
         tv.font = font
         tv.textColor = .labelColor
         tv.isAutomaticQuoteSubstitutionEnabled = false
@@ -144,6 +143,12 @@ struct MarkdownEditorView: NSViewRepresentable {
 final class MarkdownNSTextView: NSTextView {
     var placeholderString: String = ""
     var onLinkClick: ((String) -> Void)? = nil
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        let sideInset = max(16, (newSize.width - 640) / 2)
+        textContainerInset = NSSize(width: sideInset, height: 12)
+    }
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
@@ -325,7 +330,14 @@ enum MarkdownFormatter {
     // MARK: Small helpers
 
     private static func base(_ font: NSFont) -> [NSAttributedString.Key: Any] {
-        [.font: font, .foregroundColor: NSColor.labelColor]
+        let style = NSMutableParagraphStyle()
+        style.lineHeightMultiple = 1.7
+        style.paragraphSpacing = 8
+        return [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: style
+        ]
     }
 
     private static func parseHeading(_ line: String) -> (Int, String)? {

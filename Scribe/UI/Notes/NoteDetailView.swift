@@ -60,7 +60,6 @@ struct NoteDetailView: View {
                 noteStore: .shared,
                 onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
             )
-            .padding(.horizontal, DesignTokens.Spacing.xxxl)
             .padding(.vertical, DesignTokens.Spacing.lg)
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
