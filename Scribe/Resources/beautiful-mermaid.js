@@ -5945,13 +5945,12 @@ var ARROW_HEAD = {
 };
 
 // src/elk-instance.ts
-// ELK (Eclipse Layout Kernel) is used for advanced async layouts; we stub it
-// because `elkjs` couldn't be inlined in this bundle. Sync diagram paths
-// (flowchart, sequence, class, ER, xychart) don't need it. If anything calls
-// `new ELKBundled()`, it throws with a clear message.
-function ELKBundled() {
-  throw new Error('ELK layout unavailable in offline build — use sync diagram types');
-}
+// elkjs is shipped alongside this bundle (Resources/elk.bundled.js) and
+// injected before this script via evaluateJavaScript. Its UMD wrapper exposes
+// the constructor as `window.ELK`. Alias it to the name the bundle expects.
+var ELKBundled = (typeof window !== 'undefined' && window.ELK)
+  ? window.ELK
+  : (function() { throw new Error('ELK not loaded — elk.bundled.js missing or failed to evaluate'); });
 var elk = null;
 var rawWorker = null;
 function ensureElk() {

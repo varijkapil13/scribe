@@ -283,26 +283,32 @@ extension DiagramRenderer: WKNavigationDelegate {
 
     @MainActor
     private func injectMermaidBundle(into webView: WKWebView) async {
-        guard let jsURL = Bundle.main.url(forResource: "beautiful-mermaid", withExtension: "js"),
+        // Order matters: elk MUST run first so `window.ELK` exists before the mermaid
+        // bundle's `var ELKBundled = window.ELK` aliasing executes.
+        await injectScript(named: "elk.bundled", into: webView, label: "elk")
+        await injectScript(named: "beautiful-mermaid", into: webView, label: "mermaid")
+    }
+
+    @MainActor
+    private func injectScript(named resourceName: String, into webView: WKWebView, label: String) async {
+        guard let jsURL = Bundle.main.url(forResource: resourceName, withExtension: "js"),
               let jsSource = try? String(contentsOf: jsURL, encoding: .utf8) else {
-            log.error("inject: beautiful-mermaid.js missing from bundle")
+            log.error("inject(\(label, privacy: .public)): \(resourceName, privacy: .public).js missing from bundle")
             return
         }
-        log.debug("inject: evaluating bundle (\(jsSource.count) chars)")
-        // The bundle ends with assignment expressions whose result values are
-        // functions; `evaluateJavaScript` can't bridge a function back to Swift and
-        // fails with "unsupported result type" even though the script ran cleanly.
-        // Append a trailing `null` so the last expression is bridgeable.
-        let evalScript = jsSource + "\nnull;"
+        log.debug("inject(\(label, privacy: .public)): evaluating \(resourceName, privacy: .public).js (\(jsSource.count) chars)")
+        // Trailing `null;` ensures evaluateJavaScript can bridge a result type back
+        // to Swift even when the last expression in the script is a function value.
+        let evalScript = jsSource + "\n;null;"
         let errDesc: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             webView.evaluateJavaScript(evalScript) { _, error in
                 continuation.resume(returning: error?.localizedDescription)
             }
         }
         if let errDesc {
-            log.error("inject: bundle evaluation threw: \(errDesc, privacy: .public)")
+            log.error("inject(\(label, privacy: .public)): evaluation threw — \(errDesc, privacy: .public)")
         } else {
-            log.debug("inject: bundle evaluation succeeded")
+            log.debug("inject(\(label, privacy: .public)): evaluation succeeded")
         }
     }
 }
