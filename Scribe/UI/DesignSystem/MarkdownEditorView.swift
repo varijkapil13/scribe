@@ -449,11 +449,32 @@ final class MarkdownNSTextView: NSTextView {
         return b
     }()
 
+    private var lastContentWidth: CGFloat = 0
+    private var resizeReformatScheduled = false
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         let newInset = NSSize(width: 20, height: 16)
-        guard newInset != textContainerInset else { return }
-        textContainerInset = newInset
+        if newInset != textContainerInset {
+            textContainerInset = newInset
+        }
+        let contentWidth = newSize.width - newInset.width * 2
+        if abs(contentWidth - lastContentWidth) > 0.5 {
+            lastContentWidth = contentWidth
+            scheduleResizeReformat()
+        }
+    }
+
+    private func scheduleResizeReformat() {
+        if resizeReformatScheduled { return }
+        resizeReformatScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.resizeReformatScheduled = false
+            if let coord = self.delegate as? MarkdownEditorView.Coordinator {
+                coord.applyFormatting(to: self)
+            }
+        }
     }
 
     override func updateTrackingAreas() {
