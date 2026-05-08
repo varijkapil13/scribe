@@ -297,8 +297,7 @@ final class MarkdownNSTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        let sideInset = max(16, (newSize.width - 640) / 2)
-        let newInset = NSSize(width: sideInset, height: 12)
+        let newInset = NSSize(width: 20, height: 16)
         guard newInset != textContainerInset else { return }
         textContainerInset = newInset
     }
@@ -502,34 +501,61 @@ enum MarkdownFormatter {
     static func attributed(_ text: String, font: NSFont) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = text.components(separatedBy: "\n")
-        let mono = NSFont.monospacedSystemFont(ofSize: font.pointSize - 0.5, weight: .regular)
+        let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
         let dim = NSColor.tertiaryLabelColor
         var inFence = false
+        var fenceStart = -1   // index of opening ``` line
 
         for (i, line) in lines.enumerated() {
             if i > 0 { result.append(.init(string: "\n")) }
 
             if line.hasPrefix("```") {
-                // Fence open/close line — dim entirely, monospace
-                let fenceAttr = NSMutableAttributedString(string: line, attributes: base(font))
+                let isFenceOpen = !inFence
+                inFence.toggle()
+                if isFenceOpen { fenceStart = i }
+
+                // Fence marker line
+                let attrs = codeBlockBase(font: monoFont,
+                                          spacingBefore: isFenceOpen ? 6 : 0,
+                                          spacingAfter:  isFenceOpen ? 0 : 6)
+                let fenceAttr = NSMutableAttributedString(string: line, attributes: attrs)
                 let full = NSRange(location: 0, length: line.utf16.count)
                 fenceAttr.addAttribute(.foregroundColor, value: dim, range: full)
-                fenceAttr.addAttribute(.font, value: mono, range: full)
                 result.append(fenceAttr)
-                inFence.toggle()
+                _ = fenceStart   // suppress unused-var warning
             } else if inFence {
-                // Code body — monospace, no inline formatting
-                let codeAttr = NSMutableAttributedString(string: line, attributes: base(font))
-                if !line.isEmpty {
-                    codeAttr.addAttribute(.font, value: mono,
-                                         range: NSRange(location: 0, length: line.utf16.count))
-                }
-                result.append(codeAttr)
+                let attrs = codeBlockBase(font: monoFont, spacingBefore: 0, spacingAfter: 0)
+                result.append(NSMutableAttributedString(string: line, attributes: attrs))
             } else {
                 result.append(formattedLine(line, font: font))
             }
         }
         return result
+    }
+
+    private static func codeBlockBase(font: NSFont,
+                                       spacingBefore: CGFloat,
+                                       spacingAfter: CGFloat) -> [NSAttributedString.Key: Any] {
+        let style = NSMutableParagraphStyle()
+        style.lineHeightMultiple = 1.25
+        style.paragraphSpacing = spacingAfter
+        style.paragraphSpacingBefore = spacingBefore
+        // Small left indent so code feels inset from prose
+        style.headIndent = 6
+        style.firstLineHeadIndent = 6
+        return [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: style,
+            .backgroundColor: codeBackground
+        ]
+    }
+
+    private static let codeBackground: NSColor = NSColor(name: nil) { appearance in
+        switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
+        case .darkAqua: return NSColor(white: 1.0, alpha: 0.07)
+        default:        return NSColor(white: 0.0, alpha: 0.05)
+        }
     }
 
     // MARK: Per-line
@@ -621,9 +647,13 @@ enum MarkdownFormatter {
         }
         // Inline code `...`
         apply(pattern: #"`([^`\n]+?)`"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
-            markerRanges.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
+            markerRanges.forEach {
+                str.addAttribute(.foregroundColor, value: dim, range: $0)
+                str.addAttribute(.backgroundColor, value: codeBackground, range: $0)
+            }
             str.addAttribute(.font, value: mono, range: contentRange)
             str.addAttribute(.foregroundColor, value: NSColor.systemOrange, range: contentRange)
+            str.addAttribute(.backgroundColor, value: codeBackground, range: contentRange)
         }
         // Strikethrough ~~...~~
         apply(pattern: #"~~([^~\n]+?)~~"#, in: text, offset: offset, to: str) { markerRanges, contentRange in
@@ -666,8 +696,8 @@ enum MarkdownFormatter {
 
     private static func base(_ font: NSFont) -> [NSAttributedString.Key: Any] {
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.7
-        style.paragraphSpacing = 8
+        style.lineHeightMultiple = 1.5
+        style.paragraphSpacing = 2
         return [
             .font: font,
             .foregroundColor: NSColor.labelColor,

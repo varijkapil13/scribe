@@ -67,8 +67,8 @@ struct NoteDetailView: View {
                     }
                 }
             }
-            .padding(.horizontal, DesignTokens.Spacing.xxxl)
-            .padding(.top, DesignTokens.Spacing.md)
+            .padding(.horizontal, 20)
+            .padding(.top, DesignTokens.Spacing.sm)
             .padding(.bottom, DesignTokens.Spacing.xs)
 
             Divider()
@@ -144,7 +144,7 @@ private struct BacklinksBar: View {
                 .font(DesignTokens.Typography.eyebrow)
                 .tracking(0.5)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, DesignTokens.Spacing.xxxl)
+                .padding(.horizontal, 20)
                 .padding(.vertical, DesignTokens.Spacing.sm)
                 .contentShape(Rectangle())
             }
@@ -178,7 +178,7 @@ private struct BacklinksBar: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, DesignTokens.Spacing.xxxl)
+                    .padding(.horizontal, 20)
                     .padding(.vertical, DesignTokens.Spacing.sm)
                 }
             }
@@ -212,7 +212,7 @@ private struct DiagramPanelBar: View {
                 .font(DesignTokens.Typography.eyebrow)
                 .tracking(0.5)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, DesignTokens.Spacing.xxxl)
+                .padding(.horizontal, 20)
                 .padding(.vertical, DesignTokens.Spacing.sm)
                 .contentShape(Rectangle())
             }
