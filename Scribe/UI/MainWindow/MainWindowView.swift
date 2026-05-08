@@ -462,10 +462,6 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private func notesDetailView(filter: NotesFilter) -> some View {
-        let noteListBinding = Binding<String?>(
-            get: { if case .note(let id) = selection { return id } else { return nil } },
-            set: { id in selection = id.map { .note($0) } ?? .notes(filter) }
-        )
         switch filter {
         case .today:
             Group {
@@ -486,11 +482,14 @@ struct MainWindowView: View {
         case .tag(let tag):
             TaggedContentView(tag: tag, onNavigate: { selection = .note($0) })
         case .inbox:
-            NoteListView(scope: .inbox, selectedNoteId: noteListBinding)
+            NotesBrowserView(scope: .inbox)
+                .id(NotesFilter.inbox)
         case .notebook(let notebookId):
-            NoteListView(scope: .notebook(notebookId), selectedNoteId: noteListBinding)
+            NotesBrowserView(scope: .notebook(notebookId))
+                .id(NotesFilter.notebook(notebookId))
         case .all:
-            NoteListView(scope: .all, selectedNoteId: noteListBinding)
+            NotesBrowserView(scope: .all)
+                .id(NotesFilter.all)
         }
     }
 

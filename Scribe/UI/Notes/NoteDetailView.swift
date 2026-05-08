@@ -74,20 +74,6 @@ struct NoteDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    if vm.isDirty {
-                        Text("Unsaved changes")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Save") { vm.save() }
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(!vm.isDirty)
-                }
-            }
-        }
         .alert("Error", isPresented: Binding(
             get: { vm.errorMessage != nil },
             set: { if !$0 { vm.errorMessage = nil } }

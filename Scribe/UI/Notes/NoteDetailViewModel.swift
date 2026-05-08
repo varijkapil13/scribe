@@ -12,12 +12,17 @@ final class NoteDetailViewModel: ObservableObject {
 
     private let store: NoteStore
     private let onNavigate: (String) -> Void
+    private var autosaveCancellable: AnyCancellable?
 
     init(note: Note, store: NoteStore = .shared, onNavigate: @escaping (String) -> Void = { _ in }) {
         self.note = note
         self.store = store
         self.onNavigate = onNavigate
         reload()
+        autosaveCancellable = $isDirty
+            .filter { $0 }
+            .debounce(for: .seconds(1.5), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.save() }
     }
 
     private func reload() {
