@@ -299,10 +299,19 @@ final class AppState: ObservableObject {
     ///
     /// - Parameter title: Display title for the session. Defaults to `"Untitled Session"`.
     /// - Throws: If audio capture fails.
-    func startSession(title: String = "Untitled Session") async throws {
+    func startSession(
+        title: String = "Untitled Session",
+        noteId: String? = nil
+    ) async throws {
         // Create a persistent session.
         let session = try transcriptStore.createSession(title: title)
         currentSessionId = session.id
+
+        // Bind to a Note immediately if requested, so the Sessions strip in
+        // the open note observes the new chip from the very first frame.
+        if let noteId {
+            try transcriptStore.bindSession(session.id, toNote: noteId)
+        }
 
         // Reset live view buffer, coalesce buffer, and diagnostic flags.
         overlaySegments.removeAll()
