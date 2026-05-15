@@ -78,7 +78,10 @@ final class TranscriptStore: @unchecked Sendable {
 
     // MARK: - Note binding
 
-    /// Binds a session to a note. Pass `nil` to detach.
+    /// Binds a session to a note (or detaches when passed `nil`).
+    /// The schema has no FK on `notes.id` — callers deleting the parent note
+    /// must pass `nil` first if they want the session record preserved.
+    /// `NoteStore.deleteNote` performs this sweep automatically.
     func bindSession(_ sessionId: String, toNote noteId: String?) throws {
         try db.write { database in
             try database.execute(

@@ -43,14 +43,16 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
 
     func testFetchSessionsForNoteIdOrdersByCreatedAtDesc() throws {
         let note = try notes.createNote(title: "N", body: "")
-        let s1 = try transcripts.createSession(title: "First")
-        // Sleep 10 ms so s2 gets a strictly later createdAt timestamp.
-        Thread.sleep(forTimeInterval: 0.01)
-        let s2 = try transcripts.createSession(title: "Second")
-        try transcripts.bindSession(s1.id, toNote: note.id)
-        try transcripts.bindSession(s2.id, toNote: note.id)
+        let earlier = Session(title: "First", createdAt: Date(timeIntervalSinceNow: -10))
+        let later = Session(title: "Second", createdAt: Date())
+        try dbm.database.write {
+            try earlier.insert($0)
+            try later.insert($0)
+        }
+        try transcripts.bindSession(earlier.id, toNote: note.id)
+        try transcripts.bindSession(later.id, toNote: note.id)
         let list = try transcripts.fetchSessions(forNoteId: note.id)
-        XCTAssertEqual(list.map(\.id), [s2.id, s1.id])
+        XCTAssertEqual(list.map(\.id), [later.id, earlier.id])
     }
 
     func testFetchSessionsForNoteIdExcludesUnbound() throws {
