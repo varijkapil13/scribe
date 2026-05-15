@@ -134,6 +134,29 @@ struct NoteDetailView: View {
             }
             .frame(minWidth: 720, minHeight: 540)
         }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    exportMarkdown()
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .help("Export this note as Markdown")
+            }
+        }
+    }
+
+    private func exportMarkdown() {
+        let markdown = NoteMarkdownExporter.export(note: vm.note,
+                                                   transcriptStore: .shared)
+        let safeTitle = vm.note.title.isEmpty
+            ? "Untitled-note"
+            : vm.note.title.replacingOccurrences(of: " ", with: "_")
+        ExportManager.saveToFile(
+            content: markdown,
+            defaultName: safeTitle,
+            fileExtension: "md"
+        )
     }
 }
 
