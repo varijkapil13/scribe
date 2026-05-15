@@ -15,6 +15,11 @@ struct NoteDetailView: View {
         self.onNavigate = onNavigate
     }
 
+    private var isRecordingForThisNote: Bool {
+        guard appState.isTranscribing, let currentId = appState.currentSessionId else { return false }
+        return vm.sessions.contains(where: { $0.id == currentId })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // ── Document header ────────────────────────────────────────────
@@ -61,6 +66,9 @@ struct NoteDetailView: View {
                 selectedSessionId: $selectedSessionId,
                 onStartRecording: { vm.startRecording(appState: appState) }
             )
+            if isRecordingForThisNote {
+                NoteLiveRecordingPane()
+            }
             if let selectedId = selectedSessionId,
                let session = vm.sessions.first(where: { $0.id == selectedId }) {
                 NoteSessionAutoSection(
