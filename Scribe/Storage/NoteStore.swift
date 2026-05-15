@@ -80,11 +80,13 @@ final class NoteStore: @unchecked Sendable {
 
     func deleteNote(id: String) throws {
         try db.write { database in
-            // Sweep sessions.noteId → NULL so transcripts outlive their note.
-            // FK is not enforced via ALTER TABLE in this codebase; this is the
-            // same pattern used by deleteNotebook for notes.notebookId.
+            // Cascade-delete sessions owned by this note. The session's FKs
+            // (set up in v1 and v2 migrations) cascade to segments,
+            // meeting_summaries, action_items, and extracted_entities.
+            // Tasks.sourceSessionId is ON DELETE SET NULL so converted tasks
+            // survive with their source link cleared.
             try database.execute(
-                sql: "UPDATE sessions SET noteId = NULL WHERE noteId = ?",
+                sql: "DELETE FROM sessions WHERE noteId = ?",
                 arguments: [id]
             )
             _ = try Note.deleteOne(database, key: id)

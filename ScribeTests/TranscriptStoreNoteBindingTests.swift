@@ -92,16 +92,37 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
         XCTAssertEqual(emissions.last?.first?.id, session.id)
     }
 
-    func testDeleteNoteSweepsBoundSessions() throws {
+    func testDeleteNoteAlsoDeletesItsSessions() throws {
         let note = try notes.createNote(title: "N", body: "")
         let session = try transcripts.createSession(title: "S", noteId: note.id)
 
         try notes.deleteNote(id: note.id)
 
-        // Session must still exist…
-        XCTAssertNotNil(try transcripts.fetchSession(id: session.id))
-        // …but its noteId must be cleared.
-        let fetched = try transcripts.fetchSession(id: session.id)
-        XCTAssertNil(fetched?.noteId)
+        // Note is gone.
+        XCTAssertNil(try notes.fetchNote(id: note.id))
+        // Session is gone — transcripts are part of the note.
+        XCTAssertNil(try transcripts.fetchSession(id: session.id))
+    }
+
+    func testDeleteNoteCascadesThroughSessionToSegments() throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let session = try transcripts.createSession(title: "S", noteId: note.id)
+        // Insert a segment via raw SQL since addSegment may have a different
+        // signature. The session FK has ON DELETE CASCADE from migration v1.
+        try dbm.database.write {
+            try $0.execute(sql: """
+                INSERT INTO segments (sessionId, startMs, endMs, speaker, text)
+                VALUES (?, 0, 1000, 'you', 'hello')
+                """, arguments: [session.id])
+        }
+
+        try notes.deleteNote(id: note.id)
+
+        let segCount = try dbm.database.read {
+            try Int.fetchOne($0,
+                sql: "SELECT COUNT(*) FROM segments WHERE sessionId = ?",
+                arguments: [session.id]) ?? -1
+        }
+        XCTAssertEqual(segCount, 0)
     }
 }
