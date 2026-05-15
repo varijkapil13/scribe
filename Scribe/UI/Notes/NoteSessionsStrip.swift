@@ -107,8 +107,8 @@ private struct SessionChip: View {
     private var subtitle: String {
         let date = session.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute())
         if let secs = session.durationSeconds {
-            let mins = max(secs / 60, 1)
-            return "\(date) · \(mins)m"
+            let label = secs < 60 ? "<1m" : "\(secs / 60)m"
+            return "\(date) · \(label)"
         }
         return date
     }
