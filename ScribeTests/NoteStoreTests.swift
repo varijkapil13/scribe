@@ -225,4 +225,24 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(links[0].sourceNoteId, a.id)
         XCTAssertEqual(links[0].targetNoteId, b.id)
     }
+
+    func testDeleteNoteRemovesAttachmentsFolder() throws {
+        let store = NoteStore(databaseManager: db)
+        let note = try store.createNote(title: "Has images", body: "")
+
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let dir = try AttachmentsDirectory.directory(forNoteId: note.id, root: tempRoot)
+        try Data().write(to: dir.appendingPathComponent("image.png"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.path))
+
+        AttachmentsDirectory.rootOverrideForTesting = tempRoot
+        defer { AttachmentsDirectory.rootOverrideForTesting = nil }
+
+        try store.deleteNote(id: note.id)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path),
+                       "deleteNote should remove the attachments folder")
+    }
 }

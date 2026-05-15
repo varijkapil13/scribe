@@ -91,6 +91,13 @@ final class NoteStore: @unchecked Sendable {
             )
             _ = try Note.deleteOne(database, key: id)
         }
+        // Best-effort: remove the note's attachments folder. Failures are
+        // logged but don't propagate — the DB row is already gone.
+        do {
+            try AttachmentsDirectory.cleanup(forNoteId: id)
+        } catch {
+            Log.storage.error("Failed to clean attachments for note \(id, privacy: .public): \(error.localizedDescription, privacy: .private)")
+        }
     }
 
     func fetchNote(id: String) throws -> Note? {
