@@ -8,7 +8,7 @@ import SwiftUI
 /// time the user switches sessions.
 struct NoteSessionAutoSection: View {
     @ObservedObject var viewModel: TranscriptDetailViewModel
-    let onOpenSession: () -> Void
+    let onOpenSession: (Session) -> Void
     let onConvertActionItem: (ActionItem, TodoTask) -> Void
 
     // (no custom init — synthesized memberwise init suffices)
@@ -39,7 +39,7 @@ struct NoteSessionAutoSection: View {
                 .tracking(0.5)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button("Open transcript", action: onOpenSession)
+            Button("Open transcript") { onOpenSession(viewModel.session) }
                 .buttonStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(Color.accentColor)

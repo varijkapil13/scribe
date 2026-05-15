@@ -9,6 +9,7 @@ struct NoteDetailView: View {
     @State private var backlinksExpanded: Bool = false
     @State private var selectedSessionId: String? = nil
     @State private var openedTaskFromAction: TodoTask?
+    @State private var openedTranscriptSession: Session?
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -73,7 +74,7 @@ struct NoteDetailView: View {
                let session = vm.sessions.first(where: { $0.id == selectedId }) {
                 NoteSessionAutoSection(
                     viewModel: vm.transcriptDetailViewModel(for: session),
-                    onOpenSession: { onNavigate(session.id) },
+                    onOpenSession: { sess in openedTranscriptSession = sess },
                     onConvertActionItem: { _, task in
                         openedTaskFromAction = task
                     }
@@ -121,6 +122,17 @@ struct NoteDetailView: View {
         }
         .sheet(item: $openedTaskFromAction) { task in
             TaskEditorView(task: task)
+        }
+        .sheet(item: $openedTranscriptSession) { session in
+            NavigationStack {
+                TranscriptDetailView(session: session)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { openedTranscriptSession = nil }
+                        }
+                    }
+            }
+            .frame(minWidth: 720, minHeight: 540)
         }
     }
 }
