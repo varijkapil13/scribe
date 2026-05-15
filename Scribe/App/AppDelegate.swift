@@ -376,7 +376,7 @@ extension AppDelegate {
             let created = try noteStore.createNote(title: title, body: "")
             return ResolvedNoteContext(noteId: created.id, didCreateNote: true)
         } catch {
-            Log.app.error("Failed to auto-create meeting note: \(String(describing: error), privacy: .public)")
+            Log.app.error("Failed to auto-create meeting note: \(error.localizedDescription, privacy: .private)")
             return ResolvedNoteContext(noteId: nil, didCreateNote: false)
         }
     }
