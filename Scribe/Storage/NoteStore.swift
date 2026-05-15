@@ -79,7 +79,16 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func deleteNote(id: String) throws {
-        try db.write { _ = try Note.deleteOne($0, key: id) }
+        try db.write { database in
+            // Sweep sessions.noteId → NULL so transcripts outlive their note.
+            // FK is not enforced via ALTER TABLE in this codebase; this is the
+            // same pattern used by deleteNotebook for notes.notebookId.
+            try database.execute(
+                sql: "UPDATE sessions SET noteId = NULL WHERE noteId = ?",
+                arguments: [id]
+            )
+            _ = try Note.deleteOne(database, key: id)
+        }
     }
 
     func fetchNote(id: String) throws -> Note? {

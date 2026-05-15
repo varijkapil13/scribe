@@ -91,4 +91,18 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
         XCTAssertEqual(emissions.last?.count, 1)
         XCTAssertEqual(emissions.last?.first?.id, session.id)
     }
+
+    func testDeleteNoteSweepsBoundSessions() throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let session = try transcripts.createSession(title: "S")
+        try transcripts.bindSession(session.id, toNote: note.id)
+
+        try notes.deleteNote(id: note.id)
+
+        // Session must still exist…
+        XCTAssertNotNil(try transcripts.fetchSession(id: session.id))
+        // …but its noteId must be cleared.
+        let fetched = try transcripts.fetchSession(id: session.id)
+        XCTAssertNil(fetched?.noteId)
+    }
 }
