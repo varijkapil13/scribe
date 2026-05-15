@@ -11,6 +11,8 @@ struct NoteSessionAutoSection: View {
     let onOpenSession: (Session) -> Void
     let onConvertActionItem: (ActionItem, TodoTask) -> Void
 
+    @State private var hasLoaded: Bool = false
+
     // (no custom init — synthesized memberwise init suffices)
 
     var body: some View {
@@ -24,6 +26,8 @@ struct NoteSessionAutoSection: View {
         .padding(.vertical, DesignTokens.Spacing.md)
         .background(DesignTokens.Palette.surfaceSunken)
         .onAppear {
+            guard !hasLoaded else { return }
+            hasLoaded = true
             viewModel.loadSegments()
             viewModel.loadSummary()
             viewModel.loadAnalysis()
