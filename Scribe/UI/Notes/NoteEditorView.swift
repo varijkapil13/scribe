@@ -6,6 +6,7 @@ struct NoteEditorView: View {
 
     @Binding var text: String
     var noteStore: NoteStore
+    var noteId: String? = nil
     var onNavigate: (String) -> Void  // called with anchorText when user clicks a [[link]]
 
     @State private var wikiQuery: String = ""
@@ -32,7 +33,8 @@ struct NoteEditorView: View {
                             Task { await loadSuggestions(query: query) }
                         }
                     },
-                    onWikiLinkNavigate: { anchor in onNavigate(anchor) }
+                    onWikiLinkNavigate: { anchor in onNavigate(anchor) },
+                    noteId: noteId
                 )
 
                 if showPopup && !suggestions.isEmpty {

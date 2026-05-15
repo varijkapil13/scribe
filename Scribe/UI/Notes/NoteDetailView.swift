@@ -91,6 +91,7 @@ struct NoteDetailView: View {
                     set: { vm.note.body = $0; vm.markDirty() }
                 ),
                 noteStore: .shared,
+                noteId: vm.note.id,
                 onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
             )
             .padding(.vertical, DesignTokens.Spacing.xs)

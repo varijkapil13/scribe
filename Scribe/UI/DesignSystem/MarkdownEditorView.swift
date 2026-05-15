@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 // MARK: - Custom attribute keys
@@ -23,6 +24,7 @@ struct MarkdownEditorView: NSViewRepresentable {
     var extraHighlighter: ((NSMutableAttributedString) -> Void)? = nil
     var onWikiLinkTyped: ((String) -> Void)? = nil
     var onWikiLinkNavigate: ((String) -> Void)? = nil
+    var noteId: String? = nil   // NEW
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -53,6 +55,9 @@ struct MarkdownEditorView: NSViewRepresentable {
         tv.isVerticallyResizable = true
         tv.autoresizingMask = [.width]
 
+        tv.noteId = noteId
+        tv.registerForDraggedTypes([.fileURL, .png, .tiff])
+
         scrollView.documentView = tv
         tv.delegate = context.coordinator
         let coordinator = context.coordinator
@@ -82,6 +87,7 @@ struct MarkdownEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let tv = scrollView.documentView as? MarkdownNSTextView else { return }
         context.coordinator.parent = self
+        tv.noteId = noteId
         let liveSource: String
         if let storage = tv.textStorage {
             liveSource = FoldRegistry.decompose(storage).source
@@ -570,6 +576,7 @@ final class ChecklistAttachmentCell: NSTextAttachmentCell {
 final class MarkdownNSTextView: NSTextView {
     var placeholderString: String = ""
     var onLinkClick: ((String) -> Void)? = nil
+    var noteId: String?
 
     private var foldTrackingArea: NSTrackingArea?
     private(set) var hoveredFoldId: UUID?
@@ -965,6 +972,81 @@ final class MarkdownNSTextView: NSTextView {
         }
 
         super.mouseDown(with: event)
+    }
+
+    // MARK: - Image drag-and-drop
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        canAcceptDrop(sender) ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        canAcceptDrop(sender) ? .copy : []
+    }
+
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        canAcceptDrop(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let noteId else { return false }
+        let pb = sender.draggingPasteboard
+
+        // Resolve a source URL — either a direct file or written-out raw image data.
+        var sourceURL: URL?
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+           let first = urls.first, isImageFile(url: first) {
+            sourceURL = first
+        } else if let data = pb.data(forType: .png) {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+            try? data.write(to: tmp)
+            sourceURL = tmp
+        } else if let data = pb.data(forType: .tiff),
+                  let rep = NSBitmapImageRep(data: data),
+                  let png = rep.representation(using: .png, properties: [:]) {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+            try? png.write(to: tmp)
+            sourceURL = tmp
+        }
+        guard let sourceURL else { return false }
+
+        // Copy into the note's attachments folder.
+        let stored: AttachmentsDirectory.StoredAttachment
+        do {
+            stored = try AttachmentsDirectory.store(sourceURL: sourceURL, forNoteId: noteId)
+        } catch {
+            Log.app.error("Image drop failed: \(error.localizedDescription, privacy: .private)")
+            return false
+        }
+
+        // Insert the markdown at the drop point.
+        let dropPoint = convert(sender.draggingLocation, from: nil)
+        let charIndex = characterIndexForInsertion(at: dropPoint)
+        let markdown = "![](\(stored.relativePath))"
+        guard let coord = delegate as? MarkdownEditorView.Coordinator else { return false }
+        coord.editSource { source, _ in
+            let nsSource = source as NSString
+            let safeIndex = min(Int(charIndex), nsSource.length)
+            let new = nsSource.replacingCharacters(in: NSRange(location: safeIndex, length: 0), with: markdown)
+            return (new, NSRange(location: safeIndex + (markdown as NSString).length, length: 0))
+        }
+        return true
+    }
+
+    private func canAcceptDrop(_ sender: any NSDraggingInfo) -> Bool {
+        guard noteId != nil else { return false }
+        let pb = sender.draggingPasteboard
+        if pb.types?.contains(.png) == true { return true }
+        if pb.types?.contains(.tiff) == true { return true }
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            return urls.contains(where: isImageFile(url:))
+        }
+        return false
+    }
+
+    private func isImageFile(url: URL) -> Bool {
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "tiff", "bmp", "heic", "webp"]
+        return imageExts.contains(url.pathExtension.lowercased())
     }
 
     override func draw(_ dirtyRect: NSRect) {
