@@ -11,7 +11,10 @@ final class SessionNoteIdMigrationTests: XCTestCase {
         db = try! DatabaseManager(path: ":memory:")
     }
 
-    override func tearDown() { db = nil }
+    override func tearDown() {
+        db = nil
+        super.tearDown()
+    }
 
     func testSessionsHasNoteIdColumn() throws {
         let columns: [String] = try db.database.read { database in
@@ -27,6 +30,7 @@ final class SessionNoteIdMigrationTests: XCTestCase {
             try String.fetchAll(database,
                 sql: "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sessions'")
         }
-        XCTAssertTrue(names.contains("sessions_noteId_idx"))
+        XCTAssertTrue(names.contains("sessions_noteId_idx"),
+                      "sessions_noteId_idx must exist after v10 migration")
     }
 }
