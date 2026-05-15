@@ -69,4 +69,51 @@ final class NoteDetailViewModelTests: XCTestCase {
 
         XCTAssertEqual(vm.sessions.count, 0)
     }
+
+    func testCachedInnerVMSeesSummaryFromInjectedStore() async throws {
+        let note = try notes.createNote(title: "Project kickoff", body: "")
+        let session = try transcripts.createSession(title: "Kickoff", noteId: note.id)
+
+        let summary = MeetingSummary(
+            id: UUID(),
+            sessionId: session.id,
+            summary: "Discussed scope and risks.",
+            keyDecisions: ["Use Swift 6"],
+            actionItems: [],
+            keyTopics: [],
+            followUpQuestions: [],
+            createdAt: Date()
+        )
+        try transcripts.saveSummary(summary)
+
+        // Build the VM with injected stores.
+        let vm = NoteDetailViewModel(
+            note: note,
+            store: notes,
+            transcriptStore: transcripts,
+            onNavigate: { _ in }
+        )
+
+        // Wait for the observation to deliver the bound session.
+        let expectation = self.expectation(description: "sessions delivered")
+        vm.$sessions
+            .dropFirst()
+            .sink { sessions in
+                if sessions.contains(where: { $0.id == session.id }) {
+                    expectation.fulfill()
+                }
+            }
+            .store(in: &cancellables)
+        await fulfillment(of: [expectation], timeout: 2.0)
+
+        // Resolve the cached inner VM and ask it to load summary state.
+        let inner = vm.transcriptDetailViewModel(for: session)
+        inner.loadSummary()
+
+        // The summary must be visible — proving the inner VM reads from the
+        // same injected `transcripts` store, not the on-disk `.shared` default.
+        XCTAssertNotNil(inner.meetingSummary, "Inner VM should see the summary persisted to the injected store")
+        XCTAssertEqual(inner.meetingSummary?.summary, "Discussed scope and risks.")
+        XCTAssertEqual(inner.meetingSummary?.keyDecisions, ["Use Swift 6"])
+    }
 }
