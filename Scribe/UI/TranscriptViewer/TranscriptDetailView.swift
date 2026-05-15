@@ -13,7 +13,6 @@ struct TranscriptDetailView: View {
     @State var selectedTab: DetailTab = .transcript
     @State var showMoveSheet: Bool = false
     @State var openedTask: TodoTask?
-    @State private var showMoveToNoteSheet: Bool = false
 
     private var session: Session { viewModel.session }
 
@@ -83,12 +82,6 @@ struct TranscriptDetailView: View {
         }) { task in
             TaskEditorView(task: task)
         }
-        .sheet(isPresented: $showMoveToNoteSheet) {
-            MoveToNotePicker(
-                onSelect: { noteId in viewModel.bindToNote(noteId: noteId) },
-                onCreateNew: { viewModel.moveToNewNote() }
-            )
-        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -113,32 +106,6 @@ struct TranscriptDetailView: View {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .help("Export transcript to Markdown, plain text, or JSON")
-
-                Menu {
-                    if let boundNoteId = viewModel.session.noteId {
-                        Button("Open bound note") {
-                            NotificationCenter.default.post(
-                                name: .scribeRequestNavigateToNote,
-                                object: nil,
-                                userInfo: ["noteId": boundNoteId]
-                            )
-                        }
-                        Divider()
-                        Button("Unbind from note", role: .destructive) {
-                            viewModel.unbindFromNote()
-                        }
-                    } else {
-                        Button("New note from this session") {
-                            viewModel.moveToNewNote()
-                        }
-                        Button("Existing note…") {
-                            showMoveToNoteSheet = true
-                        }
-                    }
-                } label: {
-                    Label("Move to note", systemImage: "note.text.badge.plus")
-                }
-                .help("Bind this transcript to a note, or unbind it")
             }
 
             ToolbarItemGroup(placement: .secondaryAction) {
