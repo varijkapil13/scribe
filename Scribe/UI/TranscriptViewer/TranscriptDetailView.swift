@@ -115,16 +115,24 @@ struct TranscriptDetailView: View {
                 .help("Export transcript to Markdown, plain text, or JSON")
 
                 Menu {
-                    Button("New note from this session") {
-                        viewModel.moveToNewNote()
-                    }
-                    Button("Existing note…") {
-                        showMoveToNoteSheet = true
-                    }
-                    if viewModel.session.noteId != nil {
+                    if let boundNoteId = viewModel.session.noteId {
+                        Button("Open bound note") {
+                            NotificationCenter.default.post(
+                                name: .scribeRequestNavigateToNote,
+                                object: nil,
+                                userInfo: ["noteId": boundNoteId]
+                            )
+                        }
                         Divider()
                         Button("Unbind from note", role: .destructive) {
                             viewModel.unbindFromNote()
+                        }
+                    } else {
+                        Button("New note from this session") {
+                            viewModel.moveToNewNote()
+                        }
+                        Button("Existing note…") {
+                            showMoveToNoteSheet = true
                         }
                     }
                 } label: {
