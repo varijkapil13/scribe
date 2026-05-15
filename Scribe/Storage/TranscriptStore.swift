@@ -3,7 +3,9 @@ import GRDB
 import Combine
 
 /// High-level query interface for reading and writing transcription data.
-final class TranscriptStore {
+// @unchecked Sendable is safe: DatabaseQueue is thread-safe and dbManager is
+// immutable after init — no mutable state crosses actor boundaries.
+final class TranscriptStore: @unchecked Sendable {
 
     // MARK: - Properties
 
@@ -72,6 +74,41 @@ final class TranscriptStore {
         try db.read { database in
             try Session.fetchOne(database, key: id)
         }
+    }
+
+    // MARK: - Note binding
+
+    /// Binds a session to a note. Pass `nil` to detach.
+    func bindSession(_ sessionId: String, toNote noteId: String?) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE sessions SET noteId = ? WHERE id = ?",
+                arguments: [noteId, sessionId]
+            )
+        }
+    }
+
+    /// Returns all sessions bound to a note, most recent first.
+    func fetchSessions(forNoteId noteId: String) throws -> [Session] {
+        try db.read { database in
+            try Session
+                .filter(Column("noteId") == noteId)
+                .order(Column("createdAt").desc)
+                .fetchAll(database)
+        }
+    }
+
+    /// Observes the list of sessions bound to a note. Re-emits on bind/unbind.
+    func observeSessions(forNoteId noteId: String) -> AnyPublisher<[Session], Error> {
+        ValueObservation
+            .tracking { database in
+                try Session
+                    .filter(Column("noteId") == noteId)
+                    .order(Column("createdAt").desc)
+                    .fetchAll(database)
+            }
+            .publisher(in: db, scheduling: .async(onQueue: .main))
+            .eraseToAnyPublisher()
     }
 
     // MARK: - Segment CRUD
