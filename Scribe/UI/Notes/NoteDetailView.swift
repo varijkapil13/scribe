@@ -6,6 +6,8 @@ struct NoteDetailView: View {
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
+    @State private var selectedSessionId: String? = nil
+    @State private var openedTaskFromAction: TodoTask?
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -53,6 +55,25 @@ struct NoteDetailView: View {
 
             Divider()
 
+            if !vm.sessions.isEmpty {
+                NoteSessionsStrip(
+                    sessions: vm.sessions,
+                    selectedSessionId: $selectedSessionId,
+                    onStartRecording: nil  // wired in slice 17
+                )
+                if let selectedId = selectedSessionId,
+                   let session = vm.sessions.first(where: { $0.id == selectedId }) {
+                    NoteSessionAutoSection(
+                        session: session,
+                        onOpenSession: { onNavigate(session.id) },
+                        onConvertActionItem: { _, task in
+                            openedTaskFromAction = task
+                        }
+                    )
+                }
+                Divider()
+            }
+
             // ── Body editor (full width) ───────────────────────────────────
             NoteEditorView(
                 text: Binding(
@@ -75,6 +96,14 @@ struct NoteDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .onChange(of: vm.sessions) { _, newSessions in
+            if selectedSessionId == nil, let first = newSessions.first {
+                selectedSessionId = first.id
+            } else if let id = selectedSessionId,
+                      !newSessions.contains(where: { $0.id == id }) {
+                selectedSessionId = newSessions.first?.id
+            }
+        }
         .alert("Error", isPresented: Binding(
             get: { vm.errorMessage != nil },
             set: { if !$0 { vm.errorMessage = nil } }
@@ -82,6 +111,9 @@ struct NoteDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(vm.errorMessage ?? "")
+        }
+        .sheet(item: $openedTaskFromAction) { task in
+            TaskEditorView(task: task)
         }
     }
 }
