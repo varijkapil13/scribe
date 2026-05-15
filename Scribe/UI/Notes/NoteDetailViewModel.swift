@@ -68,4 +68,21 @@ final class NoteDetailViewModel: ObservableObject {
     }
 
     func markDirty() { isDirty = true }
+
+    /// Starts a new recording bound to this note. The detail pane will switch
+    /// into live-recording mode automatically once AppState publishes
+    /// `isTranscribing = true` and our `sessions` observation picks up the
+    /// new chip.
+    func startRecording(appState: AppState) {
+        let title = note.title.isEmpty ? "Recording" : note.title
+        Task { [weak self, noteId = note.id] in
+            do {
+                try await appState.startSession(title: title, noteId: noteId)
+            } catch {
+                await MainActor.run {
+                    self?.errorMessage = "Couldn't start recording: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
 }

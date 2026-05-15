@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 
 struct NoteDetailView: View {
+    @EnvironmentObject var appState: AppState
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
@@ -55,24 +56,22 @@ struct NoteDetailView: View {
 
             Divider()
 
-            if !vm.sessions.isEmpty {
-                NoteSessionsStrip(
-                    sessions: vm.sessions,
-                    selectedSessionId: $selectedSessionId,
-                    onStartRecording: nil  // wired in slice 17
+            NoteSessionsStrip(
+                sessions: vm.sessions,
+                selectedSessionId: $selectedSessionId,
+                onStartRecording: { vm.startRecording(appState: appState) }
+            )
+            if let selectedId = selectedSessionId,
+               let session = vm.sessions.first(where: { $0.id == selectedId }) {
+                NoteSessionAutoSection(
+                    session: session,
+                    onOpenSession: { onNavigate(session.id) },
+                    onConvertActionItem: { _, task in
+                        openedTaskFromAction = task
+                    }
                 )
-                if let selectedId = selectedSessionId,
-                   let session = vm.sessions.first(where: { $0.id == selectedId }) {
-                    NoteSessionAutoSection(
-                        session: session,
-                        onOpenSession: { onNavigate(session.id) },
-                        onConvertActionItem: { _, task in
-                            openedTaskFromAction = task
-                        }
-                    )
-                }
-                Divider()
             }
+            Divider()
 
             // ── Body editor (full width) ───────────────────────────────────
             NoteEditorView(
