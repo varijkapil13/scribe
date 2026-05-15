@@ -97,6 +97,7 @@ private struct SessionChip: View {
             .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(displayTitle), \(session.endedAt == nil ? "recording" : "recorded"), \(subtitle)")
     }
 
     private var displayTitle: String {
