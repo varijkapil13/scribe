@@ -1,0 +1,32 @@
+// ScribeTests/SessionNoteIdMigrationTests.swift
+import XCTest
+import GRDB
+@testable import Scribe
+
+final class SessionNoteIdMigrationTests: XCTestCase {
+    private var db: DatabaseManager!
+
+    override func setUp() {
+        super.setUp()
+        db = try! DatabaseManager(path: ":memory:")
+    }
+
+    override func tearDown() { db = nil }
+
+    func testSessionsHasNoteIdColumn() throws {
+        let columns: [String] = try db.database.read { database in
+            try Row.fetchAll(database, sql: "PRAGMA table_info(sessions)")
+                .compactMap { $0["name"] as String? }
+        }
+        XCTAssertTrue(columns.contains("noteId"),
+                      "sessions table must have a noteId column after v10 migration")
+    }
+
+    func testSessionsNoteIdIndexExists() throws {
+        let names: [String] = try db.database.read { database in
+            try String.fetchAll(database,
+                sql: "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sessions'")
+        }
+        XCTAssertTrue(names.contains("sessions_noteId_idx"))
+    }
+}

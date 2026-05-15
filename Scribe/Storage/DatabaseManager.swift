@@ -383,6 +383,20 @@ final class DatabaseManager: @unchecked Sendable {
             try db.execute(sql: "ALTER TABLE note_links_fk RENAME TO note_links")
         }
 
+        migrator.registerMigration("v10_session_noteId") { db in
+            // sessions.noteId — links a recording session to a Note.
+            // Nullable (NULL = unattached). FK is NOT enforced via ALTER TABLE in
+            // this codebase (matches notes.notebookId pattern); NoteStore.deleteNote
+            // is responsible for sweeping noteId to NULL before deleting a note so
+            // transcripts survive note deletion.
+            try db.alter(table: "sessions") { t in
+                t.add(column: "noteId", .text)
+            }
+            try db.create(index: "sessions_noteId_idx",
+                          on: "sessions",
+                          columns: ["noteId"])
+        }
+
         try migrator.migrate(database)
     }
 }
