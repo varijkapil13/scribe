@@ -23,7 +23,7 @@ The transcript stays in `TranscriptStore` as source of truth. Notes act as a wor
 
 One additive migration.
 
-**Migration v6:**
+**Migration v10_session_noteId:**
 
 ```sql
 ALTER TABLE sessions ADD COLUMN noteId TEXT;
@@ -160,7 +160,7 @@ These come for free once §1–§6 are in place; no additional schema needed:
 
 | File | Change |
 |---|---|
-| `Scribe/Storage/DatabaseManager.swift` | Migration v6: add `sessions.noteId`, index |
+| `Scribe/Storage/DatabaseManager.swift` | Migration v10_session_noteId: add `sessions.noteId`, index |
 | `Scribe/Storage/Session.swift` | Add `noteId: String?` |
 | `Scribe/Storage/TranscriptStore.swift` | `bindSession(_:toNote:)`, `fetchSessions(forNoteId:)`, `observeSessions(forNoteId:)` |
 | `Scribe/Storage/NoteStore.swift` | `sessions(for:)` convenience; extend `deleteNote(id:)` to sweep `sessions.noteId` to NULL |
@@ -182,7 +182,7 @@ No new Swift package dependencies.
 
 | # | Slice | Output |
 |---|---|---|
-| 15 | Storage + migration | Migration v6, `Session.noteId`, `TranscriptStore` bind/observe APIs, tests. No UI change. |
+| 15 | Storage + migration | Migration v10_session_noteId, `Session.noteId`, `TranscriptStore` bind/observe APIs, tests. No UI change. |
 | 16 | Sessions strip (read-only) | `NoteSessionsStrip` + per-session auto-section in `NoteDetailView`. Bound to existing sessions only — no recording entry yet. Manual bind via SQL or test fixture. |
 | 17 | `+ New recording` from a Note | Button in strip; recording starts bound to the open note. Live pane embeds in the note detail. |
 | 18 | Global Record auto-binds | Hero button / ⇧⌘R uses open Note context, or auto-creates a "Meeting on …" note when no note is open. |
@@ -192,7 +192,7 @@ Each slice ships as its own PR. Slices 17+ are demoable only after 16 lands.
 
 ## Risks
 
-- **Migration v6 on `eraseDatabaseOnSchemaChange` DEBUG flag** — dev DB wipe on schema diff is expected; document for the user before they pull.
+- **Migration v10_session_noteId on `eraseDatabaseOnSchemaChange` DEBUG flag** — dev DB wipe on schema diff is expected; document for the user before they pull.
 - **Live pane focus split** — typing notes while live transcript streams may cause selection/scroll fights. The freeform editor must own keyboard focus by default; the live pane is a scrollable read-only region.
 - **Live pane reuse** — the existing live-session view is tied to `MainSelection.live` in `MainWindowView`. Lifting it out cleanly is a small refactor; if it proves invasive, slice 17 may grow.
 - **Auto-titling** — "Meeting on 2026-05-15 14:32" wiki-links work but are ugly. Acceptable for v1; renaming the note is one click.
