@@ -4,6 +4,7 @@ import SwiftUI
 
 struct NoteDetailView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var appDelegate: AppDelegate
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
@@ -66,7 +67,7 @@ struct NoteDetailView: View {
             NoteSessionsStrip(
                 sessions: vm.sessions,
                 selectedSessionId: $selectedSessionId,
-                onStartRecording: { vm.startRecording(appState: appState) }
+                onStartRecording: { vm.startRecording(appDelegate: appDelegate) }
             )
             if isRecordingForThisNote {
                 NoteLiveRecordingPane()

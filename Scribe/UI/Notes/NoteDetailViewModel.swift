@@ -92,20 +92,12 @@ final class NoteDetailViewModel: ObservableObject {
         return vm
     }
 
-    /// Starts a new recording bound to this note. The detail pane will switch
-    /// into live-recording mode automatically once AppState publishes
-    /// `isTranscribing = true` and our `sessions` observation picks up the
-    /// new chip.
-    func startRecording(appState: AppState) {
-        let title = note.title.isEmpty ? "Recording" : note.title
-        Task { [weak self, noteId = note.id] in
-            do {
-                try await appState.startSession(title: title, noteId: noteId)
-            } catch {
-                await MainActor.run {
-                    self?.errorMessage = "Couldn't start recording: \(error.localizedDescription)"
-                }
-            }
+    /// Starts a new recording bound to this note. Delegates to AppDelegate so
+    /// that permission errors surface via the standard alert (with deep-links
+    /// to System Settings) rather than the plain in-note error message.
+    func startRecording(appDelegate: AppDelegate) {
+        Task {
+            await appDelegate.startRecording()
         }
     }
 }
