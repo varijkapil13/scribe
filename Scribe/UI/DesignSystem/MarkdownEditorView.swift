@@ -1151,7 +1151,62 @@ enum MarkdownFormatter {
                 result.append(formattedLine(line, font: font, seenFirstH1: &seenFirstH1))
             }
         }
+        applyTableStyling(to: result, source: text, font: font)
         return result
+    }
+
+    private static func applyTableStyling(
+        to attr: NSMutableAttributedString,
+        source: String,
+        font: NSFont
+    ) {
+        let tables = MarkdownTable.detect(in: source)
+        guard !tables.isEmpty else { return }
+        let lines = source.components(separatedBy: "\n")
+        let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+        let monoFontBold = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .semibold)
+        let approxCharWidth = monoFont.maximumAdvancement.width
+        // Pre-compute line ranges in the source so we can map row index to NSRange in attr.
+        var lineRanges: [NSRange] = []
+        var cursor = 0
+        for line in lines {
+            let len = (line as NSString).length
+            lineRanges.append(NSRange(location: cursor, length: len))
+            cursor += len + 1 // \n
+        }
+        for table in tables {
+            // Build tab stops cumulatively: each column gets width chars + 2-char padding.
+            var tabStops: [NSTextTab] = []
+            var x: CGFloat = 0
+            for w in table.columnWidths {
+                x += CGFloat(w + 2) * approxCharWidth
+                tabStops.append(NSTextTab(textAlignment: .left, location: x))
+            }
+            let paraStyle = NSMutableParagraphStyle()
+            paraStyle.tabStops = tabStops
+            paraStyle.defaultTabInterval = approxCharWidth * 8
+
+            // Apply to header + body rows.
+            let applyRows = [table.headerRow] + table.bodyRows
+            for row in applyRows {
+                guard row < lineRanges.count else { continue }
+                let range = lineRanges[row]
+                guard range.location + range.length <= attr.length else { continue }
+                attr.addAttribute(.font,
+                                  value: row == table.headerRow ? monoFontBold : monoFont,
+                                  range: range)
+                attr.addAttribute(.paragraphStyle, value: paraStyle, range: range)
+            }
+
+            // Separator row: visually dim so it's quieter than data rows.
+            if table.separatorRow < lineRanges.count {
+                let sepRange = lineRanges[table.separatorRow]
+                if sepRange.location + sepRange.length <= attr.length {
+                    attr.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: sepRange)
+                    attr.addAttribute(.font, value: monoFont, range: sepRange)
+                }
+            }
+        }
     }
 
     private static func codeLineAttrs(font: NSFont) -> [NSAttributedString.Key: Any] {
