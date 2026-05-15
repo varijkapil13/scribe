@@ -994,6 +994,7 @@ enum MarkdownFormatter {
         let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
         let dim = NSColor.tertiaryLabelColor
         var inFence = false
+        var seenFirstH1 = false   // tracks whether the auto-title H1 has been rendered
 
         for (i, line) in lines.enumerated() {
             if i > 0 {
@@ -1026,7 +1027,7 @@ enum MarkdownFormatter {
                                       range: NSRange(location: 0, length: codeAttr.length))
                 result.append(codeAttr)
             } else {
-                result.append(formattedLine(line, font: font))
+                result.append(formattedLine(line, font: font, seenFirstH1: &seenFirstH1))
             }
         }
         return result
@@ -1044,7 +1045,7 @@ enum MarkdownFormatter {
 
     // MARK: Per-line
 
-    private static func formattedLine(_ line: String, font: NSFont) -> NSAttributedString {
+    private static func formattedLine(_ line: String, font: NSFont, seenFirstH1: inout Bool) -> NSAttributedString {
         let dim  = NSColor.tertiaryLabelColor
         let mono = NSFont.monospacedSystemFont(ofSize: font.pointSize - 0.5, weight: .regular)
 
@@ -1064,11 +1065,28 @@ enum MarkdownFormatter {
         // Headings
         if let (hashes, rest) = parseHeading(line) {
             let level = min(hashes, 3)
-            let sizes: [CGFloat] = [28, 22, 18]
             let spacingsBefore: [CGFloat] = [24, 18, 12]
-            let size = sizes[level - 1]
-            let headFont = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.bold), size: size)
-                        ?? NSFont.boldSystemFont(ofSize: size)
+
+            let size: CGFloat
+            let weight: NSFont.Weight
+            if level == 1 {
+                if !seenFirstH1 {
+                    size = 28
+                    weight = .semibold
+                    seenFirstH1 = true
+                } else {
+                    size = 22
+                    weight = .bold
+                }
+            } else if level == 2 {
+                size = 20
+                weight = .semibold
+            } else { // 3+
+                size = 17
+                weight = .semibold
+            }
+
+            let headFont = NSFont.systemFont(ofSize: size, weight: weight)
             let headMono = NSFont.monospacedSystemFont(ofSize: size - 1, weight: .regular)
 
             let style = NSMutableParagraphStyle()
@@ -1083,7 +1101,6 @@ enum MarkdownFormatter {
             let prefixRange = NSRange(location: 0, length: min(prefixLen, line.utf16.count))
             let textRange = NSRange(location: min(prefixLen, line.utf16.count),
                                     length: max(0, line.utf16.count - prefixLen))
-            // Dim the # markers heavily
             result.addAttribute(.foregroundColor, value: NSColor.quaternaryLabelColor, range: prefixRange)
             result.addAttribute(.font, value: NSFont.systemFont(ofSize: font.pointSize - 1), range: prefixRange)
             if textRange.length > 0 {
