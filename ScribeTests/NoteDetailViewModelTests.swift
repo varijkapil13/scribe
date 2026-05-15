@@ -8,6 +8,7 @@ final class NoteDetailViewModelTests: XCTestCase {
     private var dbm: DatabaseManager!
     private var notes: NoteStore!
     private var transcripts: TranscriptStore!
+    private var cancellables: Set<AnyCancellable> = []
 
     override func setUp() async throws {
         try await super.setUp()
@@ -17,6 +18,7 @@ final class NoteDetailViewModelTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        cancellables.removeAll()
         notes = nil
         transcripts = nil
         dbm = nil
@@ -35,9 +37,17 @@ final class NoteDetailViewModelTests: XCTestCase {
             onNavigate: { _ in }
         )
 
-        // Wait for the async observation to deliver.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        let expectation = self.expectation(description: "sessions delivered")
+        vm.$sessions
+            .dropFirst()  // skip the initial empty value the @Published property emits
+            .sink { sessions in
+                if sessions.contains(where: { $0.id == session.id }) {
+                    expectation.fulfill()
+                }
+            }
+            .store(in: &cancellables)
 
+        await fulfillment(of: [expectation], timeout: 2.0)
         XCTAssertEqual(vm.sessions.map(\.id), [session.id])
     }
 
@@ -49,7 +59,15 @@ final class NoteDetailViewModelTests: XCTestCase {
             transcriptStore: transcripts,
             onNavigate: { _ in }
         )
-        try await Task.sleep(nanoseconds: 200_000_000)
+
+        // Allow at least one observation emission so we know the publisher fired
+        // (and stayed empty).
+        let expectation = self.expectation(description: "initial empty observation")
+        vm.$sessions
+            .sink { _ in expectation.fulfill() }
+            .store(in: &cancellables)
+        await fulfillment(of: [expectation], timeout: 2.0)
+
         XCTAssertEqual(vm.sessions.count, 0)
     }
 }

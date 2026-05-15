@@ -55,6 +55,7 @@ struct MoveToNotePicker: View {
                 }
             }
             .onAppear {
+                notesCancellable?.cancel()
                 notes = (try? NoteStore.shared.fetchAllNotes()) ?? []
                 notesCancellable = NoteStore.shared.observeNotes()
                     .sink(receiveCompletion: { _ in },
