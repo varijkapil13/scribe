@@ -723,7 +723,8 @@ final class MarkdownNSTextView: NSTextView {
 
     private func drawBlockquotes(storage: NSTextStorage, lm: NSLayoutManager,
                                    tc: NSTextContainer, origin: NSPoint) {
-        let borderColor = NSColor.secondaryLabelColor.withAlphaComponent(0.45)
+        // Accent-tinted bar at the leading edge, matches Apple Notes' visual.
+        let barColor = NSColor.controlAccentColor.withAlphaComponent(0.55)
         let bgColor = NSColor(name: nil) { app in
             app.bestMatch(from: [.darkAqua]) == .darkAqua
                 ? NSColor(white: 1.0, alpha: 0.04)
@@ -742,9 +743,9 @@ final class MarkdownNSTextView: NSTextView {
             bgColor.setFill()
             NSBezierPath(roundedRect: blockRect, xRadius: 4, yRadius: 4).fill()
 
-            let borderRect = NSRect(x: origin.x, y: blockRect.minY, width: 3, height: blockRect.height)
-            borderColor.setFill()
-            NSBezierPath(roundedRect: borderRect, xRadius: 1.5, yRadius: 1.5).fill()
+            let borderRect = NSRect(x: origin.x, y: blockRect.minY, width: 4, height: blockRect.height)
+            barColor.setFill()
+            NSBezierPath(roundedRect: borderRect, xRadius: 2, yRadius: 2).fill()
         }
     }
 
