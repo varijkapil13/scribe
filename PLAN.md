@@ -193,6 +193,52 @@ Once tasks and notes both exist, wire the joins:
 - A note's right panel always shows backlinks regardless of source type.
 - Tag pane is a unified taxonomy across all three entities.
 
+### Phase 3 slices — Meeting Notes (sessions ↔ notes)
+
+- [x] **Slice 15 — Storage + migration.** Migration
+      `v10_session_noteId` adds nullable `sessions.noteId` column +
+      `sessions_noteId_idx`. `Session.noteId: String?` with Codable
+      round-trip. `TranscriptStore.bindSession/fetchSessions/observeSessions(forNoteId:)`.
+      `NoteStore.deleteNote` sweeps `sessions.noteId → NULL` so
+      transcripts survive note deletion. Tests in
+      `SessionNoteIdMigrationTests`, `TranscriptStoreNoteBindingTests`,
+      and `DatabaseIntegrationTests`.
+
+- [x] **Slice 16 — Sessions strip (read-only) in `NoteDetailView`.**
+      `NoteDetailViewModel` observes
+      `TranscriptStore.observeSessions(forNoteId:)`.
+      `NoteSessionsStrip` renders a chip per linked session.
+      `NoteSessionAutoSection` renders that session's summary, action
+      items (with the existing "Convert to task" flow), and entity
+      chips by reusing `TranscriptDetailViewModel`.
+
+- [x] **Slice 17 — In-note recording.** "+ New recording" button on the
+      strip starts a recording bound to the open note via
+      `AppState.startSession(title:noteId:)`. `NoteLiveRecordingPane`
+      shows the live transcript inline above the freeform editor while
+      `AppState.currentSessionId` belongs to this note.
+
+- [x] **Slice 18 — Global Record auto-binds.** `AppDelegate.startRecording`
+      reads `AppState.currentSelection`. With a note open, the new
+      session binds to it; otherwise `AppDelegate.resolveNoteContext`
+      auto-creates a "Meeting on <date>" note and posts
+      `.scribeRequestNavigateToNote` so the sidebar switches to the new
+      note.
+
+- [x] **Slice 19 — Retrofit toolbar.** "Move to note" menu on
+      `TranscriptDetailView` lets existing transcripts bind to a new or
+      existing note, or unbind. `MoveToNotePicker` sheet provides a
+      live-filtered note picker.
+
+### Phase 3 follow-ups
+
+- [ ] **Note markdown export.** Scribe has no Note exporter today
+      (`Scribe/Export/` only handles `Session + [Segment]`). When a Note
+      exporter lands, append a "Linked recordings" tail with the
+      summary / action items / mentioned entities of each bound
+      session, so exported notes carry their transcript context with
+      them.
+
 ## Phase 4 — Polish
 - Global hotkey for **Quick Capture** (use existing `KeyboardShortcuts`
   package). Prompt asks: capture as note, task, or both.
