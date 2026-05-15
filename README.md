@@ -20,12 +20,21 @@ No model downloads, no accounts, no subscriptions, no API keys.
 
 ### Transcription (Apple Speech)
 - One-click recording from the toolbar (or `⇧⌘R` from anywhere)
-- Live transcript inlined into the main window — no floating panels
+- Live transcript streams inline above your meeting note while you record
 - Captures both your microphone and system audio (remote participants)
 - Speaker labels: "You" (mic) vs. "Remote" (system audio)
 - On-device speech recognition via `SFSpeechRecognizer`
 - Auto-detect language or pin to a specific one (English, German, French, and more)
 - Pause / resume mid-session; crash-recovery sweep finalises any sessions left dangling
+
+### Meeting Notes (notes own transcripts)
+- Every recording lives inside a Note — there is no standalone "transcript" surface
+- Press Record with a note open → the new session binds to that note
+- Press Record from anywhere else → a "Meeting on …" note is auto-created and selected
+- A Note's detail view shows a strip of session chips; click one to expand its **Summary**, **Action items**, and **Mentioned** entities inline
+- "+ New recording" button on the strip starts another session inside the same note (notes can own many recordings)
+- "Open transcript" sheet from the auto-section opens the rich segment view (select / move segments, re-summarise, export transcript) without leaving the note
+- Deleting a note also deletes its recordings; converted tasks survive with their session link cleared
 
 ### Meeting Intelligence (Apple Intelligence / Foundation Models)
 - **Meeting Summaries** — executive summary, key decisions, topics discussed
@@ -58,9 +67,8 @@ No model downloads, no accounts, no subscriptions, no API keys.
 - Cancellation is automatic on delete / completion; recurring tasks re-arm against the next occurrence
 
 ### Export
-- Markdown (with timestamps and speaker labels)
-- Plain text
-- JSON (structured, machine-readable)
+- **Notes** as Markdown — title, body, plus a "## Linked recordings" tail with each session's summary, action items, and mentioned entities
+- **Transcripts** (from the in-note "Open transcript" sheet) as Markdown (timestamps + speaker labels), Plain text, or JSON
 
 ### Privacy
 - Transcription: Apple Speech on-device recognition
@@ -115,25 +123,26 @@ Scribe needs three macOS permissions across its lifetime:
 
 ## Usage
 
-1. **Start recording** — toolbar Record button or `⇧⌘R` from anywhere
-2. **Watch live transcript** — the live view replaces the detail pane while a session is active
-3. **Pause / Resume** — pause without ending the session
-4. **Stop** — saves the transcript; sidebar selects the just-finished session so you can summarise it in one click
-5. **Summarize** — generate an AI summary with action items using Apple Intelligence
-6. **Analyze** — extract entities, topics, and sentiment from the transcript
-7. **Convert action items** — tap "Convert to task" on any action item row to create a linked task
-8. **Manage tasks** — open Tasks → Inbox / Today / Upcoming / All / Completed in the sidebar; type into the quick-add field with NL syntax (`#tag`, `+Project`, `!high`, dates)
-9. **Get reminded** — set a reminder time in the task editor and macOS will surface a notification with Mark Done / Snooze 15 min actions
-10. **Search** — focus the task list's search field (or `⌘F`) for FTS5 ranked search across titles and notes
-11. **Export** — select a session and export as Markdown, plain text, or JSON
+1. **Start recording** — toolbar Record button or `⇧⌘R` from anywhere. With a note open, the session binds to that note; otherwise a "Meeting on …" note is auto-created and selected.
+2. **Take notes while you record** — the live transcript streams in a pane above the note's freeform editor; type alongside it.
+3. **Pause / Resume** — pause without ending the session.
+4. **Stop** — saves the transcript inside the note. The session's chip appears in the strip; click it to expand summary / action items / entities.
+5. **Summarize / Analyze** — generated automatically (per Settings) or on-demand from the per-session auto-section.
+6. **Convert action items** — tap "Convert to task" on any action item row to create a linked task.
+7. **Open transcript** — click "Open transcript" in the auto-section to view raw segments in a sheet (select / move / re-summarise / export transcript).
+8. **Manage tasks** — open Tasks → Inbox / Today / Upcoming / All / Completed in the sidebar; type into the quick-add field with NL syntax (`#tag`, `+Project`, `!high`, dates).
+9. **Get reminded** — set a reminder time in the task editor and macOS will surface a notification with Mark Done / Snooze 15 min actions.
+10. **Search** — `⌘⇧F` opens a universal search across notes, tasks, and transcript content; transcript hits navigate to their owning note.
+11. **Export** — Export a note as Markdown (with the "Linked recordings" tail) from the note's toolbar; export a single transcript as Markdown / Plain text / JSON from the "Open transcript" sheet.
 
 ## Architecture
 
 ```
 Scribe.app (Swift 6 / SwiftUI / macOS 26)
 ├── Main Window (NavigationSplitView: sidebar + detail)
-│   ├── Live Session view (during recording)
-│   ├── Transcript Detail view (segments / summary / action items / insights)
+│   ├── Live Session view (when recording from no-note contexts)
+│   ├── Note Detail view (freeform editor + Sessions strip + per-session auto-section + inline live pane)
+│   │   └── Transcript Detail sheet (raw segments / select+move / export — reached from "Open transcript")
 │   └── Task list view (smart filters, projects, search)
 │
 ├── Audio Capture
