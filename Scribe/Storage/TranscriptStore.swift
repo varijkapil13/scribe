@@ -81,9 +81,10 @@ final class TranscriptStore: @unchecked Sendable {
 
     /// Binds a session to a note (or detaches when passed `nil`).
     ///
-    /// Production callers should pass `noteId` to `createSession` directly.
-    /// This API remains for tests that exercise the bind/detach path and for
-    /// the migration backfill (which operates in raw SQL anyway).
+    /// Tests only — production sessions get their `noteId` at create-time via
+    /// `createSession(title:noteId:)`. The migration backfill (v11) operates
+    /// in raw SQL inside the migrator transaction and doesn't go through this
+    /// API.
     func bindSession(_ sessionId: String, toNote noteId: String?) throws {
         try db.write { database in
             try database.execute(
