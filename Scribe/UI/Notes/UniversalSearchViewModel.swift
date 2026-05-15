@@ -24,11 +24,14 @@ final class UniversalSearchViewModel: ObservableObject {
     private var debounceTask: Task<Void, Never>?
     private let noteStore: NoteStore
     private let taskStore: TaskStore
+    private let transcriptStore: TranscriptStore
 
     init(noteStore: NoteStore = .shared,
-         taskStore: TaskStore = .shared) {
+         taskStore: TaskStore = .shared,
+         transcriptStore: TranscriptStore = .shared) {
         self.noteStore = noteStore
         self.taskStore = taskStore
+        self.transcriptStore = transcriptStore
     }
 
     func scheduleSearch() {
@@ -45,8 +48,9 @@ final class UniversalSearchViewModel: ObservableObject {
 
         async let noteSec = searchNotes(q)
         async let taskSec = searchTasks(q)
+        async let transcriptSec = searchTranscripts(q)
 
-        let results = await [noteSec, taskSec]
+        let results = await [noteSec, taskSec, transcriptSec]
         sections = results.filter { !$0.results.isEmpty }
     }
 
@@ -76,5 +80,31 @@ final class UniversalSearchViewModel: ObservableObject {
             )
         }
         return SearchResultSection(id: "tasks", title: "Tasks", results: Array(results))
+    }
+
+    private func searchTranscripts(_ q: String) async -> SearchResultSection {
+        guard !q.isEmpty else {
+            return SearchResultSection(id: "transcripts", title: "Transcripts", results: [])
+        }
+        let fts = NoteStore.ftsQuery(from: q)
+        guard !fts.isEmpty else {
+            return SearchResultSection(id: "transcripts", title: "Transcripts", results: [])
+        }
+        let hits = (try? transcriptStore.searchTranscripts(query: fts)) ?? []
+        // Each hit is a (Session, [Segment]). Sessions without a noteId are
+        // impossible after migration v11; skip any stragglers defensively.
+        let results: [SearchResult] = hits.prefix(10).compactMap { pair in
+            let (session, segments) = pair
+            guard let noteId = session.noteId else { return nil }
+            let snippet = segments.first?.text ?? ""
+            return SearchResult(
+                id: "transcript-\(session.id)",
+                title: session.title.isEmpty ? "Untitled session" : session.title,
+                snippet: String(snippet.prefix(80)),
+                destination: .note(noteId),
+                icon: "waveform"
+            )
+        }
+        return SearchResultSection(id: "transcripts", title: "Transcripts", results: results)
     }
 }
