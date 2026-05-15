@@ -764,14 +764,14 @@ final class MarkdownNSTextView: NSTextView {
     }
 
     static func nextListPrefix(from prefix: String) -> String {
+        // Numbered list: increment the counter.
         if let r = prefix.range(of: #"\d+"#, options: .regularExpression),
            let num = Int(prefix[r]) {
             return prefix.replacingCharacters(in: r, with: "\(num + 1)")
         }
-        if prefix.contains("[x]") || prefix.contains("[X]") {
-            return prefix
-                .replacingOccurrences(of: "[x]", with: "[ ]")
-                .replacingOccurrences(of: "[X]", with: "[ ]")
+        // Checklist: a checked-off item starts a new line UNCHECKED (matches Apple Notes).
+        if let r = prefix.range(of: #"\[[xX]\]"#, options: .regularExpression) {
+            return prefix.replacingCharacters(in: r, with: "[ ]")
         }
         return prefix
     }
