@@ -8,6 +8,7 @@ extension NSAttributedString.Key {
     static let codeBlockLine = NSAttributedString.Key("scribe.codeBlock")    // Bool: inside fenced block
     static let blockquoteLine = NSAttributedString.Key("scribe.blockquote")  // Bool: blockquote line
     static let horizontalRule = NSAttributedString.Key("scribe.hr")          // Bool: HR line
+    static let checklistMarker = NSAttributedString.Key("scribe.checklist")  // Bool: checkbox attachment
 }
 
 /// Bear-style inline markdown editor: a single NSTextView that formats
@@ -404,6 +405,59 @@ struct MarkdownEditorView: NSViewRepresentable {
                 mutable.replaceCharacters(in: decision.block.nsRange, with: attString)
             }
 
+            // Checkbox folds — match `- [ ] ` or `- [x] ` at the start of a
+            // list item (allowing leading whitespace). The match length is
+            // exactly the marker including the trailing space, so e.g.
+            // "- [ ] task" → fold the first 6 chars into an attachment, the
+            // " task" remains as text.
+            let checklistRegex = try? NSRegularExpression(
+                pattern: #"^(\s*- \[[ xX]\] )"#,
+                options: [.anchorsMatchLines]
+            )
+            if let regex = checklistRegex {
+                let plain = mutable.string as NSString
+                let matches = regex.matches(in: mutable.string, options: [],
+                                            range: NSRange(location: 0, length: plain.length))
+                // Apply in reverse so earlier ranges stay valid.
+                for match in matches.reversed() {
+                    let markerRange = match.range(at: 1)
+                    let marker = plain.substring(with: markerRange)
+                    // marker is e.g. "- [ ] " — find the bracket char to read state.
+                    let isChecked: Bool = marker.contains("[x]") || marker.contains("[X]")
+
+                    let attachment = NSTextAttachment()
+                    attachment.attachmentCell = ChecklistAttachmentCell(isChecked: isChecked)
+
+                    let attStr = NSMutableAttributedString(attachment: attachment)
+                    attStr.addAttribute(.foldSource, value: marker, range: NSRange(location: 0, length: attStr.length))
+                    attStr.addAttribute(.foldId, value: UUID(), range: NSRange(location: 0, length: attStr.length))
+                    attStr.addAttribute(.checklistMarker, value: true, range: NSRange(location: 0, length: attStr.length))
+
+                    mutable.replaceCharacters(in: markerRange, with: attStr)
+
+                    // Strikethrough + dim the rest of the line if checked.
+                    if isChecked {
+                        let lineRange = plain.lineRange(for: NSRange(location: markerRange.location, length: 0))
+                        // Recompute in display coords: the marker just shrank from `markerRange.length` to 1 char.
+                        let displayLineStart = markerRange.location
+                        let displayLineLen = lineRange.length - markerRange.length + 1  // +1 for the attachment
+                        let trailingRange = NSRange(
+                            location: displayLineStart + 1, // skip attachment
+                            length: max(0, displayLineLen - 1)
+                        )
+                        let clamped = trailingRange.intersection(NSRange(location: 0, length: mutable.length)) ?? trailingRange
+                        if clamped.length > 0 {
+                            mutable.addAttribute(.strikethroughStyle,
+                                                 value: NSUnderlineStyle.single.rawValue,
+                                                 range: clamped)
+                            mutable.addAttribute(.foregroundColor,
+                                                 value: NSColor.secondaryLabelColor,
+                                                 range: clamped)
+                        }
+                    }
+                }
+            }
+
             let (_, newRegistry) = FoldRegistry.decompose(mutable)
             foldRegistry = newRegistry
 
@@ -441,6 +495,53 @@ struct MarkdownEditorView: NSViewRepresentable {
                 length: 0
             )
             applyFormatting(to: tv)
+        }
+    }
+}
+
+// MARK: - Checkbox attachment
+
+/// Tappable checkbox glyph. The attachment carries the markdown source for
+/// the entire checkbox marker (`- [ ] ` or `- [x] `) on `.foldSource` so
+/// FoldRegistry.decompose can reconstruct the original line.
+final class ChecklistAttachmentCell: NSTextAttachmentCell {
+    let isChecked: Bool
+    init(isChecked: Bool) {
+        self.isChecked = isChecked
+        super.init(imageCell: NSImage(size: NSSize(width: 16, height: 16)))
+    }
+    required init(coder: NSCoder) { fatalError("not supported") }
+
+    override func cellSize() -> NSSize { NSSize(width: 18, height: 16) }
+
+    override func cellBaselineOffset() -> NSPoint {
+        NSPoint(x: 0, y: -3)
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        let inset: CGFloat = 1
+        let box = NSRect(x: cellFrame.minX + inset,
+                         y: cellFrame.minY + inset,
+                         width: cellFrame.width - 2 - inset * 2,
+                         height: cellFrame.height - inset * 2)
+        let path = NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3)
+        if isChecked {
+            NSColor.controlAccentColor.setFill()
+            path.fill()
+            // Checkmark
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: box.minX + 3.5, y: box.midY))
+            check.line(to: NSPoint(x: box.minX + box.width * 0.42, y: box.minY + 3.5))
+            check.line(to: NSPoint(x: box.maxX - 2.5, y: box.maxY - 3.5))
+            check.lineWidth = 1.6
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            NSColor.white.setStroke()
+            check.stroke()
+        } else {
+            NSColor.tertiaryLabelColor.setStroke()
+            path.lineWidth = 1
+            path.stroke()
         }
     }
 }
