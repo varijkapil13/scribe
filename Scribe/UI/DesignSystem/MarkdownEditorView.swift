@@ -906,17 +906,44 @@ final class MarkdownNSTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        guard let onLinkClick, let storage = textStorage else { return }
+        guard let storage = textStorage,
+              let lm = layoutManager,
+              let tc = textContainer else {
+            super.mouseDown(with: event)
+            return
+        }
         let pt = convert(event.locationInWindow, from: nil)
-        guard let lm = layoutManager, let tc = textContainer else { return }
         let glyphIdx = lm.glyphIndex(for: pt, in: tc)
-        guard glyphIdx < lm.numberOfGlyphs else { return }
-        let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
-        guard charIdx < storage.length else { return }
-        let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
-        guard let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty else { return }
-        onLinkClick(anchor)
+        if glyphIdx < lm.numberOfGlyphs {
+            let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
+            if charIdx < storage.length {
+                let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
+
+                // Checklist click → toggle the markdown source.
+                if let isChecklist = attrs[.checklistMarker] as? Bool, isChecklist,
+                   let coord = delegate as? MarkdownEditorView.Coordinator {
+                    let registry = FoldRegistry.decompose(storage).registry
+                    let sourceLoc = FoldRegistry.sourceLocation(forDisplay: charIdx, registry: registry)
+                    coord.editSource { source, _ in
+                        if let updated = ChecklistToggle.toggle(source: source, atLocation: sourceLoc) {
+                            return (updated, NSRange(location: sourceLoc, length: 0))
+                        }
+                        return (source, NSRange(location: sourceLoc, length: 0))
+                    }
+                    return
+                }
+
+                // Wiki-link click.
+                if let onLinkClick,
+                   let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty {
+                    super.mouseDown(with: event)
+                    onLinkClick(anchor)
+                    return
+                }
+            }
+        }
+
+        super.mouseDown(with: event)
     }
 
     override func draw(_ dirtyRect: NSRect) {
