@@ -72,7 +72,7 @@ struct NoteDetailView: View {
             if let selectedId = selectedSessionId,
                let session = vm.sessions.first(where: { $0.id == selectedId }) {
                 NoteSessionAutoSection(
-                    session: session,
+                    viewModel: vm.transcriptDetailViewModel(for: session),
                     onOpenSession: { onNavigate(session.id) },
                     onConvertActionItem: { _, task in
                         openedTaskFromAction = task

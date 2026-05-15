@@ -214,9 +214,12 @@ final class TranscriptDetailViewModel: ObservableObject {
         }
     }
 
-    /// Loads cached analysis results. If cached entities exist, triggers a full
-    /// re-analysis so the remaining fields (sentiment, topics, etc.) are populated.
+    /// Loads cached analysis results. If cached entities exist and no
+    /// in-memory analysis is present yet, triggers a full re-analysis so the
+    /// remaining fields (sentiment, topics, etc.) are populated.
     func loadAnalysis() {
+        // Don't re-run analysis if we already have results in memory.
+        guard transcriptAnalysis == nil else { return }
         let entities = (try? store.fetchEntities(sessionId: session.id)) ?? []
         if !entities.isEmpty {
             // We have cached entities; run a quick re-analysis for the rest.

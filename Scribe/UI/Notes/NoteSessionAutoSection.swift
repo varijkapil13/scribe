@@ -1,24 +1,17 @@
 // Scribe/UI/Notes/NoteSessionAutoSection.swift
 import SwiftUI
 
-/// Read-only block under a NoteSessionsStrip chip, showing the AI summary,
-/// action items, and entities for one bound session. Reuses the existing
-/// TranscriptDetailViewModel so re-runs of summarisation/analysis are
-/// shared with the standalone TranscriptDetailView.
+/// Read-only block showing the AI summary, action items, and entities for
+/// one bound session. The TranscriptDetailViewModel is owned and cached by
+/// NoteDetailViewModel — passing in a cached instance instead of creating one
+/// per chip click prevents NaturalLanguage analysis from re-running every
+/// time the user switches sessions.
 struct NoteSessionAutoSection: View {
-    @StateObject private var viewModel: TranscriptDetailViewModel
+    @ObservedObject var viewModel: TranscriptDetailViewModel
     let onOpenSession: () -> Void
     let onConvertActionItem: (ActionItem, TodoTask) -> Void
 
-    init(
-        session: Session,
-        onOpenSession: @escaping () -> Void,
-        onConvertActionItem: @escaping (ActionItem, TodoTask) -> Void
-    ) {
-        _viewModel = StateObject(wrappedValue: TranscriptDetailViewModel(session: session))
-        self.onOpenSession = onOpenSession
-        self.onConvertActionItem = onConvertActionItem
-    }
+    // (no custom init — synthesized memberwise init suffices)
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {

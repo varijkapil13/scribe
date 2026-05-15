@@ -17,6 +17,16 @@ final class NoteDetailViewModel: ObservableObject {
     private var autosaveCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
 
+    /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
+    /// across chip selections so analysis state survives expansion-collapse
+    /// and NaturalLanguage analysis doesn't re-run on every chip click.
+    ///
+    /// Note: the inner TranscriptDetailViewModel uses its default
+    /// `TranscriptStore()` / `TaskStore()` (both backed by
+    /// `DatabaseManager.shared`). Tests that exercise the auto-section will
+    /// hit the on-disk DB. Full DI through the inner VM is a separate change.
+    private var transcriptVMCache: [String: TranscriptDetailViewModel] = [:]
+
     init(
         note: Note,
         store: NoteStore = .shared,
@@ -68,6 +78,19 @@ final class NoteDetailViewModel: ObservableObject {
     }
 
     func markDirty() { isDirty = true }
+
+    /// Returns the (cached) TranscriptDetailViewModel for a session bound to
+    /// this note. Lazily created on first request and reused across chip
+    /// selections so analysis / summary state survives expansion-collapse and
+    /// the NaturalLanguage analyser doesn't re-run on every chip click.
+    func transcriptDetailViewModel(for session: Session) -> TranscriptDetailViewModel {
+        if let cached = transcriptVMCache[session.id] {
+            return cached
+        }
+        let vm = TranscriptDetailViewModel(session: session)
+        transcriptVMCache[session.id] = vm
+        return vm
+    }
 
     /// Starts a new recording bound to this note. The detail pane will switch
     /// into live-recording mode automatically once AppState publishes
