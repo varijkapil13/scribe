@@ -18,6 +18,8 @@ struct Session: Codable, Identifiable, Equatable {
     var language: String?
     /// Free-form tags associated with the session, stored as a JSON array in the database.
     var tags: [String]
+    /// ID of the Note this session is bound to, or nil if unattached.
+    var noteId: String?
 
     // MARK: - Initializer
 
@@ -28,7 +30,8 @@ struct Session: Codable, Identifiable, Equatable {
         endedAt: Date? = nil,
         durationSeconds: Int? = nil,
         language: String? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        noteId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -37,12 +40,13 @@ struct Session: Codable, Identifiable, Equatable {
         self.durationSeconds = durationSeconds
         self.language = language
         self.tags = tags
+        self.noteId = noteId
     }
 
     // MARK: - Codable (custom because tags are stored as JSON text)
 
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, endedAt, durationSeconds, language, tags
+        case id, title, createdAt, endedAt, durationSeconds, language, tags, noteId
     }
 
     init(from decoder: Decoder) throws {
@@ -61,6 +65,8 @@ struct Session: Codable, Identifiable, Equatable {
         } else {
             tags = []
         }
+
+        noteId = try container.decodeIfPresent(String.self, forKey: .noteId)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -76,6 +82,8 @@ struct Session: Codable, Identifiable, Equatable {
         let tagsData = try JSONEncoder().encode(tags)
         let tagsString = String(data: tagsData, encoding: .utf8) ?? "[]"
         try container.encode(tagsString, forKey: .tags)
+
+        try container.encodeIfPresent(noteId, forKey: .noteId)
     }
 }
 
