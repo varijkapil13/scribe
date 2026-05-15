@@ -57,6 +57,26 @@ struct NoteSessionAutoSection: View {
                 .foregroundStyle(.primary)
         } else if viewModel.isGeneratingSummary {
             ProgressView().controlSize(.small)
+        } else if let summaryError = viewModel.summaryError {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .imageScale(.small)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Couldn't generate summary")
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                    Text(summaryError)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Retry") {
+                    Task { await viewModel.generateSummary() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         } else {
             Button("Generate summary") {
                 Task { await viewModel.generateSummary() }
