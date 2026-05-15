@@ -47,4 +47,52 @@ final class AppStateNoteBindingTests: XCTestCase {
         XCTAssertNil(all.first?.noteId)
         await appState.stopSession()
     }
+
+    func testResolveNoteContextUsesOpenNoteWhenSelected() throws {
+        let dbm = try DatabaseManager(path: ":memory:")
+        let notes = NoteStore(databaseManager: dbm)
+        let note = try notes.createNote(title: "Existing", body: "")
+
+        let resolved = AppDelegate.resolveNoteContext(
+            selection: .note(note.id),
+            noteStore: notes,
+            now: Date()
+        )
+
+        XCTAssertEqual(resolved.noteId, note.id)
+        XCTAssertEqual(resolved.didCreateNote, false)
+    }
+
+    func testResolveNoteContextAutoCreatesNoteWhenNothingSelected() throws {
+        let dbm = try DatabaseManager(path: ":memory:")
+        let notes = NoteStore(databaseManager: dbm)
+
+        let fixedDate = Date(timeIntervalSince1970: 1_715_000_000)
+        let resolved = AppDelegate.resolveNoteContext(
+            selection: nil,
+            noteStore: notes,
+            now: fixedDate
+        )
+
+        XCTAssertNotNil(resolved.noteId)
+        XCTAssertTrue(resolved.didCreateNote)
+        let created = try notes.fetchNote(id: resolved.noteId!)
+        XCTAssertNotNil(created)
+        XCTAssertTrue(created!.title.hasPrefix("Meeting on"),
+                      "Got: \(created!.title)")
+    }
+
+    func testResolveNoteContextAutoCreatesNoteWhenNonNoteSelectionActive() throws {
+        let dbm = try DatabaseManager(path: ":memory:")
+        let notes = NoteStore(databaseManager: dbm)
+
+        let resolved = AppDelegate.resolveNoteContext(
+            selection: .tasks(.inbox),
+            noteStore: notes,
+            now: Date()
+        )
+
+        XCTAssertNotNil(resolved.noteId)
+        XCTAssertTrue(resolved.didCreateNote)
+    }
 }

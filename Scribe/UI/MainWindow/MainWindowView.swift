@@ -132,6 +132,11 @@ struct MainWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .scribeSessionUpdated)) { _ in
             viewModel.loadSessions()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeRequestNavigateToNote)) { note in
+            if let id = note.userInfo?["noteId"] as? String {
+                selection = .note(id)
+            }
+        }
         .onChange(of: appState.isTranscribing) { _, isRecording in
             // Session started → flip to the inline live view so the user
             // immediately sees the streaming transcript. Session ended → reload
@@ -712,6 +717,7 @@ private struct KeyCapGroup: View {
 extension Notification.Name {
     static let openScribeSettings = Notification.Name("scribe.openSettings")
     static let scribeSessionUpdated = Notification.Name("scribe.sessionUpdated")
+    static let scribeRequestNavigateToNote = Notification.Name("scribe.requestNavigateToNote")
 }
 
 // MARK: - Collapsible section header

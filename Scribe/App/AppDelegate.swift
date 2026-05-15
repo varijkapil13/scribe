@@ -183,8 +183,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         appState.audioManager.shouldCaptureSystemAudio = captureSystemAudio
 
+        let resolved = Self.resolveNoteContext(
+            selection: appState.currentSelection,
+            noteStore: .shared,
+            now: Date()
+        )
+
         do {
-            try await appState.startSession()
+            try await appState.startSession(noteId: resolved.noteId)
+            if resolved.didCreateNote, let id = resolved.noteId {
+                appState.currentSelection = .note(id)
+                NotificationCenter.default.post(
+                    name: .scribeRequestNavigateToNote,
+                    object: nil,
+                    userInfo: ["noteId": id]
+                )
+            }
             // The main window's live view observes `appState.isTranscribing`
             // and auto-navigates to the live transcript.
         } catch {
@@ -329,6 +343,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             try await appState.resumeSession()
         } catch {
             Log.app.error("Failed to resume recording: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+}
+
+// MARK: - Note resolution for global recording
+
+extension AppDelegate {
+
+    struct ResolvedNoteContext {
+        let noteId: String?
+        let didCreateNote: Bool
+    }
+
+    /// Pure resolver: decides which Note a new global recording should be
+    /// bound to, creating a "Meeting on <datetime>" Note when no note is
+    /// currently open. Extracted as a static helper so it's unit-testable
+    /// without booting audio.
+    static func resolveNoteContext(
+        selection: MainSelection?,
+        noteStore: NoteStore,
+        now: Date
+    ) -> ResolvedNoteContext {
+        if case .note(let noteId)? = selection {
+            return ResolvedNoteContext(noteId: noteId, didCreateNote: false)
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        let title = "Meeting on \(formatter.string(from: now))"
+        do {
+            let created = try noteStore.createNote(title: title, body: "")
+            return ResolvedNoteContext(noteId: created.id, didCreateNote: true)
+        } catch {
+            Log.app.error("Failed to auto-create meeting note: \(String(describing: error), privacy: .public)")
+            return ResolvedNoteContext(noteId: nil, didCreateNote: false)
         }
     }
 }
