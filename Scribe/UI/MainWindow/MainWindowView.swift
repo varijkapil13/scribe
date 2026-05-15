@@ -132,8 +132,13 @@ struct MainWindowView: View {
         }
         .onChange(of: appState.isTranscribing) { _, isRecording in
             // Session started → flip to the inline live view so the user
-            // immediately sees the streaming transcript.
+            // immediately sees the streaming transcript. Skip the flip when
+            // the user is already viewing a Note — the note's own live pane
+            // handles in-place streaming, and AppDelegate may also be about
+            // to post .scribeRequestNavigateToNote (auto-create path). Both
+            // cases produce a brief flash to .live without this guard.
             if isRecording {
+                if case .note = selection { return }
                 withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
                     selection = .live
                 }

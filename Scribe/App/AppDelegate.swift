@@ -192,7 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         do {
             try await appState.startSession(noteId: resolved.noteId)
             if resolved.didCreateNote, let id = resolved.noteId {
-                appState.currentSelection = .note(id)
+                // `appState.currentSelection` is a one-way mirror of the
+                // sidebar `selection` (written from MainWindowView's
+                // .onChange). Setting it here doesn't route the UI — the
+                // notification is what flips the sidebar. The mirror will
+                // catch up via MainWindowView's onChange after that.
                 NotificationCenter.default.post(
                     name: .scribeRequestNavigateToNote,
                     object: nil,
