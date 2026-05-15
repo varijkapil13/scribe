@@ -13,6 +13,7 @@ final class NoteDetailViewModel: ObservableObject {
 
     private let store: NoteStore
     private let transcriptStore: TranscriptStore
+    private let taskStore: TaskStore
     private let onNavigate: (String) -> Void
     private var autosaveCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
@@ -20,22 +21,20 @@ final class NoteDetailViewModel: ObservableObject {
     /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
     /// across chip selections so analysis state survives expansion-collapse
     /// and NaturalLanguage analysis doesn't re-run on every chip click.
-    ///
-    /// Note: the inner TranscriptDetailViewModel uses its default
-    /// `TranscriptStore()` / `TaskStore()` (both backed by
-    /// `DatabaseManager.shared`). Tests that exercise the auto-section will
-    /// hit the on-disk DB. Full DI through the inner VM is a separate change.
+    /// Capped at 5 entries (LRU); the most-recently-used sessions stay warm.
     private var transcriptVMCache: [String: TranscriptDetailViewModel] = [:]
 
     init(
         note: Note,
         store: NoteStore = .shared,
         transcriptStore: TranscriptStore = .shared,
+        taskStore: TaskStore = .shared,
         onNavigate: @escaping (String) -> Void = { _ in }
     ) {
         self.note = note
         self.store = store
         self.transcriptStore = transcriptStore
+        self.taskStore = taskStore
         self.onNavigate = onNavigate
         reload()
         autosaveCancellable = $isDirty
@@ -79,16 +78,33 @@ final class NoteDetailViewModel: ObservableObject {
 
     func markDirty() { isDirty = true }
 
+    private static let transcriptVMCacheCap = 5
+    private var transcriptVMCacheOrder: [String] = []
+
     /// Returns the (cached) TranscriptDetailViewModel for a session bound to
     /// this note. Lazily created on first request and reused across chip
     /// selections so analysis / summary state survives expansion-collapse and
     /// the NaturalLanguage analyser doesn't re-run on every chip click.
+    /// The cache is capped at 5 entries (LRU); older sessions are evicted as
+    /// newer ones are accessed.
     func transcriptDetailViewModel(for session: Session) -> TranscriptDetailViewModel {
         if let cached = transcriptVMCache[session.id] {
+            // Bump to MRU.
+            transcriptVMCacheOrder.removeAll { $0 == session.id }
+            transcriptVMCacheOrder.append(session.id)
             return cached
         }
-        let vm = TranscriptDetailViewModel(session: session)
+        let vm = TranscriptDetailViewModel(
+            session: session,
+            store: transcriptStore,
+            taskStore: taskStore
+        )
         transcriptVMCache[session.id] = vm
+        transcriptVMCacheOrder.append(session.id)
+        if transcriptVMCacheOrder.count > Self.transcriptVMCacheCap {
+            let evicted = transcriptVMCacheOrder.removeFirst()
+            transcriptVMCache.removeValue(forKey: evicted)
+        }
         return vm
     }
 
