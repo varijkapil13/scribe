@@ -34,17 +34,4 @@ final class SessionNoteIdMigrationTests: XCTestCase {
                       "sessions_noteId_idx must exist after v10 migration")
     }
 
-    func testSessionRoundTripsNoteId() throws {
-        let session = Session(title: "T", noteId: "note-42")
-        try db.database.write { try session.insert($0) }
-        let fetched = try db.database.read { try Session.fetchOne($0, key: session.id) }
-        XCTAssertEqual(fetched?.noteId, "note-42")
-    }
-
-    func testSessionDefaultsToNilNoteId() throws {
-        let session = Session(title: "T")
-        try db.database.write { try session.insert($0) }
-        let fetched = try db.database.read { try Session.fetchOne($0, key: session.id) }
-        XCTAssertNil(fetched?.noteId)
-    }
 }

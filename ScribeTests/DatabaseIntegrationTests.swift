@@ -90,6 +90,20 @@ final class DatabaseIntegrationTests: XCTestCase {
         XCTAssertEqual(reloaded.tags, ["日本語", "café", "🚀"])
     }
 
+    func testSessionRoundTripsNoteId() throws {
+        let session = Session(title: "T", noteId: "note-42")
+        try manager.database.write { try session.insert($0) }
+        let fetched = try manager.database.read { try Session.fetchOne($0, key: session.id) }
+        XCTAssertEqual(fetched?.noteId, "note-42")
+    }
+
+    func testSessionDefaultsToNilNoteId() throws {
+        let session = Session(title: "T")
+        try manager.database.write { try session.insert($0) }
+        let fetched = try manager.database.read { try Session.fetchOne($0, key: session.id) }
+        XCTAssertNil(fetched?.noteId)
+    }
+
     // MARK: - Segments
 
     func testAddAndFetchSegmentsOrderedByStartMs() throws {
