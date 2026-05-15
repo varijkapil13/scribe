@@ -23,6 +23,11 @@ final class AppState: ObservableObject {
     /// pipelines so the UI can show a banner. `nil` means "nothing wrong right now".
     @Published var lastError: String?
 
+    /// The current sidebar selection in `MainWindowView`. Updated by the view
+    /// on every selection change. `AppDelegate.startRecording` reads it when
+    /// deciding which Note a new global recording should bind to.
+    @Published var currentSelection: MainSelection?
+
     // MARK: - Private Properties
 
     private var cancellables = Set<AnyCancellable>()

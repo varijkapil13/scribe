@@ -85,6 +85,7 @@ struct MainWindowView: View {
                     selection = .tasks(.today)
                 }
             }
+            appState.currentSelection = selection
         }
         .onDisappear { projectsViewModel.stop() }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in scheduleTagReload() }
@@ -148,6 +149,9 @@ struct MainWindowView: View {
                     }
                 }
             }
+        }
+        .onChange(of: selection) { _, newValue in
+            appState.currentSelection = newValue
         }
     }
 
