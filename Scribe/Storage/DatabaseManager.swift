@@ -397,6 +397,33 @@ final class DatabaseManager: @unchecked Sendable {
                           columns: ["noteId"])
         }
 
+        migrator.registerMigration("v11_session_noteId_backfill") { db in
+            // Every existing session without a noteId gets an auto-created Note so
+            // sessions can no longer exist outside a note. Idempotent: re-runs on a
+            // migrated DB find no orphans and do nothing.
+            let orphans = try Row.fetchAll(db, sql: """
+                SELECT id, title, createdAt FROM sessions WHERE noteId IS NULL
+                """)
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            for row in orphans {
+                let sessionId: String = row["id"]
+                let sessionTitle: String = row["title"]
+                let createdAt: Date = row["createdAt"]
+                let noteTitle = sessionTitle.isEmpty
+                    ? "Meeting on \(formatter.string(from: createdAt))"
+                    : sessionTitle
+                let noteId = UUID().uuidString
+                try db.execute(sql: """
+                    INSERT INTO notes (id, title, body, createdAt, updatedAt, isDailyNote, dailyDate, notebookId)
+                    VALUES (?, ?, '', ?, ?, 0, NULL, NULL)
+                    """, arguments: [noteId, noteTitle, createdAt, Date()])
+                try db.execute(sql: "UPDATE sessions SET noteId = ? WHERE id = ?",
+                               arguments: [noteId, sessionId])
+            }
+        }
+
         try migrator.migrate(database)
     }
 }
