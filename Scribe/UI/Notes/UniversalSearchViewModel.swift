@@ -24,14 +24,11 @@ final class UniversalSearchViewModel: ObservableObject {
     private var debounceTask: Task<Void, Never>?
     private let noteStore: NoteStore
     private let taskStore: TaskStore
-    private let transcriptStore: TranscriptStore
 
     init(noteStore: NoteStore = .shared,
-         taskStore: TaskStore = .shared,
-         transcriptStore: TranscriptStore = .shared) {
+         taskStore: TaskStore = .shared) {
         self.noteStore = noteStore
         self.taskStore = taskStore
-        self.transcriptStore = transcriptStore
     }
 
     func scheduleSearch() {
@@ -48,9 +45,8 @@ final class UniversalSearchViewModel: ObservableObject {
 
         async let noteSec = searchNotes(q)
         async let taskSec = searchTasks(q)
-        async let transcriptSec = searchTranscripts(q)
 
-        let results = await [noteSec, taskSec, transcriptSec]
+        let results = await [noteSec, taskSec]
         sections = results.filter { !$0.results.isEmpty }
     }
 
@@ -80,22 +76,5 @@ final class UniversalSearchViewModel: ObservableObject {
             )
         }
         return SearchResultSection(id: "tasks", title: "Tasks", results: Array(results))
-    }
-
-    private func searchTranscripts(_ q: String) async -> SearchResultSection {
-        guard !q.isEmpty else {
-            return SearchResultSection(id: "transcripts", title: "Transcripts", results: [])
-        }
-        let matches = (try? transcriptStore.searchTranscripts(query: q)) ?? []
-        let results = matches.prefix(5).map { (session, _) in
-            SearchResult(
-                id: "session-\(session.id)",
-                title: session.title,
-                snippet: "",
-                destination: .transcript(session.id),
-                icon: "waveform"
-            )
-        }
-        return SearchResultSection(id: "transcripts", title: "Transcripts", results: Array(results))
     }
 }

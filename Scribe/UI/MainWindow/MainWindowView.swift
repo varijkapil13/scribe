@@ -5,7 +5,6 @@ import SwiftUI
 /// the live-recording view so there's only ever one window to look at.
 enum MainSelection: Hashable {
     case live
-    case transcript(String) // session id
     case tasks(TaskStore.Filter)
     case taskCalendar
     case note(String)           // noteId
@@ -29,7 +28,6 @@ struct MainWindowView: View {
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var appDelegate: AppDelegate
-    @StateObject private var viewModel = TranscriptListViewModel()
     @StateObject private var projectsViewModel = ProjectsViewModel()
     @State private var searchText: String = ""
     @State private var selection: MainSelection?
@@ -39,7 +37,6 @@ struct MainWindowView: View {
     @State private var notesExpanded: Bool = true
     @State private var notebooksExpanded: Bool = true
     @State private var notesTagsExpanded: Bool = false
-    @State private var transcriptsExpanded: Bool = true
     @State private var settingsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
@@ -75,7 +72,6 @@ struct MainWindowView: View {
             }
         }
         .onAppear {
-            viewModel.loadSessions()
             projectsViewModel.start()
             reloadTags()
             if selection == nil {
@@ -129,9 +125,6 @@ struct MainWindowView: View {
             let pane = (note.object as? SettingsPane) ?? .general
             selection = .settings(pane)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .scribeSessionUpdated)) { _ in
-            viewModel.loadSessions()
-        }
         .onReceive(NotificationCenter.default.publisher(for: .scribeRequestNavigateToNote)) { note in
             if let id = note.userInfo?["noteId"] as? String {
                 selection = .note(id)
@@ -139,19 +132,10 @@ struct MainWindowView: View {
         }
         .onChange(of: appState.isTranscribing) { _, isRecording in
             // Session started → flip to the inline live view so the user
-            // immediately sees the streaming transcript. Session ended → reload
-            // the list and select the just-finished transcript so the post-
-            // session summary/analysis flow is one click away.
+            // immediately sees the streaming transcript.
             if isRecording {
                 withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
                     selection = .live
-                }
-            } else {
-                viewModel.loadSessions()
-                if let first = viewModel.filteredSessions.first {
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
-                        selection = .transcript(first.id)
-                    }
                 }
             }
         }
@@ -402,40 +386,6 @@ struct MainWindowView: View {
             }
 
             Section {
-                if transcriptsExpanded {
-                    if viewModel.filteredSessions.isEmpty {
-                        sidebarEmptyHint
-                    } else {
-                        ForEach(viewModel.filteredSessions) { session in
-                            NavigationLink(value: MainSelection.transcript(session.id)) {
-                                SessionRowView(session: session)
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    viewModel.deleteSession(session)
-                                    if case .transcript(let id) = selection, id == session.id {
-                                        selection = viewModel.filteredSessions.first.map { .transcript($0.id) }
-                                    }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
-                        }
-                    }
-                }
-            } header: {
-                HStack(alignment: .firstTextBaseline) {
-                    CollapsibleSectionHeader(title: "Transcripts", isExpanded: $transcriptsExpanded)
-                    Spacer()
-                    if !viewModel.filteredSessions.isEmpty {
-                        Text("\(viewModel.filteredSessions.count)")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-
-            Section {
                 if settingsExpanded {
                     ForEach(SettingsPane.allCases) { pane in
                         NavigationLink(value: MainSelection.settings(pane)) {
@@ -447,10 +397,7 @@ struct MainWindowView: View {
                 CollapsibleSectionHeader(title: "Settings", isExpanded: $settingsExpanded)
             }
         }
-        .searchable(text: $searchText, placement: .sidebar, prompt: "Search transcripts…")
-        .onChange(of: searchText) { _, newValue in
-            viewModel.search(query: newValue)
-        }
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Search…")
         .navigationTitle("Scribe")
     }
 
@@ -502,20 +449,6 @@ struct MainWindowView: View {
         }
     }
 
-    private var sidebarEmptyHint: some View {
-        HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-            Image(systemName: "waveform.badge.mic")
-                .foregroundStyle(.tertiary)
-                .font(.callout)
-                .padding(.top, 2)
-            Text("No transcripts yet. Start a recording to see it here.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.vertical, DesignTokens.Spacing.xs)
-    }
-
     // MARK: - Detail
 
     @ViewBuilder
@@ -523,17 +456,6 @@ struct MainWindowView: View {
         switch selection {
         case .live:
             LiveSessionView()
-        case .transcript(let id):
-            if let session = viewModel.filteredSessions.first(where: { $0.id == id }) {
-                TranscriptDetailView(session: session)
-                    .id(session.id)
-            } else {
-                EmptyStateView(
-                    systemImage: "questionmark.folder",
-                    title: "Transcript not found",
-                    message: "The selected session is no longer available."
-                )
-            }
         case .tasks(let filter):
             TaskListView(filter: filter)
                 .id(filter)
