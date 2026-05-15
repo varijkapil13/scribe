@@ -111,13 +111,22 @@ struct NoteMarkdownExporter {
             for entityType in ExtractedEntity.EntityType.allCases {
                 guard let items = grouped[entityType], !items.isEmpty else { continue }
                 let names = items.map(\.text).joined(separator: ", ")
-                lines.append("- \(entityType.rawValue): \(names)")
+                lines.append("- \(displayLabel(for: entityType)): \(names)")
             }
             lines.append("")
         }
     }
 
     // MARK: - Helpers
+
+    private static func displayLabel(for type: ExtractedEntity.EntityType) -> String {
+        switch type {
+        case .person:       return "People"
+        case .organization: return "Organizations"
+        case .place:        return "Places"
+        case .date:         return "Dates"
+        }
+    }
 
     private static func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()

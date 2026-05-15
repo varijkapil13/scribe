@@ -86,7 +86,7 @@ final class NoteMarkdownExporterTests: XCTestCase {
         XCTAssertTrue(md.contains("Friday"), "deadline")
         XCTAssertTrue(md.contains("scope"), "topic")
         XCTAssertTrue(md.contains("Mentioned"), "entities header")
-        XCTAssertTrue(md.contains("Person:"), "entity type label")
+        XCTAssertTrue(md.contains("People:"), "entity type label")
     }
 
     func testOrdersSessionsByCreatedAtDesc() throws {
