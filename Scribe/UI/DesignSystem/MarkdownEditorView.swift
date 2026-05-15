@@ -72,6 +72,7 @@ struct MarkdownEditorView: NSViewRepresentable {
             actions.blockquote    = { [weak coord] in coord?.applyLinePrefix("> ") }
             actions.unorderedList = { [weak coord] in coord?.applyLinePrefix("- ") }
             actions.orderedList   = { [weak coord] in coord?.applyOrderedList() }
+            actions.checklist     = { [weak coord] in coord?.toggleChecklistOnSelection() }
             actions.setHeading    = { [weak coord] level in coord?.setHeading(level) }
         }
 
@@ -230,6 +231,24 @@ struct MarkdownEditorView: NSViewRepresentable {
                 let newSource = nsSource.replacingCharacters(in: blockRange, with: newBlock)
                 let newCursor = blockRange.location + (newBlock as NSString).length
                 return (newSource, NSRange(location: min(newCursor, (newSource as NSString).length), length: 0))
+            }
+        }
+
+        func toggleChecklistOnSelection() {
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let lineRange = nsSource.lineRange(for: sel)
+                let line = nsSource.substring(with: lineRange).trimmingCharacters(in: .newlines)
+                // If the line is already a checklist, no-op so we don't insert a second marker.
+                if line.range(of: #"^\s*- \[[ xX]\] "#, options: .regularExpression) != nil {
+                    return (source, sel)
+                }
+                let newLine = "- [ ] " + line
+                let trailingNewline = lineRange.length > (line as NSString).length ? "\n" : ""
+                let newSource = nsSource.replacingCharacters(in: lineRange,
+                                                             with: newLine + trailingNewline)
+                let shift = ("- [ ] " as NSString).length
+                return (newSource, NSRange(location: sel.location + shift, length: 0))
             }
         }
 
@@ -898,6 +917,7 @@ final class MarkdownNSTextView: NSTextView {
             case ".":       coord?.applyLinePrefix("> ");   return true
             case "8":       coord?.applyLinePrefix("- ");   return true
             case "7":       coord?.applyOrderedList();      return true
+            case "u", "U":  coord?.toggleChecklistOnSelection(); return true
             case "z", "Z":  undoManager?.redo();            return true
             default: break
             }

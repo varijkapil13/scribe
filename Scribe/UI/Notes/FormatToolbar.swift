@@ -11,6 +11,7 @@ final class EditorActions {
     var blockquote: (() -> Void)?
     var unorderedList: (() -> Void)?
     var orderedList: (() -> Void)?
+    var checklist: (() -> Void)?
     var setHeading: ((Int) -> Void)?  // 0 = paragraph, 1–3 = H1–H3
 }
 
@@ -53,6 +54,7 @@ struct FormatToolbar: View {
             ToolbarButton(systemImage: "text.quote",   tooltip: "Blockquote (⌘⇧.)")       { actions.blockquote?() }
             ToolbarButton(systemImage: "list.bullet",  tooltip: "Bullet List (⌘⇧8)")      { actions.unorderedList?() }
             ToolbarButton(systemImage: "list.number",  tooltip: "Numbered List (⌘⇧7)")    { actions.orderedList?() }
+            ToolbarButton(systemImage: "checklist",    tooltip: "Checklist (⌘⇧U)")         { actions.checklist?() }
 
             Spacer()
         }
