@@ -269,6 +269,48 @@ final class TranscriptDetailViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Note binding
+
+    /// Binds this session to a note (or detaches when passed nil).
+    func bindToNote(noteId: String?) {
+        do {
+            try store.bindSession(session.id, toNote: noteId)
+            if let fresh = try store.fetchSession(id: session.id) {
+                session = fresh
+            }
+        } catch {
+            Log.storage.error("bindToNote failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Convenience: detach from the current note.
+    func unbindFromNote() {
+        bindToNote(noteId: nil)
+    }
+
+    /// Creates a new note titled from this session and binds the session to
+    /// it. Posts `.scribeRequestNavigateToNote` so the main window opens the
+    /// new note.
+    func moveToNewNote() {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        let title = session.title.isEmpty
+            ? "Notes — Meeting on \(formatter.string(from: session.createdAt))"
+            : "Notes — \(session.title)"
+        do {
+            let note = try NoteStore.shared.createNote(title: title, body: "")
+            bindToNote(noteId: note.id)
+            NotificationCenter.default.post(
+                name: .scribeRequestNavigateToNote,
+                object: nil,
+                userInfo: ["noteId": note.id]
+            )
+        } catch {
+            Log.storage.error("moveToNewNote failed: \(error.localizedDescription)")
+        }
+    }
+
     /// Toggles the completion state of an action item.
     func toggleActionItem(_ id: UUID) {
         if completedActionItems.contains(id) {
