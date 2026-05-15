@@ -78,6 +78,7 @@ struct MarkdownEditorView: NSViewRepresentable {
             actions.unorderedList = { [weak coord] in coord?.applyLinePrefix("- ") }
             actions.orderedList   = { [weak coord] in coord?.applyOrderedList() }
             actions.checklist     = { [weak coord] in coord?.toggleChecklistOnSelection() }
+            actions.insertTable   = { [weak coord] in coord?.insertTableTemplate() }
             actions.setHeading    = { [weak coord] level in coord?.setHeading(level) }
         }
 
@@ -237,6 +238,16 @@ struct MarkdownEditorView: NSViewRepresentable {
                 let newSource = nsSource.replacingCharacters(in: blockRange, with: newBlock)
                 let newCursor = blockRange.location + (newBlock as NSString).length
                 return (newSource, NSRange(location: min(newCursor, (newSource as NSString).length), length: 0))
+            }
+        }
+
+        func insertTableTemplate() {
+            let template = "\n| Column 1 | Column 2 |\n|----------|----------|\n|          |          |\n"
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let new = nsSource.replacingCharacters(in: sel, with: template)
+                let len = (template as NSString).length
+                return (new, NSRange(location: sel.location + len, length: 0))
             }
         }
 
