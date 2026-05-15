@@ -8,6 +8,7 @@ struct NoteDetailView: View {
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
     @State private var selectedSessionId: String? = nil
+    @State private var userExplicitlyCollapsed: Bool = false
     @State private var openedTaskFromAction: TodoTask?
     @State private var openedTranscriptSession: Session?
 
@@ -104,7 +105,23 @@ struct NoteDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .onChange(of: selectedSessionId) { _, newValue in
+            if newValue == nil && !vm.sessions.isEmpty {
+                userExplicitlyCollapsed = true
+            } else if newValue != nil {
+                userExplicitlyCollapsed = false
+            }
+        }
         .onChange(of: vm.sessions) { _, newSessions in
+            // Don't re-expand if the user explicitly collapsed.
+            guard !userExplicitlyCollapsed else {
+                // But still clear a stale selection that no longer exists.
+                if let id = selectedSessionId,
+                   !newSessions.contains(where: { $0.id == id }) {
+                    selectedSessionId = newSessions.first?.id
+                }
+                return
+            }
             if selectedSessionId == nil, let first = newSessions.first {
                 selectedSessionId = first.id
             } else if let id = selectedSessionId,
