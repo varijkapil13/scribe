@@ -167,9 +167,12 @@ struct NoteDetailView: View {
     private func exportMarkdown() {
         let markdown = NoteMarkdownExporter.export(note: vm.note,
                                                    transcriptStore: .shared)
-        let safeTitle = vm.note.title.isEmpty
-            ? "Untitled-note"
-            : vm.note.title.replacingOccurrences(of: " ", with: "_")
+        let rawTitle = vm.note.title.isEmpty ? "Untitled-note" : vm.note.title
+        let illegal = CharacterSet(charactersIn: "/:\\?%*|\"<>")
+        let safeTitle = rawTitle
+            .components(separatedBy: illegal)
+            .joined(separator: "-")
+            .replacingOccurrences(of: " ", with: "_")
         ExportManager.saveToFile(
             content: markdown,
             defaultName: safeTitle,
