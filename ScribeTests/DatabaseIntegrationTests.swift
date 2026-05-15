@@ -14,17 +14,20 @@ final class DatabaseIntegrationTests: XCTestCase {
 
     private var manager: DatabaseManager!
     private var store: TranscriptStore!
+    private var notes: NoteStore!
     private var cancellables: Set<AnyCancellable> = []
 
     override func setUpWithError() throws {
         // Each test gets a fresh in-memory DB so they're independent.
         manager = try DatabaseManager(path: ":memory:")
         store = TranscriptStore(databaseManager: manager)
+        notes = NoteStore(databaseManager: manager)
         cancellables.removeAll()
     }
 
     override func tearDown() {
         cancellables.removeAll()
+        notes = nil
         store = nil
         manager = nil
     }
@@ -32,7 +35,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Session lifecycle
 
     func testCreateThenFetchSessionRoundTrip() throws {
-        let created = try store.createSession(title: "Standup")
+        let created = try TestHelpers.makeBoundSession(title: "Standup", notes: notes, transcripts: store)
 
         let fetched = try store.fetchSession(id: created.id)
         XCTAssertEqual(fetched?.id, created.id)
@@ -43,7 +46,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testEndSessionStampsDurationAndEndedAt() throws {
-        let session = try store.createSession(title: "Brief")
+        let session = try TestHelpers.makeBoundSession(title: "Brief", notes: notes, transcripts: store)
         // Simulate a small delay so duration is non-zero.
         Thread.sleep(forTimeInterval: 1.05)
 
@@ -60,18 +63,18 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testFetchAllSessionsOrderedNewestFirst() throws {
-        let first = try store.createSession(title: "First")
+        let first = try TestHelpers.makeBoundSession(title: "First", notes: notes, transcripts: store)
         Thread.sleep(forTimeInterval: 0.02)
-        let second = try store.createSession(title: "Second")
+        let second = try TestHelpers.makeBoundSession(title: "Second", notes: notes, transcripts: store)
         Thread.sleep(forTimeInterval: 0.02)
-        let third = try store.createSession(title: "Third")
+        let third = try TestHelpers.makeBoundSession(title: "Third", notes: notes, transcripts: store)
 
         let all = try store.fetchAllSessions()
         XCTAssertEqual(all.map(\.id), [third.id, second.id, first.id])
     }
 
     func testUpdateSessionPersistsTitleAndTags() throws {
-        var session = try store.createSession(title: "Tmp")
+        var session = try TestHelpers.makeBoundSession(title: "Tmp", notes: notes, transcripts: store)
         session.title = "Q3 Roadmap"
         session.tags = ["planning", "exec", "q3"]
         try store.updateSession(session)
@@ -82,7 +85,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testTagsSurviveJSONRoundTripWithUnicode() throws {
-        var session = try store.createSession(title: "Localized")
+        var session = try TestHelpers.makeBoundSession(title: "Localized", notes: notes, transcripts: store)
         session.tags = ["日本語", "café", "🚀"]
         try store.updateSession(session)
 
@@ -107,7 +110,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Segments
 
     func testAddAndFetchSegmentsOrderedByStartMs() throws {
-        let session = try store.createSession(title: "Order")
+        let session = try TestHelpers.makeBoundSession(title: "Order", notes: notes, transcripts: store)
 
         // Insert deliberately out of order — store must still return ordered.
         try store.addSegment(sessionId: session.id, startMs: 5_000, endMs: 6_000, speaker: "you", text: "third")
@@ -126,7 +129,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testDeleteSessionCascadesToSegments() throws {
-        let session = try store.createSession(title: "Cascade")
+        let session = try TestHelpers.makeBoundSession(title: "Cascade", notes: notes, transcripts: store)
         try store.addSegment(sessionId: session.id, startMs: 0, endMs: 1, speaker: "you", text: "hi")
         try store.addSegment(sessionId: session.id, startMs: 1, endMs: 2, speaker: "you", text: "again")
 
@@ -137,7 +140,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testSegmentsWithSpecialCharsPersistVerbatim() throws {
-        let session = try store.createSession(title: "Quotes")
+        let session = try TestHelpers.makeBoundSession(title: "Quotes", notes: notes, transcripts: store)
         let weird = #"O'Reilly said "let's ship it"; tag: <foo>"#
         try store.addSegment(sessionId: session.id, startMs: 0, endMs: 1, speaker: "you", text: weird)
 
@@ -146,8 +149,8 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testBulkDeleteAllRemovesAllSessionsAndSegments() throws {
-        let s1 = try store.createSession(title: "A")
-        let s2 = try store.createSession(title: "B")
+        let s1 = try TestHelpers.makeBoundSession(title: "A", notes: notes, transcripts: store)
+        let s2 = try TestHelpers.makeBoundSession(title: "B", notes: notes, transcripts: store)
         try store.addSegment(sessionId: s1.id, startMs: 0, endMs: 1, speaker: "you", text: "x")
         try store.addSegment(sessionId: s2.id, startMs: 0, endMs: 1, speaker: "you", text: "y")
 
@@ -160,8 +163,8 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Full-Text Search (FTS5)
 
     func testSearchTranscriptsMatchesSegmentAcrossSessions() throws {
-        let alpha = try store.createSession(title: "Alpha")
-        let beta = try store.createSession(title: "Beta")
+        let alpha = try TestHelpers.makeBoundSession(title: "Alpha", notes: notes, transcripts: store)
+        let beta = try TestHelpers.makeBoundSession(title: "Beta", notes: notes, transcripts: store)
         try store.addSegment(sessionId: alpha.id, startMs: 0, endMs: 1, speaker: "you", text: "Discussed roadmap and budget")
         try store.addSegment(sessionId: alpha.id, startMs: 1, endMs: 2, speaker: "remote", text: "OK")
         try store.addSegment(sessionId: beta.id, startMs: 0, endMs: 1, speaker: "you", text: "No relevant content here")
@@ -173,7 +176,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testSearchTranscriptsReflectsUpdatesViaTriggers() throws {
-        let session = try store.createSession(title: "Mutate")
+        let session = try TestHelpers.makeBoundSession(title: "Mutate", notes: notes, transcripts: store)
         try store.addSegment(
             sessionId: session.id,
             startMs: 0, endMs: 1,
@@ -203,7 +206,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testSearchEmptyResultsForUnknownTerm() throws {
-        let s = try store.createSession(title: "Empty")
+        let s = try TestHelpers.makeBoundSession(title: "Empty", notes: notes, transcripts: store)
         try store.addSegment(sessionId: s.id, startMs: 0, endMs: 1, speaker: "you", text: "hello")
         XCTAssertEqual(try store.searchTranscripts(query: "xyzzy").count, 0)
     }
@@ -211,7 +214,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Combine Observation
 
     func testObserveSegmentsEmitsOnInsert() throws {
-        let session = try store.createSession(title: "Live")
+        let session = try TestHelpers.makeBoundSession(title: "Live", notes: notes, transcripts: store)
         let exp = expectation(description: "publisher emits initial then updated")
         exp.expectedFulfillmentCount = 2
 
@@ -237,7 +240,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Meeting Summaries
 
     func testSaveAndFetchSummaryWithActionItems() throws {
-        let session = try store.createSession(title: "Strategy")
+        let session = try TestHelpers.makeBoundSession(title: "Strategy", notes: notes, transcripts: store)
         let summary = MeetingSummary(
             id: UUID(),
             sessionId: session.id,
@@ -279,7 +282,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testSaveSummaryReplacesExistingSummary() throws {
-        let session = try store.createSession(title: "Replace")
+        let session = try TestHelpers.makeBoundSession(title: "Replace", notes: notes, transcripts: store)
         let first = MeetingSummary(
             id: UUID(),
             sessionId: session.id,
@@ -311,7 +314,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testDeleteSummaryRemovesRow() throws {
-        let session = try store.createSession(title: "Cleanup")
+        let session = try TestHelpers.makeBoundSession(title: "Cleanup", notes: notes, transcripts: store)
         let summary = MeetingSummary(
             id: UUID(),
             sessionId: session.id,
@@ -332,7 +335,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Action Items
 
     func testToggleActionItemCompletionFlipsState() throws {
-        let session = try store.createSession(title: "Toggle")
+        let session = try TestHelpers.makeBoundSession(title: "Toggle", notes: notes, transcripts: store)
         let item = ActionItem(
             id: UUID(),
             description: "Send recap",
@@ -354,8 +357,8 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testFetchAllPendingActionItemsExcludesCompleted() throws {
-        let s1 = try store.createSession(title: "Active")
-        let s2 = try store.createSession(title: "Other")
+        let s1 = try TestHelpers.makeBoundSession(title: "Active", notes: notes, transcripts: store)
+        let s2 = try TestHelpers.makeBoundSession(title: "Other", notes: notes, transcripts: store)
         let pending = ActionItem(
             id: UUID(), description: "Open task",
             assignee: nil, deadline: nil, priority: .medium, sourceText: ""
@@ -375,7 +378,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     }
 
     func testSaveActionItemsReplacesPriorWithoutSummary() throws {
-        let s = try store.createSession(title: "Replace items")
+        let s = try TestHelpers.makeBoundSession(title: "Replace items", notes: notes, transcripts: store)
         let v1 = ActionItem(id: UUID(), description: "Old", assignee: nil, deadline: nil, priority: nil, sourceText: "")
         try store.saveActionItems([v1], sessionId: s.id, summaryId: nil)
         XCTAssertEqual(try store.fetchActionItems(sessionId: s.id).count, 1)
@@ -391,7 +394,7 @@ final class DatabaseIntegrationTests: XCTestCase {
     // MARK: - Entities
 
     func testSaveEntitiesReplacesAllExisting() throws {
-        let s = try store.createSession(title: "Entities")
+        let s = try TestHelpers.makeBoundSession(title: "Entities", notes: notes, transcripts: store)
         let first = [
             ExtractedEntity(id: UUID(), text: "Alice", type: .person, range: nil, segmentId: nil),
             ExtractedEntity(id: UUID(), text: "ACME", type: .organization, range: nil, segmentId: nil),

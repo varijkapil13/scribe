@@ -368,7 +368,8 @@ final class TaskStoreTests: XCTestCase {
     /// `tasks.sourceActionItemId` foreign key is satisfied.
     private func makePersistedActionItem(description: String = "Send report") throws -> (sessionId: String, actionItemId: String) {
         let transcripts = TranscriptStore(databaseManager: manager)
-        let session = try transcripts.createSession(title: "Sync")
+        let notes = NoteStore(databaseManager: manager)
+        let session = try TestHelpers.makeBoundSession(title: "Sync", notes: notes, transcripts: transcripts)
         let actionItem = ActionItem(
             id: UUID(),
             description: description,
@@ -439,7 +440,8 @@ final class TaskStoreTests: XCTestCase {
         // Create the referenced session and action item rows first so the
         // foreign-key constraints are satisfied.
         let transcripts = TranscriptStore(databaseManager: manager)
-        let session = try transcripts.createSession(title: "Standup")
+        let notes = NoteStore(databaseManager: manager)
+        let session = try TestHelpers.makeBoundSession(title: "Standup", notes: notes, transcripts: transcripts)
         let summary = MeetingSummary(
             id: UUID(),
             sessionId: session.id,

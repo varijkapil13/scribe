@@ -11,16 +11,19 @@ final class AppStateCoalescingTests: XCTestCase {
 
     private var manager: DatabaseManager!
     private var store: TranscriptStore!
+    private var notes: NoteStore!
     private var state: AppState!
 
     override func setUp() async throws {
         manager = try DatabaseManager(path: ":memory:")
         store = TranscriptStore(databaseManager: manager)
+        notes = NoteStore(databaseManager: manager)
         state = AppState(transcriptStore: store)
     }
 
     override func tearDown() async throws {
         state = nil
+        notes = nil
         store = nil
         manager = nil
     }
@@ -28,7 +31,7 @@ final class AppStateCoalescingTests: XCTestCase {
     // MARK: - Helpers
 
     private func startSession() throws -> String {
-        let session = try store.createSession(title: "test")
+        let session = try TestHelpers.makeBoundSession(title: "test", notes: notes, transcripts: store)
         state.currentSessionId = session.id
         return session.id
     }

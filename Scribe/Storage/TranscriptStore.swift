@@ -24,10 +24,11 @@ final class TranscriptStore: @unchecked Sendable {
 
     // MARK: - Session CRUD
 
-    /// Creates a new session with the given title and returns it.
+    /// Creates a session attached to a Note. Every session must belong to a
+    /// note — transcripts are part of notes, not standalone entities.
     @discardableResult
-    func createSession(title: String) throws -> Session {
-        var session = Session(title: title)
+    func createSession(title: String, noteId: String) throws -> Session {
+        var session = Session(title: title, noteId: noteId)
         try db.write { database in
             try session.insert(database)
         }
@@ -79,9 +80,10 @@ final class TranscriptStore: @unchecked Sendable {
     // MARK: - Note binding
 
     /// Binds a session to a note (or detaches when passed `nil`).
-    /// The schema has no FK on `notes.id` — callers deleting the parent note
-    /// must pass `nil` first if they want the session record preserved.
-    /// `NoteStore.deleteNote` performs this sweep automatically.
+    ///
+    /// Production callers should pass `noteId` to `createSession` directly.
+    /// This API remains for tests that exercise the bind/detach path and for
+    /// the migration backfill (which operates in raw SQL anyway).
     func bindSession(_ sessionId: String, toNote noteId: String?) throws {
         try db.write { database in
             try database.execute(

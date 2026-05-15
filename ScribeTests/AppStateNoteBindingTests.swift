@@ -31,21 +31,23 @@ final class AppStateNoteBindingTests: XCTestCase {
         await appState.stopSession()
     }
 
-    func testStartSessionWithoutNoteIdLeavesSessionUnbound() async throws {
+    func testStartSessionWithoutNoteIdThrows() async throws {
         let dbm = try DatabaseManager(path: ":memory:")
         let transcripts = TranscriptStore(databaseManager: dbm)
         let appState = AppState(transcriptStore: transcripts)
 
         do {
-            try await appState.startSession(title: "Untracked")
+            try await appState.startSession(title: "No note")
+            XCTFail("Expected startSession to throw AppStateError.sessionRequiresNoteId")
+        } catch AppStateError.sessionRequiresNoteId {
+            // expected
         } catch {
-            // ignored
+            XCTFail("Expected AppStateError.sessionRequiresNoteId, got \(error)")
         }
 
+        // No session row should have been persisted.
         let all = try transcripts.fetchAllSessions()
-        XCTAssertEqual(all.count, 1)
-        XCTAssertNil(all.first?.noteId)
-        await appState.stopSession()
+        XCTAssertEqual(all.count, 0)
     }
 
     func testResolveNoteContextUsesOpenNoteWhenSelected() throws {

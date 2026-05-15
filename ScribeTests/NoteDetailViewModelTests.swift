@@ -27,8 +27,7 @@ final class NoteDetailViewModelTests: XCTestCase {
 
     func testSessionsExposesBoundSessions() async throws {
         let note = try notes.createNote(title: "N", body: "")
-        let session = try transcripts.createSession(title: "S")
-        try transcripts.bindSession(session.id, toNote: note.id)
+        let session = try transcripts.createSession(title: "S", noteId: note.id)
 
         let vm = NoteDetailViewModel(
             note: note,

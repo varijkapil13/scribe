@@ -3,6 +3,16 @@ import Combine
 import AVFoundation
 import CoreAudio
 
+enum AppStateError: Error, LocalizedError {
+    case sessionRequiresNoteId
+    var errorDescription: String? {
+        switch self {
+        case .sessionRequiresNoteId:
+            return "A note must exist before starting a recording."
+        }
+    }
+}
+
 /// Central application state that coordinates audio capture, transcription, and storage.
 ///
 /// `AppState` wires together the audio pipeline, Apple Speech transcription engine,
@@ -308,15 +318,14 @@ final class AppState: ObservableObject {
         title: String = "Untitled Session",
         noteId: String? = nil
     ) async throws {
-        // Create a persistent session.
-        let session = try transcriptStore.createSession(title: title)
-        currentSessionId = session.id
-
-        // Bind to a Note immediately if requested, so the Sessions strip in
-        // the open note observes the new chip from the very first frame.
-        if let noteId {
-            try transcriptStore.bindSession(session.id, toNote: noteId)
+        // Every session belongs to a note. AppDelegate.startRecording resolves
+        // (or auto-creates) a note before reaching this method; passing nil
+        // here is a programmer error.
+        guard let noteId else {
+            throw AppStateError.sessionRequiresNoteId
         }
+        let session = try transcriptStore.createSession(title: title, noteId: noteId)
+        currentSessionId = session.id
 
         // Reset live view buffer, coalesce buffer, and diagnostic flags.
         overlaySegments.removeAll()

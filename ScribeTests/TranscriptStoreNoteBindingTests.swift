@@ -26,7 +26,7 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
 
     func testBindSessionAttachesNoteId() throws {
         let note = try notes.createNote(title: "N", body: "")
-        let session = try transcripts.createSession(title: "S")
+        let session = try TestHelpers.makeBoundSession(title: "S", notes: notes, transcripts: transcripts)
         try transcripts.bindSession(session.id, toNote: note.id)
         let fetched = try transcripts.fetchSession(id: session.id)
         XCTAssertEqual(fetched?.noteId, note.id)
@@ -34,7 +34,7 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
 
     func testBindSessionToNilDetaches() throws {
         let note = try notes.createNote(title: "N", body: "")
-        let session = try transcripts.createSession(title: "S")
+        let session = try TestHelpers.makeBoundSession(title: "S", notes: notes, transcripts: transcripts)
         try transcripts.bindSession(session.id, toNote: note.id)
         try transcripts.bindSession(session.id, toNote: nil)
         let fetched = try transcripts.fetchSession(id: session.id)
@@ -57,8 +57,8 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
 
     func testFetchSessionsForNoteIdExcludesUnbound() throws {
         let note = try notes.createNote(title: "N", body: "")
-        let bound = try transcripts.createSession(title: "Bound")
-        _ = try transcripts.createSession(title: "Unbound")
+        let bound = try TestHelpers.makeBoundSession(title: "Bound", notes: notes, transcripts: transcripts)
+        _ = try TestHelpers.makeBoundSession(title: "Unbound", notes: notes, transcripts: transcripts)
         try transcripts.bindSession(bound.id, toNote: note.id)
         let list = try transcripts.fetchSessions(forNoteId: note.id)
         XCTAssertEqual(list.map(\.id), [bound.id])
@@ -66,7 +66,7 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
 
     func testObserveSessionsForNoteIdEmitsOnBind() throws {
         let note = try notes.createNote(title: "N", body: "")
-        let session = try transcripts.createSession(title: "S")
+        let session = try TestHelpers.makeBoundSession(title: "S", notes: notes, transcripts: transcripts)
         let expectation = self.expectation(description: "observation emits after bind")
         expectation.expectedFulfillmentCount = 2  // initial empty + post-bind
 
@@ -94,8 +94,7 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
 
     func testDeleteNoteSweepsBoundSessions() throws {
         let note = try notes.createNote(title: "N", body: "")
-        let session = try transcripts.createSession(title: "S")
-        try transcripts.bindSession(session.id, toNote: note.id)
+        let session = try transcripts.createSession(title: "S", noteId: note.id)
 
         try notes.deleteNote(id: note.id)
 
