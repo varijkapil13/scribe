@@ -483,6 +483,44 @@ struct MarkdownEditorView: NSViewRepresentable {
                 }
             }
 
+            // Image folds — match `![alt](path)`. Skip matches inside a code
+            // block (those should stay as raw markdown).
+            let imageRegex = try? NSRegularExpression(
+                pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#,
+                options: []
+            )
+            if let regex = imageRegex {
+                let plain = mutable.string as NSString
+                let matches = regex.matches(in: mutable.string, options: [],
+                                            range: NSRange(location: 0, length: plain.length))
+                for match in matches.reversed() {
+                    let fullRange = match.range
+                    // Skip if the match is inside a code block (carries .codeBlockLine).
+                    if mutable.attribute(.codeBlockLine, at: fullRange.location, effectiveRange: nil) as? Bool == true {
+                        continue
+                    }
+                    let pathRange = match.range(at: 2)
+                    let path = plain.substring(with: pathRange)
+                    guard let image = ImageLoader.load(path: path) else { continue }
+
+                    let attachment = NSTextAttachment()
+                    attachment.image = image
+                    let maxW = min(editorContentWidth, 480)
+                    let scale = (image.size.width > 0) ? min(1.0, maxW / image.size.width) : 1.0
+                    attachment.bounds = NSRect(
+                        x: 0, y: 0,
+                        width: image.size.width * scale,
+                        height: image.size.height * scale
+                    )
+
+                    let attStr = NSMutableAttributedString(attachment: attachment)
+                    let originalSource = plain.substring(with: fullRange)
+                    attStr.addAttribute(.foldSource, value: originalSource, range: NSRange(location: 0, length: attStr.length))
+                    attStr.addAttribute(.foldId, value: UUID(), range: NSRange(location: 0, length: attStr.length))
+                    mutable.replaceCharacters(in: fullRange, with: attStr)
+                }
+            }
+
             let (_, newRegistry) = FoldRegistry.decompose(mutable)
             foldRegistry = newRegistry
 
