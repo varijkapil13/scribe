@@ -232,12 +232,31 @@ Once tasks and notes both exist, wire the joins:
 
 ### Phase 3 follow-ups
 
-- [ ] **Note markdown export.** Scribe has no Note exporter today
-      (`Scribe/Export/` only handles `Session + [Segment]`). When a Note
-      exporter lands, append a "Linked recordings" tail with the
-      summary / action items / mentioned entities of each bound
-      session, so exported notes carry their transcript context with
-      them.
+- [x] **Note markdown export.** `NoteMarkdownExporter` + Export toolbar
+      button on `NoteDetailView`. Emits the freeform body plus a
+      "## Linked recordings" tail with summary / action items /
+      Mentioned entities (grouped People / Organizations / Places /
+      Dates) per bound session. Tests cover all five cases.
+
+### Rich Editor Phase 2 follow-ups
+
+- [ ] **Split `MarkdownEditorView.swift`.** The file is now ~1500 lines
+      mixing the SwiftUI representable, AppKit subclass, formatter, and
+      attachment cells. Split into:
+      `MarkdownEditorView.swift` (SwiftUI representable + Coordinator),
+      `MarkdownNSTextView.swift` (AppKit subclass with smart Enter /
+      Tab / drag / mouse), `MarkdownFormatter.swift` (the line walk +
+      table styling), and a small file per attachment cell type. Not a
+      blocker — reviewer-flagged as quality follow-up.
+- [ ] **Table cell tab navigation.** The Phase 2 spec mentioned smart
+      Tab inside a table moving to the next cell. Currently Tab inside
+      a table falls through to the existing list-indent behaviour. Add
+      detection: if the cursor is inside a `MarkdownTable.detect` block,
+      Tab jumps to the next `|`-bounded cell on the same row (or first
+      cell of the next row at end-of-row); Shift-Tab reverses.
+- [ ] **`applyFormatting` profiling.** The full pass re-runs on every
+      selection change (`textViewDidChangeSelection`). At current note
+      sizes it's fine; profile once notes get multi-KB bodies.
 
 ## Phase 4 — Polish
 - Global hotkey for **Quick Capture** (use existing `KeyboardShortcuts`
