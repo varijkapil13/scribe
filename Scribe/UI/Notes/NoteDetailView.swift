@@ -166,8 +166,11 @@ struct NoteDetailView: View {
     }
 
     private func exportMarkdown() {
+        // Use the VM's injected TranscriptStore so the export path respects
+        // DI — same store the auto-section observes, and tests can swap in
+        // an in-memory instance.
         let markdown = NoteMarkdownExporter.export(note: vm.note,
-                                                   transcriptStore: .shared)
+                                                   transcriptStore: vm.transcriptStore)
         let rawTitle = vm.note.title.isEmpty ? "Untitled-note" : vm.note.title
         let illegal = CharacterSet(charactersIn: "/:\\?%*|\"<>")
         let safeTitle = rawTitle

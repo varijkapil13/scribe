@@ -12,7 +12,10 @@ final class NoteDetailViewModel: ObservableObject {
     @Published var sessions: [Session] = []
 
     private let store: NoteStore
-    private let transcriptStore: TranscriptStore
+    /// Exposed for view-level features (e.g. Export) that need the same
+    /// `TranscriptStore` instance the VM observes from, so DI is preserved
+    /// end-to-end and tests can swap in an in-memory store.
+    let transcriptStore: TranscriptStore
     private let taskStore: TaskStore
     private let onNavigate: (String) -> Void
     private var autosaveCancellable: AnyCancellable?
