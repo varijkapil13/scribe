@@ -1174,9 +1174,6 @@ enum MarkdownFormatter {
         let tables = MarkdownTable.detect(in: source)
         guard !tables.isEmpty else { return }
         let lines = source.components(separatedBy: "\n")
-        let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
-        let monoFontBold = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .semibold)
-        let approxCharWidth = monoFont.maximumAdvancement.width
         // Pre-compute line ranges in the source so we can map row index to NSRange in attr.
         var lineRanges: [NSRange] = []
         var cursor = 0
@@ -1185,37 +1182,73 @@ enum MarkdownFormatter {
             lineRanges.append(NSRange(location: cursor, length: len))
             cursor += len + 1 // \n
         }
-        for table in tables {
-            // Build tab stops cumulatively: each column gets width chars + 2-char padding.
-            var tabStops: [NSTextTab] = []
-            var x: CGFloat = 0
-            for w in table.columnWidths {
-                x += CGFloat(w + 2) * approxCharWidth
-                tabStops.append(NSTextTab(textAlignment: .left, location: x))
-            }
-            let paraStyle = NSMutableParagraphStyle()
-            paraStyle.tabStops = tabStops
-            paraStyle.defaultTabInterval = approxCharWidth * 8
 
-            // Apply to header + body rows.
+        // Cell text inside a table is rendered in monospace so accidental
+        // column alignment works for short cells. We preserve any inline
+        // bold/italic traits already applied by `applyInline` during the
+        // per-line formatter pass.
+        for table in tables {
             let applyRows = [table.headerRow] + table.bodyRows
             for row in applyRows {
                 guard row < lineRanges.count else { continue }
                 let range = lineRanges[row]
-                guard range.location + range.length <= attr.length else { continue }
-                attr.addAttribute(.font,
-                                  value: row == table.headerRow ? monoFontBold : monoFont,
-                                  range: range)
-                attr.addAttribute(.paragraphStyle, value: paraStyle, range: range)
+                guard range.location >= 0, NSMaxRange(range) <= attr.length, range.length > 0 else { continue }
+                let isHeader = row == table.headerRow
+                applyMonospaceTrait(attr: attr, range: range, isHeader: isHeader, size: font.pointSize)
             }
 
-            // Separator row: visually dim so it's quieter than data rows.
+            // Separator row: dim so it's quieter than data rows.
             if table.separatorRow < lineRanges.count {
                 let sepRange = lineRanges[table.separatorRow]
-                if sepRange.location + sepRange.length <= attr.length {
+                if NSMaxRange(sepRange) <= attr.length, sepRange.length > 0 {
+                    let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
                     attr.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: sepRange)
                     attr.addAttribute(.font, value: monoFont, range: sepRange)
                 }
+            }
+        }
+    }
+
+    /// Walks the row's existing `.font` attribute runs, snapshots their
+    /// symbolic traits, then rewrites each run with a monospace variant that
+    /// preserves bold / italic. Ranges with no prior `.font` get the base
+    /// monospace (semibold for header rows).
+    private static func applyMonospaceTrait(
+        attr: NSMutableAttributedString,
+        range: NSRange,
+        isHeader: Bool,
+        size: CGFloat
+    ) {
+        let baseWeight: NSFont.Weight = isHeader ? .semibold : .regular
+        let baseMono = NSFont.monospacedSystemFont(ofSize: size, weight: baseWeight)
+
+        // Snapshot every existing `.font` run in the row BEFORE we mutate,
+        // so the trait info (bold / italic) doesn't get erased.
+        struct Snapshot { let range: NSRange; let traits: NSFontDescriptor.SymbolicTraits }
+        var snapshots: [Snapshot] = []
+        attr.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+            let traits = (value as? NSFont)?.fontDescriptor.symbolicTraits ?? []
+            snapshots.append(Snapshot(range: subRange, traits: traits))
+        }
+
+        // Set the base monospace across the row first.
+        attr.addAttribute(.font, value: baseMono, range: range)
+
+        // Lift bold/italic into the monospace variant for the spans that had
+        // them in the source-level formatter pass.
+        for snap in snapshots {
+            let wantBold = snap.traits.contains(.bold)
+            let wantItalic = snap.traits.contains(.italic)
+            guard wantBold || wantItalic else { continue }
+            var desc = baseMono.fontDescriptor
+            if wantBold {
+                desc = desc.withSymbolicTraits(desc.symbolicTraits.union(.bold))
+            }
+            if wantItalic {
+                desc = desc.withSymbolicTraits(desc.symbolicTraits.union(.italic))
+            }
+            if let traited = NSFont(descriptor: desc, size: size) {
+                attr.addAttribute(.font, value: traited, range: snap.range)
             }
         }
     }
