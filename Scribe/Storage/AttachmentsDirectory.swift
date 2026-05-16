@@ -8,10 +8,13 @@ import Foundation
 /// and get the default Application Support root.
 enum AttachmentsDirectory {
 
-    /// Test-only override of the storage root. Production code uses
-    /// `defaultRoot()`. Setting this lets `NoteStore.deleteNote` (which
-    /// doesn't take a `root` parameter) be exercised against a temp dir.
+    #if DEBUG
+    /// Test-only override of the storage root. DEBUG builds only so a
+    /// release path can never accidentally read it. Setting this lets
+    /// `NoteStore.deleteNote` (which doesn't take a `root` parameter) be
+    /// exercised against a temp dir.
     nonisolated(unsafe) static var rootOverrideForTesting: URL?
+    #endif
 
     struct StoredAttachment {
         /// Path relative to `root` (e.g. `attachments/note-1/abc.png`). Suitable
@@ -23,7 +26,9 @@ enum AttachmentsDirectory {
     }
 
     static func defaultRoot() -> URL {
+        #if DEBUG
         if let override = rootOverrideForTesting { return override }
+        #endif
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first!

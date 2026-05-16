@@ -48,6 +48,13 @@ final class SessionNoteIdMigrationTests: XCTestCase {
         // Simulate a session that survived from the v10 era (noteId nullable
         // and unset). Insert raw SQL bypassing the Swift API. Then re-run the
         // backfill SQL inline to verify it cleans up.
+        //
+        // NOTE: GRDB's migrator records each migration as applied once, so
+        // we can't re-run `v11_session_noteId_backfill` against a synthetic
+        // orphan we insert *after* setUp completed. The cleanest way to
+        // exercise the SQL is to mirror it inline here — the behaviour
+        // verified (orphan → bound note with correct title) matches what
+        // the production migration would do on a legacy DB.
         let sessionId = UUID().uuidString
         let createdAt = Date(timeIntervalSince1970: 1_715_000_000)
         try db.database.write {
