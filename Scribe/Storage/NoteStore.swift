@@ -92,11 +92,31 @@ final class NoteStore: @unchecked Sendable {
             _ = try Note.deleteOne(database, key: id)
         }
         // Best-effort: remove the note's attachments folder. Failures are
-        // logged but don't propagate — the DB row is already gone.
+        // logged but don't propagate — the DB row is already gone. Logging
+        // the resolved directory path (under public privacy — it contains
+        // only a UUID-based note id, never user content) makes it possible
+        // to manually clean up an orphan directory if needed.
         do {
             try AttachmentsDirectory.cleanup(forNoteId: id)
         } catch {
-            Log.storage.error("Failed to clean attachments for note \(id, privacy: .public): \(error.localizedDescription, privacy: .private)")
+            let dir = AttachmentsDirectory.defaultRoot()
+                .appendingPathComponent("attachments", isDirectory: true)
+                .appendingPathComponent(id, isDirectory: true)
+            Log.storage.error("Failed to clean attachments for note \(id, privacy: .public) at \(dir.path, privacy: .public): \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
+    /// Returns the number of recording sessions bound to a note. Cheap —
+    /// hits the `sessions_noteId_idx` index. Used by the UI to decide
+    /// whether deleting a note needs an explicit confirmation about the
+    /// destructive cascade (sessions + segments + summaries + entities).
+    func sessionCount(forNoteId noteId: String) throws -> Int {
+        try db.read { database in
+            try Int.fetchOne(
+                database,
+                sql: "SELECT COUNT(*) FROM sessions WHERE noteId = ?",
+                arguments: [noteId]
+            ) ?? 0
         }
     }
 
@@ -238,19 +258,10 @@ final class NoteStore: @unchecked Sendable {
         }
     }
 
-    /// Builds a safe FTS5 MATCH expression. Matches TaskStore.ftsQuery(from:).
-    static func ftsQuery(from raw: String) -> String {
-        let tokens = raw
-            .components(separatedBy: .whitespacesAndNewlines)
-            .map { token in
-                token.unicodeScalars
-                    .filter { CharacterSet.alphanumerics.contains($0) }
-                    .reduce(into: "") { $0.append(Character($1)) }
-            }
-            .filter { !$0.isEmpty }
-        guard !tokens.isEmpty else { return "" }
-        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
-    }
+    /// Thin wrapper kept for source-compatibility. Real logic lives in
+    /// `FTSQuery.escape` so the same escaper is shared across notes, tasks,
+    /// and the universal search transcripts pane.
+    static func ftsQuery(from raw: String) -> String { FTSQuery.escape(raw) }
 
     // MARK: - Observation
 
@@ -271,11 +282,11 @@ final class NoteStore: @unchecked Sendable {
     // MARK: - Notebooks
 
     @discardableResult
-    func createNotebook(name: String) throws -> Notebook {
+    func createNotebook(name: String, parentId: String? = nil) throws -> Notebook {
         try db.write { database in
             let maxSort = try Int.fetchOne(database,
                 sql: "SELECT COALESCE(MAX(sortOrder), -1) FROM notebooks") ?? -1
-            let nb = Notebook(name: name, sortOrder: maxSort + 1)
+            let nb = Notebook(name: name, sortOrder: maxSort + 1, parentId: parentId)
             try nb.insert(database)
             return nb
         }
@@ -287,10 +298,13 @@ final class NoteStore: @unchecked Sendable {
 
     func deleteNotebook(id: String) throws {
         try db.write { database in
-            // Set notebookId = NULL on orphaned notes (FK is not enforced via
-            // ALTER TABLE, so we do it manually before deleting the notebook).
             try database.execute(
                 sql: "UPDATE notes SET notebookId = NULL WHERE notebookId = ?",
+                arguments: [id]
+            )
+            // Promote child notebooks to the parent level so they aren't orphaned.
+            try database.execute(
+                sql: "UPDATE notebooks SET parentId = NULL WHERE parentId = ?",
                 arguments: [id]
             )
             try Notebook.deleteOne(database, key: id)

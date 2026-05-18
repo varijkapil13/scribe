@@ -85,9 +85,11 @@ struct MainWindowView: View {
             appState.currentSelection = selection
         }
         .onDisappear { projectsViewModel.stop() }
-        .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in scheduleTagReload() }
+        .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { notes in
+            allNotes = notes
+            scheduleTagReload()
+        }
         .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
-        .onReceive(NoteStore.shared.observeAllNotes().replaceError(with: [])) { allNotes = $0 }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
             case .create:
@@ -269,7 +271,7 @@ struct MainWindowView: View {
                 Section {
                     if notesExpanded {
                         NavigationLink(value: MainSelection.notes(.today)) {
-                            Label("Today's Note", systemImage: "note.text")
+                            Label("Today's Note", systemImage: "sun.max")
                         }
                         NavigationLink(value: MainSelection.notes(.inbox)) {
                             Label("Unfiled", systemImage: "tray")
@@ -453,13 +455,7 @@ struct MainWindowView: View {
 
     private var sidebarSearchResults: [Note] {
         guard !searchText.isEmpty else { return [] }
-        let query = searchText.lowercased()
-        return allNotes
-            .filter {
-                $0.title.lowercased().contains(query) ||
-                $0.body.lowercased().contains(query)
-            }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        return (try? NoteStore.shared.searchNotes(query: searchText)) ?? []
     }
 
     @ViewBuilder
