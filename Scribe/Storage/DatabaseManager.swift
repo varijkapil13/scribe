@@ -444,6 +444,109 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Phase 5 / Slice 5 — disk is the source of truth for note bodies.
+        // SQLite keeps only metadata, derived indexes, and a short
+        // `bodyExcerpt` for list-view previews. The notes_fts virtual
+        // table is rebuilt as contentless so we can populate it from
+        // disk content via the reconciler without trigger-driven
+        // coupling to a now-dropped `notes.body` column.
+        //
+        // Migration order matters: we must flush every legacy
+        // `notes.body` value to its `.md` file BEFORE dropping the
+        // column, otherwise the disk-side store loses the only copy
+        // of bodies that were never opened in-app between the Slice 3
+        // migration and this one.
+        migrator.registerMigration("v13_drop_notes_body") { db in
+            // 1. Add the new `bodyExcerpt` column and backfill from body.
+            try db.execute(sql: "ALTER TABLE notes ADD COLUMN bodyExcerpt TEXT")
+            try db.execute(sql: "UPDATE notes SET bodyExcerpt = SUBSTR(body, 1, 200) WHERE body IS NOT NULL AND body != ''")
+
+            // 2. Flush bodies to disk if not already there. Per-id
+            //    existence-gated — running this migration multiple times
+            //    (which shouldn't happen, but) is a no-op for already-
+            //    flushed rows.
+            if let dir = try? NotesDirectory.defaultLocation() {
+                let store = NoteFileStore(directory: dir)
+                let onDiskIds = Set(((try? store.listAll()) ?? []).map(\.id))
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT id, title, body, createdAt, updatedAt, isDailyNote, dailyDate, notebookId
+                    FROM notes
+                    """)
+                for row in rows {
+                    let id: String = row["id"]
+                    if onDiskIds.contains(id) { continue }
+                    let body: String = (row["body"] as String?) ?? ""
+                    let createdAt: Date = row["createdAt"]
+                    let updatedAt: Date = row["updatedAt"]
+                    let title: String = (row["title"] as String?) ?? ""
+                    let isDailyRaw: Int = (row["isDailyNote"] as Int?) ?? 0
+                    let dailyDateStr: String? = row["dailyDate"]
+                    let notebookId: String? = row["notebookId"]
+                    let dailyDate = dailyDateStr.flatMap { Self.v13DailyFormatter.date(from: $0) }
+
+                    let tagRows = try String.fetchAll(
+                        db,
+                        sql: "SELECT tag FROM note_tags WHERE noteId = ? ORDER BY tag",
+                        arguments: [id]
+                    )
+
+                    let file = NoteFile(
+                        id: id,
+                        frontmatter: NoteFrontmatter(
+                            title: title,
+                            createdAt: createdAt,
+                            updatedAt: updatedAt,
+                            notebookId: notebookId,
+                            tags: tagRows,
+                            isDailyNote: isDailyRaw != 0,
+                            dailyDate: dailyDate
+                        ),
+                        body: body
+                    )
+                    do {
+                        try store.write(file)
+                    } catch {
+                        // Per-file failure shouldn't abort the migration —
+                        // log and keep going. The body still lives in
+                        // bodyExcerpt (truncated) and the file can be
+                        // recovered from a backup if needed.
+                        Log.storage.error("v13: failed to flush note \(id, privacy: .public) to disk: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
+
+            // 3. Replace trigger-driven notes_fts with a contentless one.
+            try db.execute(sql: "DROP TRIGGER IF EXISTS notes_fts_ai")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS notes_fts_ad")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS notes_fts_au")
+            try db.execute(sql: "DROP TABLE IF EXISTS notes_fts")
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE notes_fts USING fts5(
+                    noteId UNINDEXED,
+                    title,
+                    body
+                )
+                """)
+            // Repopulate FTS from notes + the about-to-drop body column.
+            try db.execute(sql: """
+                INSERT INTO notes_fts(noteId, title, body)
+                SELECT id, title, COALESCE(body, '') FROM notes
+                """)
+
+            // 4. Drop the body column. SQLite ≥3.35 supports DROP COLUMN
+            //    natively; macOS 14+ ships well above that floor.
+            try db.execute(sql: "ALTER TABLE notes DROP COLUMN body")
+        }
+
         return migrator
     }
+
+    /// Date formatter used inside v13's body-flush step. POSIX local-time
+    /// to match `NoteStore.dailyDateFormatter` and `NoteFileStore`.
+    nonisolated(unsafe) private static let v13DailyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 }

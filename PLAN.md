@@ -270,10 +270,111 @@ Once tasks and notes both exist, wire the joins:
 - Global hotkey for **Quick Capture** (use existing `KeyboardShortcuts`
   package). Prompt asks: capture as note, task, or both.
 - Calendar view (Tasks + daily notes overlay).
-- Markdown export of notes to a folder so Obsidian can also read them
-  (optional dual-store mode).
 - Onboarding screen for first launch.
 - Accessibility audit (VoiceOver, reduce motion, dynamic type).
+
+---
+
+## Phase 5 — Markdown-files note storage (hybrid)
+
+Move note bodies to the filesystem as `.md` files with YAML frontmatter;
+keep SQLite as a derived index for `note_links`, `note_tags`,
+`sessions.noteId`, `notes_fts`, and notebook hierarchy. The goal is
+zero-friction import/export, near-trivial iCloud Drive sync, and
+Obsidian-compatible storage.
+
+### Conventions
+- **Storage root:** `~/Documents/Scribe/Notes/` (overridable in tests).
+- **Filename:** sanitized title + `.md`; daily notes are `Daily/<YYYY-MM-DD>.md`.
+- **Frontmatter:** flat YAML subset (id, title, created, updated,
+  notebookId, tags, isDailyNote, dailyDate). `id` is a UUID — wiki-links
+  resolve through it so renames don't break references.
+- **Bodies:** plain CommonMark below the frontmatter. No app-specific
+  syntax beyond `[[Title]]` (already Obsidian-compatible).
+- **SQLite is the index, not the source.** Rebuildable from disk by
+  scanning the storage root. iCloud handles sync at the file level.
+
+### Slices
+
+- [ ] **Slice 1 — File store foundation.** `NoteFile` value type,
+      flat-YAML `Frontmatter` codec, `NoteFileStore` (read/write/list/
+      delete on a configurable root), `NotesDirectory` resolver. Pure
+      file IO; nothing wires into the live `NoteStore` yet. Tests for
+      round-trip, missing/malformed frontmatter, filename collisions,
+      special characters.
+
+- [ ] **Slice 2 — Hybrid `NoteStore` integration.** `NoteStore.fetchNote`
+      reads body from disk; `updateNote` writes to disk. `notes.body`
+      column kept temporarily as the migration source. Wiki-link
+      resolver routes through frontmatter `id`. Title-rename triggers a
+      filename rename with collision suffixing.
+
+- [ ] **Slice 3 — One-time SQLite-to-disk migration.** Idempotent
+      backfill on first launch: every existing note flushed to disk,
+      preserving UUIDs, daily-note semantics, notebook hierarchy.
+      Migration logged + recoverable.
+
+- [ ] **Slice 4 — FTS + index rebuild from files.** `notes_fts` is
+      populated from parsed file content on launch. `FSEvents` stream
+      reconciles index / FTS / `note_links` / `note_tags` when files
+      change externally (Obsidian, iCloud Drive sync, manual edits).
+
+- [x] **Slice 8 — User-configurable vault location.** Settings →
+      General gains a "Notes vault" section showing the resolved
+      path and `Reveal in Finder`. Persisted as `@AppStorage` under
+      `NotesDirectory.userPreferenceKey`. Superseded by Slice 9 for
+      the picker UX — the persistence layer stayed.
+
+- [x] **Slice 9 — Move vault / Open vault (hot-swap).**
+      `VaultCoordinator` owns the FSEvents watcher and the reconciler
+      and exposes two distinct user actions:
+      - **Move vault…** — copies every file from the current vault
+        into a new (empty or non-existent) folder, swaps the
+        `NoteStore.fileStore`, runs a reconcile, then removes the
+        source. Refuses non-empty destinations, the current vault
+        itself, and any path inside the current vault.
+      - **Open vault…** — points Scribe at an existing folder
+        without touching anything. Reconciler imports whatever's at
+        the new location and removes DB rows for ids not present
+        there. The confirm dialog previews the diff (`N imported,
+        M removed`) so the destructive side is explicit.
+      `NoteStore.fileStore` is now backed by an `NSLock` so swaps
+      are safe under concurrent reads — readers in flight see one
+      vault or the other, never a partial swap. No restart
+      required.
+
+- [x] **Slice 5 — Drop `notes.body`.** Migration `v13_drop_notes_body`
+      flushes legacy bodies to disk, adds `notes.bodyExcerpt`,
+      rebuilds `notes_fts` as a contentless FTS5 table keyed by
+      `noteId`, and drops the `notes.body` column. `Note` carries
+      `body` as a transient (Codable-excluded) property — populated
+      from disk by `fetchNote(id:)`, empty on bulk fetches; UI
+      consumers (`NoteListView`, sidebar search) use `bodyExcerpt`
+      for previews. Reconciler is now the canonical FTS author and
+      keeps the excerpt in sync.
+
+- [ ] **Slice 6 — iCloud conflict detection.** Detect `(conflicted
+      copy …)` filenames produced by iCloud Drive; surface in UI with
+      a resolve action (pick one, keep both, diff).
+
+- [ ] **Slice 7 — Co-located attachments.** Move attachments from
+      `AttachmentsDirectory` to per-note sibling folders so an exported
+      vault carries its images. Path resolvers updated, one-time
+      migrator preserves existing references.
+
+### Phase 5 risks
+- **Filename collisions on rename.** Two notes both renamed to "Meeting"
+  need disambiguation (` 1`, ` 2` suffixes), and links must follow.
+- **External edits during write.** A file watched by iCloud may be
+  rewritten mid-flush. Atomic writes via `Data.write(options: .atomic)`.
+- **Frontmatter drift.** Apps editing the file outside Scribe might
+  damage the YAML block. Tolerate missing/malformed frontmatter on read;
+  re-emit a clean block on next write.
+- **FSEvents on iCloud Drive.** Events arrive when the file *materialises*
+  locally, not when remote changes happen. Defensive re-scan on app
+  resume covers it.
+- **Migration safety.** Slice 3 must be re-runnable — if it crashes
+  mid-flight, restarting the app should pick up where it left off.
 
 ---
 
@@ -302,5 +403,6 @@ swift test --filter TaskStoreTests
 ## Open questions (revisit before each slice)
 - Do we want sub-projects / nested projects? (Out of scope for now.)
 - Per-task attachments (images, files)? (Probably Phase 4.)
-- iCloud sync? Big spec. Not until everything else is solid.
+- iCloud sync? Covered by Phase 5 — file-based storage + iCloud Drive
+  replaces the need for a CloudKit container.
 - Mobile companion? Not planned.

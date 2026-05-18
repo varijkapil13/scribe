@@ -145,12 +145,12 @@ private struct NoteRowView: View {
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
 
-                if !note.body.isEmpty {
+                if let excerpt = note.bodyExcerpt, !excerpt.isEmpty {
                     Text("·")
                         .font(.caption2)
                         .foregroundStyle(.quaternary)
 
-                    Text(note.body.trimmingCharacters(in: .whitespacesAndNewlines))
+                    Text(excerpt)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

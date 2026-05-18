@@ -31,11 +31,16 @@ final class NoteStoreTests: XCTestCase {
     }
 
     func testNoteModelRoundTrip() throws {
-        let note = Note(title: "Test", body: "Hello world")
+        // Body is no longer a SQLite column after Phase 5 / Slice 5 —
+        // disk is the source. Confirm the rest of the metadata round-
+        // trips and that body comes back empty when fetched directly
+        // through GRDB (without going through NoteStore's disk read).
+        let note = Note(title: "Test", body: "Hello world", bodyExcerpt: "Hello world")
         try db.database.write { try note.insert($0) }
         let fetched = try db.database.read { try Note.fetchOne($0, key: note.id) }
         XCTAssertEqual(fetched?.title, "Test")
-        XCTAssertEqual(fetched?.body, "Hello world")
+        XCTAssertEqual(fetched?.body, "")
+        XCTAssertEqual(fetched?.bodyExcerpt, "Hello world")
         XCTAssertFalse(fetched!.isDailyNote)
     }
 
@@ -80,16 +85,29 @@ final class NoteStoreTests: XCTestCase {
     // MARK: - Task 2 tests (require NoteStore)
 
     func testCreateAndFetchNote() throws {
-        let store = NoteStore(databaseManager: db)
+        // After Slice 5, bodies live on disk — exercise the file-backed
+        // path so the round-trip preserves body content.
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let store = NoteStore(
+            databaseManager: db,
+            fileStore: NoteFileStore(directory: NotesDirectory(root: tmp))
+        )
         let note = try store.createNote(title: "Hello", body: "World", tags: [])
         let fetched = try store.fetchNote(id: note.id)
         XCTAssertEqual(fetched?.title, "Hello")
         XCTAssertEqual(fetched?.body, "World")
+        XCTAssertEqual(fetched?.bodyExcerpt, "World")
         XCTAssertFalse(fetched!.isDailyNote)
     }
 
     func testUpdateNote() throws {
-        let store = NoteStore(databaseManager: db)
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let store = NoteStore(
+            databaseManager: db,
+            fileStore: NoteFileStore(directory: NotesDirectory(root: tmp))
+        )
         var note = try store.createNote(title: "Old", body: "", tags: [])
         note.title = "New"
         note.body = "Updated body"

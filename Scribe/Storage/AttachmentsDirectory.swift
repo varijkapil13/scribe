@@ -1,11 +1,14 @@
 // Scribe/Storage/AttachmentsDirectory.swift
 import Foundation
 
-/// Resolves per-note attachment paths under
-/// `~/Library/Application Support/Scribe/attachments/<noteId>/`.
+/// Resolves per-note attachment paths under the markdown vault root
+/// (`~/Documents/Scribe/Notes/attachments/<noteId>/`) so an exported
+/// vault carries its images — Phase 5 / Slice 7.
 ///
-/// The `root` parameter exists for testability — production callers omit it
-/// and get the default Application Support root.
+/// The `root` parameter exists for testability — production callers omit
+/// it and get the canonical notes-vault root. Legacy attachments under
+/// `~/Library/Application Support/Scribe/attachments/` are migrated on
+/// app launch by `AttachmentsMigrator`.
 enum AttachmentsDirectory {
 
     #if DEBUG
@@ -29,6 +32,14 @@ enum AttachmentsDirectory {
         #if DEBUG
         if let override = rootOverrideForTesting { return override }
         #endif
+        // Co-located inside the notes vault so export carries images.
+        // Fallback to the legacy Application Support root only if vault
+        // resolution somehow fails (FileManager errors on Documents URL)
+        // — preserves the previous behaviour for users who'd be stuck
+        // without it.
+        if let notesDir = try? NotesDirectory.defaultLocation() {
+            return notesDir.root
+        }
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first!

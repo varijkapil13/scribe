@@ -40,6 +40,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             Log.app.error("Crash recovery sweep failed: \(error.localizedDescription, privacy: .private)")
         }
 
+        // Co-located attachments migration (Phase 5 — Slice 7). Moves
+        // legacy ~/Library/Application Support/Scribe/attachments/ into
+        // the notes vault. Runs *before* the SQLite-to-disk migration so
+        // any note bodies written from this point reference attachments
+        // at their new, vault-relative location.
+        do {
+            let moved = try AttachmentsMigrator.migrateProductionIfNeeded()
+            if moved > 0 {
+                Log.app.info("Moved \(moved) attachment folder(s) into the vault.")
+            }
+        } catch {
+            Log.app.error("Attachments migration failed: \(error.localizedDescription, privacy: .private)")
+        }
+
+        // One-time SQLite-to-disk migration (Phase 5 — Slice 3). Idempotent
+        // so it's safe to call on every launch; the no-op path is one
+        // listAll + one DB fetch when nothing needs writing.
+        do {
+            let migrated = try NoteStore.shared.migrateNotesToDisk()
+            if migrated > 0 {
+                Log.app.info("Migrated \(migrated) note(s) from SQLite to disk.")
+            }
+        } catch {
+            Log.app.error("Notes filesystem migration failed: \(error.localizedDescription, privacy: .private)")
+        }
+
+        // Reconcile DB against disk on launch + start FSEvents watcher
+        // (Phase 5 — Slice 4/9). VaultCoordinator owns both so Settings
+        // can hot-swap the location later without restarting the app.
+        VaultCoordinator.shared.start()
+
         registerKeyboardShortcuts()
         observeMainWindowClose()
         observeSpeechErrors()

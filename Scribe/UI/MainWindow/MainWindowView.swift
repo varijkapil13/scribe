@@ -456,7 +456,7 @@ struct MainWindowView: View {
         return allNotes
             .filter {
                 $0.title.lowercased().contains(query) ||
-                $0.body.lowercased().contains(query)
+                ($0.bodyExcerpt ?? "").lowercased().contains(query)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }

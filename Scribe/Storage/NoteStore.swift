@@ -16,15 +16,46 @@ enum NoteStoreError: Error, LocalizedError {
 // immutable after init — no mutable state crosses actor boundaries.
 final class NoteStore: @unchecked Sendable {
 
-    private let dbManager: DatabaseManager
+    let dbManager: DatabaseManager
+    /// Swappable backing storage. Mutated only via `setFileStore(_:)` from
+    /// `VaultCoordinator` when the user moves or opens a different vault.
+    /// Read access goes through the `fileStore` computed property so
+    /// every caller sees a coherent snapshot — a hot-swap can happen
+    /// between calls but never mid-call.
+    private let fileStoreLock = NSLock()
+    private var _fileStore: NoteFileStore?
+    var fileStore: NoteFileStore? {
+        fileStoreLock.lock()
+        defer { fileStoreLock.unlock() }
+        return _fileStore
+    }
+
+    /// Replaces the backing file store. Caller is responsible for any
+    /// upstream coordination (stopping the watcher, reconciling, etc.) —
+    /// this method just guards the swap.
+    func setFileStore(_ newValue: NoteFileStore?) {
+        fileStoreLock.lock()
+        _fileStore = newValue
+        fileStoreLock.unlock()
+    }
     private var db: DatabaseQueue { dbManager.database }
 
     // nonisolated(unsafe) required for Swift 6 strict concurrency on a global
     // stored property accessed from non-isolated contexts.
-    nonisolated(unsafe) static let shared = NoteStore(databaseManager: .shared)
+    nonisolated(unsafe) static let shared: NoteStore = {
+        let dir = try? NotesDirectory.defaultLocation()
+        let fileStore = dir.map { NoteFileStore(directory: $0) }
+        return NoteStore(databaseManager: .shared, fileStore: fileStore)
+    }()
 
-    init(databaseManager: DatabaseManager = .shared) {
+    /// `fileStore` is optional so logic-only tests can opt out of disk
+    /// mirroring without touching real filesystem state. When non-nil,
+    /// every successful DB write is mirrored to a `.md` file under
+    /// `fileStore.directory.root`, and `fetchNote(id:)` prefers the
+    /// disk body over the DB column when both exist.
+    init(databaseManager: DatabaseManager = .shared, fileStore: NoteFileStore? = nil) {
         self.dbManager = databaseManager
+        self._fileStore = fileStore
     }
 
     // MARK: - CRUD
@@ -33,22 +64,27 @@ final class NoteStore: @unchecked Sendable {
     func createNote(title: String, body: String = "", tags: [String] = [],
                     isDailyNote: Bool = false, dailyDate: String? = nil,
                     notebookId: String? = nil) throws -> Note {
-        try db.write { database in
-            let note = Note(title: title, body: body,
+        let created = try db.write { database -> Note in
+            var note = Note(title: title, body: body,
                             isDailyNote: isDailyNote, dailyDate: dailyDate,
                             notebookId: notebookId)
+            note.bodyExcerpt = Note.makeExcerpt(from: body)
             try note.insert(database)
             for tag in Self.normalizeTags(tags) {
                 try NoteTagRow(noteId: note.id, tag: tag).insert(database)
             }
+            try Self.upsertFTS(database, noteId: note.id, title: title, body: body)
             return note
         }
+        mirrorToDisk(note: created, tags: tags)
+        return created
     }
 
     func updateNote(_ note: Note, tags: [String]) throws {
-        try db.write { database in
+        let mirrored = try db.write { database -> Note in
             var mutable = note
             mutable.updatedAt = Date()
+            mutable.bodyExcerpt = Note.makeExcerpt(from: note.body)
             try mutable.update(database)
 
             // rewrite tags
@@ -75,7 +111,10 @@ final class NoteStore: @unchecked Sendable {
                     try link.insert(database, onConflict: .ignore)
                 }
             }
+            try Self.upsertFTS(database, noteId: note.id, title: mutable.title, body: note.body)
+            return mutable
         }
+        mirrorToDisk(note: mirrored, tags: tags)
     }
 
     func deleteNote(id: String) throws {
@@ -90,7 +129,9 @@ final class NoteStore: @unchecked Sendable {
                 arguments: [id]
             )
             _ = try Note.deleteOne(database, key: id)
+            try database.execute(sql: "DELETE FROM notes_fts WHERE noteId = ?", arguments: [id])
         }
+        deleteFromDisk(id: id)
         // Best-effort: remove the note's attachments folder. Failures are
         // logged but don't propagate — the DB row is already gone. Logging
         // the resolved directory path (under public privacy — it contains
@@ -121,7 +162,16 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func fetchNote(id: String) throws -> Note? {
-        try db.read { try Note.fetchOne($0, key: id) }
+        guard var note = try db.read({ try Note.fetchOne($0, key: id) }) else { return nil }
+        // Prefer the disk body when a file exists for this id — the file
+        // is the source of truth for content; the DB column is a mirror
+        // kept for FTS and migration purposes until Slice 5.
+        if let fileStore,
+           let url = try? fileStore.findURL(for: id),
+           let parsed = try? fileStore.read(at: url) {
+            note.body = parsed.body
+        }
+        return note
     }
 
     func fetchAllNotes() throws -> [Note] {
@@ -164,20 +214,25 @@ final class NoteStore: @unchecked Sendable {
         // rapid calls (e.g. double .onAppear) would create two notes for the
         // same date. The UNIQUE constraint on dailyDate enforces uniqueness at
         // the DB level; this write block makes the check-then-insert atomic.
-        return try db.write { database in
+        let note = try db.write { database -> Note in
             try database.execute(
                 sql: """
                     INSERT OR IGNORE INTO notes
-                        (id, title, body, createdAt, updatedAt, isDailyNote, dailyDate)
-                    VALUES (?, ?, '', ?, ?, 1, ?)
+                        (id, title, createdAt, updatedAt, isDailyNote, dailyDate)
+                    VALUES (?, ?, ?, ?, 1, ?)
                     """,
                 arguments: [UUID().uuidString, title, Date(), Date(), key]
             )
             guard let note = try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne(database) else {
                 throw NoteStoreError.dailyNoteNotFound(key)
             }
+            // Seed FTS for the new daily note with the title only — body
+            // is empty at creation time.
+            try Self.upsertFTS(database, noteId: note.id, title: title, body: "")
             return note
         }
+        mirrorToDisk(note: note, tags: [])
+        return note
     }
 
     func fetchNotes(withTag tag: String) throws -> [Note] {
@@ -250,7 +305,7 @@ final class NoteStore: @unchecked Sendable {
         return try db.read { database in
             try Note.fetchAll(database, sql: """
                 SELECT notes.* FROM notes
-                JOIN notes_fts ON notes.rowid = notes_fts.rowid
+                JOIN notes_fts ON notes.id = notes_fts.noteId
                 WHERE notes_fts MATCH ?
                 ORDER BY bm25(notes_fts)
                 LIMIT 100
@@ -342,6 +397,90 @@ final class NoteStore: @unchecked Sendable {
                 arguments: [toNotebookId, id]
             )
         }
+    }
+
+    // MARK: - FTS (Phase 5 — Slice 5)
+
+    /// Replaces the FTS row for `noteId`. The contentless `notes_fts`
+    /// table has no triggers — every NoteStore write site and the
+    /// reconciler call this directly so search stays in sync with the
+    /// disk-side body.
+    static func upsertFTS(_ db: Database, noteId: String, title: String, body: String) throws {
+        try db.execute(sql: "DELETE FROM notes_fts WHERE noteId = ?", arguments: [noteId])
+        try db.execute(
+            sql: "INSERT INTO notes_fts(noteId, title, body) VALUES (?, ?, ?)",
+            arguments: [noteId, title, body]
+        )
+    }
+
+    // MARK: - Disk migration (Phase 5 — Slice 3)
+
+    /// Mirrors every DB-resident note to disk that isn't already on disk.
+    /// Idempotent: matching ids are skipped without rewriting the file,
+    /// so a crash mid-flight leaves a clean resumable state — the next
+    /// invocation picks up exactly where the previous one stopped.
+    ///
+    /// Returns the number of files written, for caller-side logging.
+    /// Single-pass: builds the on-disk id set once, then walks the DB —
+    /// avoids the O(N²) lookup that a per-note `findURL` scan would do.
+    @discardableResult
+    func migrateNotesToDisk() throws -> Int {
+        guard let fileStore else { return 0 }
+        let onDisk = Set((try fileStore.listAll()).map(\.id))
+        let inDb = try db.read { try Note.fetchAll($0) }
+        var written = 0
+        for note in inDb where !onDisk.contains(note.id) {
+            let tags = (try? self.tags(for: note.id)) ?? []
+            mirrorToDisk(note: note, tags: tags)
+            written += 1
+        }
+        return written
+    }
+
+    // MARK: - Disk mirror (Phase 5 — Slice 2)
+
+    /// Builds the on-disk representation of a note and writes it through
+    /// `fileStore`. Failures are logged but never thrown — Slice 2 keeps
+    /// SQLite as the source of truth, so a transient disk error must not
+    /// roll back a successful DB write. Slice 4 will flip the polarity.
+    private func mirrorToDisk(note: Note, tags: [String]) {
+        guard let fileStore else { return }
+        let file = NoteFile(
+            id: note.id,
+            frontmatter: NoteFrontmatter(
+                title: note.title,
+                createdAt: note.createdAt,
+                updatedAt: note.updatedAt,
+                notebookId: note.notebookId,
+                tags: Self.normalizeTags(tags),
+                isDailyNote: note.isDailyNote,
+                dailyDate: note.dailyDate.flatMap(Self.parseDailyDate(_:))
+            ),
+            body: note.body
+        )
+        do {
+            try fileStore.write(file)
+        } catch {
+            Log.storage.error("NoteStore.mirrorToDisk failed for \(note.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Removes the disk mirror for `id`. Same logging-only policy as
+    /// `mirrorToDisk` — orphaned files are recoverable via the rebuild
+    /// path (Slice 4) so failures here don't propagate.
+    private func deleteFromDisk(id: String) {
+        guard let fileStore else { return }
+        do {
+            _ = try fileStore.delete(id: id)
+        } catch {
+            Log.storage.error("NoteStore.deleteFromDisk failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Parses the YYYY-MM-DD daily-date string from the DB column into a
+    /// Date for the frontmatter codec. Returns nil if the string is malformed.
+    private static func parseDailyDate(_ s: String) -> Date? {
+        dailyDateFormatter.date(from: s)
     }
 
     // MARK: - Private helpers

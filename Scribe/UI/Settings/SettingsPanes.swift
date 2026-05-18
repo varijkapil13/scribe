@@ -85,13 +85,66 @@ struct SettingsPaneView: View {
 
 private struct GeneralSettingsPane: View {
     @ObservedObject var audioManager: AudioSessionManager
+    @ObservedObject private var vault: VaultCoordinator = .shared
 
     @AppStorage("selectedMicrophoneID") var selectedMicID: String = ""
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
+    @AppStorage(NotesDirectory.userPreferenceKey) var notesVaultPath: String = ""
+
+    @State private var openConfirm: OpenConfirm?
+    @State private var moveConfirm: MoveConfirm?
+    @State private var successMessage: String?
+
+    private var resolvedVaultPath: String {
+        vault.currentRoot?.path
+            ?? (notesVaultPath.isEmpty ? NotesDirectory.builtInDefault().path : notesVaultPath)
+    }
 
     var body: some View {
         Form {
+            Section("Notes vault") {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Location")
+                    Spacer()
+                    Text(resolvedVaultPath)
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(resolvedVaultPath)
+                }
+                HStack {
+                    Button("Move vault…") { startMove() }
+                        .disabled(vault.isBusy)
+                    Button("Open vault…") { startOpen() }
+                        .disabled(vault.isBusy)
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: resolvedVaultPath)]
+                        )
+                    }
+                    .disabled(!FileManager.default.fileExists(atPath: resolvedVaultPath))
+                    Spacer()
+                    if vault.isBusy {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                if let success = successMessage {
+                    Text(success)
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+                if let err = vault.lastError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Text("Move copies your current notes into a new folder. Open switches Scribe to use an existing folder as the vault — your current files stay where they are.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Audio") {
                 Picker("Microphone", selection: $selectedMicID) {
                     Text("System Default").tag("")
@@ -127,6 +180,119 @@ private struct GeneralSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "Move vault?",
+            isPresented: Binding(get: { moveConfirm != nil },
+                                  set: { if !$0 { moveConfirm = nil } }),
+            presenting: moveConfirm
+        ) { confirm in
+            Button("Move") {
+                performMove(to: confirm.destination)
+                moveConfirm = nil
+            }
+            Button("Cancel", role: .cancel) { moveConfirm = nil }
+        } message: { confirm in
+            Text("Scribe will copy your notes from \"\(resolvedVaultPath)\" to \"\(confirm.destination.path)\" and switch to the new location. The original folder is removed after the copy succeeds.")
+        }
+        .confirmationDialog(
+            "Open vault?",
+            isPresented: Binding(get: { openConfirm != nil },
+                                  set: { if !$0 { openConfirm = nil } }),
+            presenting: openConfirm
+        ) { confirm in
+            Button("Open") {
+                performOpen(to: confirm.destination)
+                openConfirm = nil
+            }
+            Button("Cancel", role: .cancel) { openConfirm = nil }
+        } message: { confirm in
+            let parts: [String] = [
+                "Scribe will switch to \"\(confirm.destination.path)\". Files in your current vault are not deleted, but they won't appear in Scribe until you Open them back here.",
+                confirm.toImport > 0 ? "\(confirm.toImport) note\(confirm.toImport == 1 ? "" : "s") will be imported." : nil,
+                confirm.toRemove > 0 ? "\(confirm.toRemove) note\(confirm.toRemove == 1 ? "" : "s") in the current index will be removed (the source files are not touched)." : nil
+            ].compactMap { $0 }
+            Text(parts.joined(separator: "\n\n"))
+        }
+    }
+
+    // MARK: - Notes vault — Move / Open
+
+    private struct MoveConfirm: Identifiable {
+        let id = UUID()
+        let destination: URL
+    }
+    private struct OpenConfirm: Identifiable {
+        let id = UUID()
+        let destination: URL
+        let toImport: Int
+        let toRemove: Int
+    }
+
+    private func startMove() {
+        let panel = NSOpenPanel()
+        panel.title = "Move Notes Vault"
+        panel.message = "Pick an empty folder. Scribe will copy your notes there and switch to it."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = URL(fileURLWithPath: resolvedVaultPath).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        moveConfirm = MoveConfirm(destination: url)
+    }
+
+    private func startOpen() {
+        let panel = NSOpenPanel()
+        panel.title = "Open Notes Vault"
+        panel.message = "Pick an existing folder to use as the vault."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: resolvedVaultPath).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let preview = try vault.previewOpen(at: url)
+            openConfirm = OpenConfirm(
+                destination: url,
+                toImport: preview.toImport,
+                toRemove: preview.toRemove
+            )
+        } catch {
+            vault.lastError = error.localizedDescription
+        }
+    }
+
+    private func performMove(to destination: URL) {
+        successMessage = nil
+        Task {
+            do {
+                let copied = try await vault.moveVault(to: destination)
+                successMessage = "Moved \(copied) file\(copied == 1 ? "" : "s") to \(destination.lastPathComponent)."
+            } catch {
+                vault.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func performOpen(to destination: URL) {
+        successMessage = nil
+        Task {
+            do {
+                try await vault.openVault(at: destination)
+                successMessage = "Opened \(destination.lastPathComponent)."
+            } catch {
+                vault.lastError = error.localizedDescription
+            }
+        }
+    }
+}
+
+private extension GeneralSettingsPane {
+    /// Confirm sheets — wired via View modifiers on the Form.
+    @ViewBuilder
+    func vaultConfirmSheets() -> some View {
+        EmptyView()
     }
 }
 
