@@ -49,5 +49,20 @@
 	<string>Scribe uses Apple's on-device speech recognition to transcribe audio. No audio ever leaves your Mac.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.varij.scribe.task</string>
+			<key>UTTypeDescription</key>
+			<string>Scribe Task Reference</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict/>
+		</dict>
+	</array>
 </dict>
 </plist>
