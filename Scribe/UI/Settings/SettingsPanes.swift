@@ -98,6 +98,15 @@ private struct GeneralSettingsPane: View {
                     ForEach(audioManager.availableMicrophones(), id: \.id) { mic in
                         Text(mic.name).tag(String(mic.id))
                     }
+                    // If the persisted ID belongs to a device that isn't
+                    // currently plugged in, surface a disabled placeholder
+                    // so the Picker has a tag matching the binding. Keeps
+                    // the user's preference intact for when the device
+                    // returns; suppresses the "invalid selection" warning.
+                    if !selectedMicID.isEmpty,
+                       !audioManager.availableMicrophones().contains(where: { String($0.id) == selectedMicID }) {
+                        Text("Saved device (unavailable)").tag(selectedMicID)
+                    }
                 }
                 toggleWithCaption(
                     "Capture system audio",
