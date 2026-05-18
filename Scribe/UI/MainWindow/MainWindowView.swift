@@ -5,6 +5,7 @@ import SwiftUI
 /// the live-recording view so there's only ever one window to look at.
 enum MainSelection: Hashable {
     case live
+    case today
     case tasks(TaskStore.Filter)
     case taskCalendar
     case note(String)           // noteId
@@ -37,7 +38,6 @@ struct MainWindowView: View {
     @State private var notesExpanded: Bool = true
     @State private var notebooksExpanded: Bool = true
     @State private var notesTagsExpanded: Bool = false
-    @State private var settingsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
     @State private var allNotes: [Note] = []
@@ -76,7 +76,7 @@ struct MainWindowView: View {
                 if appState.isTranscribing {
                     selection = .live
                 } else {
-                    selection = .tasks(.today)
+                    selection = .today
                 }
             }
             appState.currentSelection = selection
@@ -203,14 +203,17 @@ struct MainWindowView: View {
                 }
 
                 Section {
+                    NavigationLink(value: MainSelection.today) {
+                        Label("Today", systemImage: "sun.max")
+                    }
+                }
+
+                Section {
                     if tasksExpanded {
-                        ForEach(TaskSidebarItem.smartFilters) { item in
+                        ForEach(TaskSidebarItem.unifiedSidebarFilters) { item in
                             NavigationLink(value: MainSelection.tasks(item.filter)) {
                                 Label(item.title, systemImage: item.systemImage)
                             }
-                        }
-                        NavigationLink(value: MainSelection.taskCalendar) {
-                            Label("Calendar", systemImage: "calendar")
                         }
                     }
                 } header: {
@@ -267,20 +270,8 @@ struct MainWindowView: View {
 
                 Section {
                     if notesExpanded {
-                        NavigationLink(value: MainSelection.notes(.today)) {
-                            Label("Today's Note", systemImage: "note.text")
-                        }
-                        NavigationLink(value: MainSelection.notes(.inbox)) {
-                            Label("Unfiled", systemImage: "tray")
-                        }
                         NavigationLink(value: MainSelection.notes(.all)) {
                             Label("All Notes", systemImage: "doc.on.doc")
-                        }
-                        NavigationLink(value: MainSelection.notes(.daily)) {
-                            Label("All Daily Notes", systemImage: "calendar.badge.clock")
-                        }
-                        NavigationLink(value: MainSelection.notes(.graph)) {
-                            Label("Graph", systemImage: "circle.hexagongrid")
                         }
                     }
                 } header: {
@@ -357,18 +348,6 @@ struct MainWindowView: View {
                 } header: {
                     CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
                 }
-
-                Section {
-                    if settingsExpanded {
-                        ForEach(SettingsPane.allCases) { pane in
-                            NavigationLink(value: MainSelection.settings(pane)) {
-                                Label(pane.title, systemImage: pane.systemImage)
-                            }
-                        }
-                    }
-                } header: {
-                    CollapsibleSectionHeader(title: "Settings", isExpanded: $settingsExpanded)
-                }
             } else {
                 Section {
                     let results = sidebarSearchResults
@@ -399,6 +378,61 @@ struct MainWindowView: View {
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search…")
         .navigationTitle("Scribe")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            sidebarFooter
+        }
+    }
+
+    /// Footer icon strip for rarely-used destinations. Avoids dedicating
+    /// entire sidebar sections to views opened a few times per week.
+    @ViewBuilder
+    private var sidebarFooter: some View {
+        HStack(spacing: 0) {
+            footerIcon(systemImage: "calendar",
+                       help: "Task calendar",
+                       isActive: selection == .taskCalendar) {
+                selection = .taskCalendar
+            }
+            footerIcon(systemImage: "checkmark.circle",
+                       help: "Completed tasks",
+                       isActive: selection == .tasks(.completed)) {
+                selection = .tasks(.completed)
+            }
+            footerIcon(systemImage: "circle.hexagongrid",
+                       help: "Notes graph",
+                       isActive: selection == .notes(.graph)) {
+                selection = .notes(.graph)
+            }
+            Spacer()
+            footerIcon(systemImage: "gearshape",
+                       help: "Settings (⌘,)",
+                       isActive: false) {
+                NotificationCenter.default.post(name: .openScribeSettings,
+                                                object: SettingsPane.general)
+            }
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    @ViewBuilder
+    private func footerIcon(systemImage: String,
+                            help: String,
+                            isActive: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func reloadTags() {
@@ -430,9 +464,7 @@ struct MainWindowView: View {
     @ViewBuilder
     private func notesDetailView(filter: NotesFilter) -> some View {
         switch filter {
-        case .today:
-            TodayNotePane(onNavigate: { selection = .note($0) })
-        case .daily:
+        case .today, .daily:
             DailyNoteView(onNavigate: { selection = .note($0) })
         case .graph:
             GraphView(onNavigate: { selection = .note($0) })
@@ -457,6 +489,8 @@ struct MainWindowView: View {
         switch selection {
         case .live:
             LiveSessionView()
+        case .today:
+            TodayView(onNavigate: { selection = .note($0) })
         case .tasks(let filter):
             TaskListView(filter: filter)
                 .id(filter)
@@ -683,6 +717,22 @@ struct TaskSidebarItem: Identifiable, Hashable {
         .init(id: "all",      title: "All",      systemImage: "list.bullet",     filter: .all),
         .init(id: "completed", title: "Completed", systemImage: "checkmark.circle", filter: .completed)
     ]
+
+    /// Subset shown in the sidebar after Slice E — "Completed" moved to the
+    /// footer icon strip, "All" stays in the body view as a filter chip.
+    static let sidebarFilters: [TaskSidebarItem] = smartFilters.filter { item in
+        switch item.filter {
+        case .completed, .all: return false
+        default: return true
+        }
+    }
+
+    /// After Slice G the unified "Today" destination replaces the per-section
+    /// Today filter; sidebar lists Inbox + Upcoming under Tasks.
+    static let unifiedSidebarFilters: [TaskSidebarItem] = sidebarFilters.filter { item in
+        if case .today = item.filter { return false }
+        return true
+    }
 }
 
 // MARK: - Project sidebar
