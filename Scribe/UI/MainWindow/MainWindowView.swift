@@ -266,16 +266,16 @@ struct MainWindowView: View {
             Section {
                 if notesExpanded {
                     NavigationLink(value: MainSelection.notes(.today)) {
-                        Label("Today", systemImage: "sun.max")
+                        Label("Today's Note", systemImage: "note.text")
                     }
                     NavigationLink(value: MainSelection.notes(.inbox)) {
-                        Label("Inbox", systemImage: "tray")
+                        Label("Unfiled", systemImage: "tray")
                     }
                     NavigationLink(value: MainSelection.notes(.all)) {
-                        Label("All Notes", systemImage: "note.text")
+                        Label("All Notes", systemImage: "doc.on.doc")
                     }
                     NavigationLink(value: MainSelection.notes(.daily)) {
-                        Label("Daily Notes", systemImage: "calendar.badge.clock")
+                        Label("All Daily Notes", systemImage: "calendar.badge.clock")
                     }
                     NavigationLink(value: MainSelection.notes(.graph)) {
                         Label("Graph", systemImage: "circle.hexagongrid")
