@@ -622,7 +622,7 @@ private struct KeyCapGroup: View {
         HStack(spacing: 3) {
             ForEach(keys, id: \.self) { key in
                 Text(key)
-                    .font(.system(.caption2, weight: .semibold))
+                    .font(.system(.caption, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 18, minHeight: 18)
                     .padding(.horizontal, 4)
