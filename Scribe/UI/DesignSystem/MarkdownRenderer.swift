@@ -12,6 +12,9 @@ extension NSAttributedString.Key {
     static let codeBlockLanguage = NSAttributedString.Key("scribe.codeBlockLanguage")
     /// Int blockquote nesting depth (1 = top level).
     static let blockquoteDepth   = NSAttributedString.Key("scribe.blockquoteDepth")
+    /// Int list-item nesting depth (0 = top level). Used by drawBackground to
+    /// pick the bullet glyph (• for depth 0, ◦ for depth 1+).
+    static let scribeListDepth   = NSAttributedString.Key("scribe.listDepth")
     /// UUID identifying the block (paragraph / heading / list-item / code-block / blockquote)
     /// that owns this run. Cursor-proximity marker reveal compares the cursor's owner-id
     /// against each marker's owner-id and only shows markers whose owner matches.
@@ -24,46 +27,93 @@ extension NSAttributedString.Key {
     /// Bool marking syntax marker characters (`**`, `*`, `_`, `~~`, `\``, `#`, `>`, `-`).
     /// Cursor-proximity reveal toggles these between dim-visible and hidden.
     static let scribeSyntaxMarker = NSAttributedString.Key("scribe.syntaxMarker")
-    /// Bool marking a table cell. drawBackground reads this to draw row/column rules.
-    static let scribeTableCell    = NSAttributedString.Key("scribe.tableCell")
     /// URL the renderer auto-detected (bare URL in text). Editor turns into a clickable link.
     static let scribeAutoLinkURL  = NSAttributedString.Key("scribe.autoLink")
 }
 
 // MARK: - Theme
 
+/// Visual tokens for the editor. Numbers below were tuned against Bear's
+/// default theme for parity: bold typographic hierarchy, ultra-subtle marker
+/// dimming (markers should fade into the page once they're far from the
+/// cursor), generous body line-height (1.6), and a dramatic heading scale
+/// (32→24→20→17→15→14) with tight, slightly negative tracking on the larger
+/// sizes — the trick that makes display text feel "designed" rather than
+/// "rendered."
 struct MarkdownTheme {
     let baseFont: NSFont
+
+    /// "Marker" runs (`**`, `*`, `#`, `>`, backticks, link punctuation) when
+    /// the cursor IS in their block — they stay visible but heavily de-emphasised
+    /// so they read as scaffolding, not content. Outside the cursor block they're
+    /// hidden entirely (color=clear, glyphs still present).
+    var marker: NSColor {
+        NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.22)
+                : NSColor(white: 0.0, alpha: 0.22)
+        }
+    }
     var dim: NSColor { .tertiaryLabelColor }
-    var marker: NSColor { .quaternaryLabelColor }
     var primary: NSColor { .labelColor }
     var secondary: NSColor { .secondaryLabelColor }
 
+    /// Slightly smaller mono pairing for inline code so the cap-height roughly
+    /// matches the surrounding proportional font.
     var monoFont: NSFont {
-        .monospacedSystemFont(ofSize: baseFont.pointSize - 0.5, weight: .regular)
-    }
-    var codeBlockFont: NSFont {
         .monospacedSystemFont(ofSize: baseFont.pointSize - 1, weight: .regular)
     }
+    /// Larger mono inside fenced code blocks (matches body size — code is
+    /// content, not annotation).
+    var codeBlockFont: NSFont {
+        .monospacedSystemFont(ofSize: baseFont.pointSize - 0.5, weight: .regular)
+    }
 
+    /// Heading scale (H1→H6). The jump from H2→H1 is intentionally large —
+    /// document titles need to dominate. H5/H6 stay close to body so they
+    /// read as subsection labels, not new sections.
     func headingFont(level: Int) -> NSFont {
         switch level {
-        case 1: return .systemFont(ofSize: 26, weight: .bold)
-        case 2: return .systemFont(ofSize: 21, weight: .semibold)
-        case 3: return .systemFont(ofSize: 18, weight: .semibold)
-        case 4: return .systemFont(ofSize: 16, weight: .semibold)
-        case 5: return .systemFont(ofSize: baseFont.pointSize, weight: .semibold)
-        default: return .systemFont(ofSize: baseFont.pointSize, weight: .medium)
+        case 1: return .systemFont(ofSize: 30, weight: .bold)
+        case 2: return .systemFont(ofSize: 24, weight: .semibold)
+        case 3: return .systemFont(ofSize: 20, weight: .semibold)
+        case 4: return .systemFont(ofSize: 17, weight: .semibold)
+        case 5: return .systemFont(ofSize: baseFont.pointSize + 1, weight: .semibold)
+        default: return .systemFont(ofSize: baseFont.pointSize, weight: .semibold)
         }
     }
 
+    /// Negative tracking for display sizes — the larger a glyph, the looser its
+    /// default tracking; pulling it tighter is what gives big headings their
+    /// "designed" feel. H4 and below use the default (0).
+    func headingKerning(level: Int) -> CGFloat {
+        switch level {
+        case 1: return -0.6
+        case 2: return -0.4
+        case 3: return -0.2
+        default: return 0
+        }
+    }
+
+    /// Vertical air above each heading. H1/H2 get a generous break so they
+    /// reset the page rhythm; lower levels stay tighter to their preceding
+    /// content.
     func headingSpacingBefore(level: Int) -> CGFloat {
         switch level {
-        case 1: return 22
-        case 2: return 18
-        case 3: return 14
-        case 4: return 10
+        case 1: return 28
+        case 2: return 22
+        case 3: return 16
+        case 4: return 12
         default: return 8
+        }
+    }
+
+    /// Air below a heading before its content begins. Small — the heading
+    /// should "own" the paragraph that follows.
+    func headingSpacingAfter(level: Int) -> CGFloat {
+        switch level {
+        case 1, 2: return 4
+        default: return 2
         }
     }
 }
@@ -113,9 +163,40 @@ private struct SourceMap {
     }
 }
 
+// MARK: - Render cache
+
+/// Single-entry cache of the most recent render result. `applyFormatting` runs
+/// on every keystroke AND every selection change AND every window resize, but
+/// the great majority of those calls have **identical input** to the previous
+/// one (resize / repaint with no source or cursor change; mouse click that
+/// hits the same character offset as the prior cursor; etc.). A trivial
+/// equality cache turns those into a pointer-return.
+private final class MarkdownRenderCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var key: (source: String, cursor: Int, fontSize: CGFloat)?
+    private var value: NSAttributedString?
+
+    func lookup(source: String, cursor: Int, fontSize: CGFloat) -> NSAttributedString? {
+        lock.lock(); defer { lock.unlock() }
+        guard let key,
+              key.source == source,
+              key.cursor == cursor,
+              key.fontSize == fontSize else { return nil }
+        return value
+    }
+
+    func store(source: String, cursor: Int, fontSize: CGFloat, value: NSAttributedString) {
+        lock.lock(); defer { lock.unlock() }
+        self.key = (source, cursor, fontSize)
+        self.value = value
+    }
+}
+
 // MARK: - Renderer
 
 enum MarkdownRenderer {
+
+    private static let cache = MarkdownRenderCache()
 
     /// Walk the AST and emit an `NSAttributedString` that preserves the source
     /// byte-for-byte. All styling is applied as attributes over the original
@@ -133,15 +214,23 @@ enum MarkdownRenderer {
         cursorOffset: Int? = nil
     ) -> NSAttributedString {
         guard !source.isEmpty else { return NSAttributedString() }
+        // Cache lookup. cursorOffset=nil is treated as a sentinel (-1) so that
+        // "no reveal" results don't collide with cursor-at-0 results.
+        let cacheKey = cursorOffset ?? -1
+        if let hit = cache.lookup(source: source, cursor: cacheKey, fontSize: font.pointSize) {
+            return hit
+        }
         let theme = MarkdownTheme(baseFont: font)
         let map = SourceMap(source: source)
         let document = Document(parsing: source, options: [.parseBlockDirectives])
         let out = NSMutableAttributedString(string: source)
 
         // Baseline body attributes — applied to everything, then refined per-block.
+        // 1.6 line-height matches Bear's body rhythm; 8pt paragraph spacing gives
+        // paragraphs visible breathing room without feeling double-spaced.
         let baseParagraph = NSMutableParagraphStyle()
-        baseParagraph.lineHeightMultiple = 1.5
-        baseParagraph.paragraphSpacing = 2
+        baseParagraph.lineHeightMultiple = 1.6
+        baseParagraph.paragraphSpacing = 8
         out.addAttributes([
             .font: theme.baseFont,
             .foregroundColor: theme.primary,
@@ -167,7 +256,12 @@ enum MarkdownRenderer {
             applyMarkerReveal(to: out, revealedBlockId: revealedBlockId, theme: theme)
         }
 
-        return out
+        // Snapshot to an immutable NSAttributedString before caching so a
+        // caller that (incorrectly) downcasts the return value to mutable
+        // can't poison subsequent cache hits.
+        let immutable = NSAttributedString(attributedString: out)
+        cache.store(source: source, cursor: cacheKey, fontSize: font.pointSize, value: immutable)
+        return immutable
     }
 
     // MARK: - Block dispatch
@@ -186,7 +280,7 @@ enum MarkdownRenderer {
         let blockId = UUID()
         out.addAttribute(.scribeBlockId, value: blockId,
                          range: clamp(range, to: out.length))
-        if let cursor = cursorOffset, range.contains(cursor) || cursor == range.location {
+        if let cursor = cursorOffset, Self.blockContainsCursor(range, cursor: cursor) {
             revealedBlockId = blockId
         }
 
@@ -248,24 +342,32 @@ enum MarkdownRenderer {
         let level = heading.level
         let font = theme.headingFont(level: level)
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.2
+        // Tighter line-height on display headings — they shouldn't have body
+        // air around them or they look like they're floating.
+        style.lineHeightMultiple = level <= 2 ? 1.15 : 1.25
         style.paragraphSpacingBefore = theme.headingSpacingBefore(level: level)
-        style.paragraphSpacing = 6
+        style.paragraphSpacing = theme.headingSpacingAfter(level: level)
         let clamped = clamp(range, to: out.length)
         out.addAttribute(.font, value: font, range: clamped)
         out.addAttribute(.paragraphStyle, value: style, range: clamped)
         out.addAttribute(.foregroundColor, value: theme.primary, range: clamped)
+        let kern = theme.headingKerning(level: level)
+        if kern != 0 {
+            out.addAttribute(.kern, value: kern, range: clamped)
+        }
 
         // Dim the leading "#"+ space.
         let nsSource = out.string as NSString
         let lineRange = nsSource.lineRange(for: NSRange(location: clamped.location, length: 0))
         let line = nsSource.substring(with: lineRange)
-        if let match = line.range(of: #"^#{1,6} "#, options: .regularExpression) {
-            let prefixLen = line.distance(from: line.startIndex, to: match.upperBound)
-            let prefixRange = NSRange(location: lineRange.location, length: prefixLen)
-            out.addAttribute(.foregroundColor, value: theme.marker, range: clamp(prefixRange, to: out.length))
-            out.addAttribute(.scribeSyntaxMarker, value: true, range: clamp(prefixRange, to: out.length))
-            out.addAttribute(.scribeBlockId, value: blockId, range: clamp(prefixRange, to: out.length))
+        if let match = Self.headingPrefixRegex.firstMatch(
+            in: line, range: NSRange(location: 0, length: (line as NSString).length)
+        ) {
+            let prefixRange = NSRange(location: lineRange.location, length: match.range.length)
+            let prefixClamped = clamp(prefixRange, to: out.length)
+            out.addAttribute(.foregroundColor, value: theme.marker, range: prefixClamped)
+            out.addAttribute(.scribeSyntaxMarker, value: true, range: prefixClamped)
+            out.addAttribute(.scribeBlockId, value: blockId, range: prefixClamped)
         }
 
         // Apply inline children (covers bold/italic inside headings).
@@ -332,11 +434,24 @@ enum MarkdownRenderer {
         out.addAttribute(.blockquoteDepth, value: depth, range: clamped)
         out.addAttribute(.foregroundColor, value: theme.secondary, range: clamped)
 
+        // Italic for blockquotes (Bear convention — visual cue beyond just
+        // the left bar). Apply over the whole block before children recurse
+        // so existing bold runs inherit italic too.
+        if let italic = NSFont(
+            descriptor: theme.baseFont.fontDescriptor.withSymbolicTraits(.italic),
+            size: theme.baseFont.pointSize
+        ) {
+            out.addAttribute(.font, value: italic, range: clamped)
+        }
+
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.5
-        style.headIndent = CGFloat(depth) * 22
-        style.firstLineHeadIndent = CGFloat(depth) * 22
-        style.paragraphSpacing = 2
+        style.lineHeightMultiple = 1.55
+        // Generous lead-in so the text sits comfortably to the right of the
+        // accent bar (the bar itself is drawn at x=textContainerOrigin.x).
+        style.headIndent = CGFloat(depth) * 24
+        style.firstLineHeadIndent = CGFloat(depth) * 24
+        style.paragraphSpacing = 6
+        style.paragraphSpacingBefore = 4
         out.addAttribute(.paragraphStyle, value: style, range: clamped)
 
         // Dim the "> " prefix at the start of each line inside this block.
@@ -345,12 +460,14 @@ enum MarkdownRenderer {
         while loc < clamped.location + clamped.length {
             let lineRange = nsSource.lineRange(for: NSRange(location: loc, length: 0))
             let line = nsSource.substring(with: lineRange)
-            if let match = line.range(of: #"^>+ ?"#, options: .regularExpression) {
-                let prefixLen = line.distance(from: line.startIndex, to: match.upperBound)
-                let prefixRange = NSRange(location: lineRange.location, length: prefixLen)
-                out.addAttribute(.foregroundColor, value: theme.marker, range: clamp(prefixRange, to: out.length))
-                out.addAttribute(.scribeSyntaxMarker, value: true, range: clamp(prefixRange, to: out.length))
-                out.addAttribute(.scribeBlockId, value: blockId, range: clamp(prefixRange, to: out.length))
+            if let match = Self.blockquotePrefixRegex.firstMatch(
+                in: line, range: NSRange(location: 0, length: (line as NSString).length)
+            ) {
+                let prefixRange = NSRange(location: lineRange.location, length: match.range.length)
+                let prefixClamped = clamp(prefixRange, to: out.length)
+                out.addAttribute(.foregroundColor, value: theme.marker, range: prefixClamped)
+                out.addAttribute(.scribeSyntaxMarker, value: true, range: prefixClamped)
+                out.addAttribute(.scribeBlockId, value: blockId, range: prefixClamped)
             }
             loc = lineRange.location + lineRange.length
             if lineRange.length == 0 { break }
@@ -391,7 +508,7 @@ enum MarkdownRenderer {
 
             let blockId = UUID()
             out.addAttribute(.scribeBlockId, value: blockId, range: clampedItem)
-            if let cursor = cursorOffset, clampedItem.contains(cursor) || cursor == clampedItem.location {
+            if let cursor = cursorOffset, Self.blockContainsCursor(clampedItem, cursor: cursor) {
                 revealedBlockId = blockId
             }
 
@@ -399,13 +516,35 @@ enum MarkdownRenderer {
             let nsSource = out.string as NSString
             let firstLine = nsSource.lineRange(for: NSRange(location: clampedItem.location, length: 0))
             let lineText = nsSource.substring(with: firstLine)
-            let markerPattern = ordered ? #"^\s*(\d+\.) "# : #"^\s*([-*+]) "#
-            if let match = lineText.range(of: markerPattern, options: .regularExpression) {
-                let markerEnd = lineText.distance(from: lineText.startIndex, to: match.upperBound)
-                let markerRange = NSRange(location: firstLine.location, length: markerEnd)
-                out.addAttribute(.scribeListMarker, value: true, range: clamp(markerRange, to: out.length))
-                out.addAttribute(.foregroundColor, value: theme.marker, range: clamp(markerRange, to: out.length))
-                out.addAttribute(.scribeBlockId, value: blockId, range: clamp(markerRange, to: out.length))
+            let lineNSRange = NSRange(location: 0, length: (lineText as NSString).length)
+            if ordered {
+                if let match = Self.orderedListPrefixRegex.firstMatch(in: lineText, range: lineNSRange) {
+                    let markerRange = NSRange(location: firstLine.location, length: match.range.length)
+                    let markerClamped = clamp(markerRange, to: out.length)
+                    out.addAttribute(.scribeListMarker, value: true, range: markerClamped)
+                    out.addAttribute(.scribeListDepth, value: depth, range: markerClamped)
+                    out.addAttribute(.foregroundColor, value: theme.marker, range: markerClamped)
+                    out.addAttribute(.scribeBlockId, value: blockId, range: markerClamped)
+                }
+            } else {
+                // Unordered: tag the marker range and hide the bullet character
+                // itself (the `-`/`*`/`+`). drawBackground draws a proper • / ◦
+                // glyph at the bullet's position. The trailing space stays as
+                // marker-coloured whitespace so the indent rhythm is preserved.
+                if let match = Self.unorderedListPrefixRegex.firstMatch(in: lineText, range: lineNSRange) {
+                    let bulletOffset = match.range(at: 1).length // leading whitespace length
+                    let markerRange = NSRange(location: firstLine.location, length: match.range.length)
+                    let markerClamped = clamp(markerRange, to: out.length)
+                    out.addAttribute(.scribeListMarker, value: true, range: markerClamped)
+                    out.addAttribute(.scribeListDepth, value: depth, range: markerClamped)
+                    out.addAttribute(.foregroundColor, value: theme.marker, range: markerClamped)
+                    out.addAttribute(.scribeBlockId, value: blockId, range: markerClamped)
+                    // Override foreground on just the bullet char so drawBackground
+                    // can render the replacement glyph cleanly underneath.
+                    let bulletCharRange = NSRange(location: firstLine.location + bulletOffset, length: 1)
+                    out.addAttribute(.foregroundColor, value: NSColor.clear,
+                                     range: clamp(bulletCharRange, to: out.length))
+                }
             }
 
             // Recurse into list-item children (may contain paragraphs, nested lists).
@@ -487,12 +626,11 @@ enum MarkdownRenderer {
         case let link as Link:
             applyLink(link, fullRange: clamped, out: out, theme: theme, blockId: blockId, map: map)
 
-        case let image as Markdown.Image:
+        case is Markdown.Image:
             // We mark the image span dim so it reads as a token; the editor's
             // existing image-fold pass will replace it with an attachment.
             out.addAttribute(.foregroundColor, value: theme.dim, range: clamped)
             out.addAttribute(.scribeSyntaxMarker, value: true, range: clamped)
-            _ = image
 
         default:
             // Text, SoftBreak, LineBreak, HTML — no styling needed.
@@ -689,21 +827,24 @@ enum MarkdownRenderer {
         blockId: UUID,
         map: SourceMap
     ) {
+        // Tables render as monospaced rows so column-aligned source text lines
+        // up visually. Per-cell grid drawing isn't wired yet — when it is, we
+        // can stamp a `.scribeTableCell` attribute here and read it from
+        // drawBackground. For now keep this minimal to avoid carrying dead
+        // attribute traffic on every render.
         let clamped = clamp(range, to: out.length)
-        // Mark each line as a table cell row so drawBackground can lay out grid lines.
         let nsSource = out.string as NSString
         var loc = clamped.location
         while loc < clamped.location + clamped.length {
             let lineRange = nsSource.lineRange(for: NSRange(location: loc, length: 0))
             let c = clamp(lineRange, to: out.length)
             if c.length > 0 {
-                out.addAttribute(.scribeTableCell, value: true, range: c)
                 out.addAttribute(.font, value: theme.monoFont, range: c)
             }
             loc = lineRange.location + lineRange.length
             if lineRange.length == 0 { break }
         }
-        _ = map
+        _ = (table, map)
     }
 
     // MARK: - Autolink bare URLs
@@ -716,14 +857,39 @@ enum MarkdownRenderer {
         )
     }()
 
+    // Line-prefix regexes hoisted to static let so they aren't recompiled per
+    // call. applyFormatting runs on every keystroke + selection change, so
+    // these four were being compiled hundreds of times per minute of typing.
+    private static let headingPrefixRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return try! NSRegularExpression(pattern: #"^#{1,6} "#)
+    }()
+    private static let blockquotePrefixRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return try! NSRegularExpression(pattern: #"^>+ ?"#)
+    }()
+    private static let orderedListPrefixRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return try! NSRegularExpression(pattern: #"^\s*(\d+\.) "#)
+    }()
+    private static let unorderedListPrefixRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return try! NSRegularExpression(pattern: #"^(\s*)([-*+]) "#)
+    }()
+
     private static func autolinkBareURLs(in out: NSMutableAttributedString, source: String) {
         let full = NSRange(location: 0, length: out.length)
         for match in urlRegex.matches(in: source, range: full) {
             let r = match.range
-            // Skip if already inside a Link (has .link), or inside code (.scribeInlineCode / .codeBlockLine).
+            // Skip if already inside a Link (has .link), inside code (.scribeInlineCode
+            // / .codeBlockLine), OR inside a syntax-marker run — the latter covers the
+            // destination URL of a markdown link `[label](url)`, which applyLink dims
+            // but doesn't tag with .link. Without this guard the URL inside the parens
+            // would get re-stamped as a clickable link and visually double-style.
             if out.attribute(.link, at: r.location, effectiveRange: nil) != nil { continue }
             if out.attribute(.scribeInlineCode, at: r.location, effectiveRange: nil) as? Bool == true { continue }
             if out.attribute(.codeBlockLine, at: r.location, effectiveRange: nil) as? Bool == true { continue }
+            if out.attribute(.scribeSyntaxMarker, at: r.location, effectiveRange: nil) as? Bool == true { continue }
             guard let url = URL(string: (source as NSString).substring(with: r)) else { continue }
             out.addAttribute(.link, value: url, range: r)
             out.addAttribute(.foregroundColor, value: NSColor.linkColor, range: r)
@@ -761,5 +927,15 @@ enum MarkdownRenderer {
         let loc = max(0, min(range.location, length))
         let len = max(0, min(range.length, length - loc))
         return NSRange(location: loc, length: len)
+    }
+
+    /// Whether `cursor` should be considered "inside" `range` for the purposes
+    /// of cursor-proximity marker reveal. `NSRange.contains(_:)` is half-open
+    /// — so a cursor at `NSMaxRange(range)` (i.e. typing at the very end of a
+    /// paragraph) wouldn't match anything and the reveal pass would hide every
+    /// marker, including those in the block actively being edited. We treat
+    /// both endpoints as inside.
+    private static func blockContainsCursor(_ range: NSRange, cursor: Int) -> Bool {
+        return cursor >= range.location && cursor <= range.location + range.length
     }
 }

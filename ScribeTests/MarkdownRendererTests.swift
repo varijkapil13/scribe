@@ -103,6 +103,38 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertNil(link)
     }
 
+    func testAutolinkSkipsURLsInsideMarkdownLinkDestinations() {
+        // Regression: applyLink dims the destination URL with .scribeSyntaxMarker
+        // but doesn't set .link on it. autolinkBareURLs previously only checked
+        // .link / .scribeInlineCode / .codeBlockLine and would re-stamp .link
+        // on top, breaking the visual styling and producing two underlined
+        // ranges in [label](url).
+        let source = "see [the docs](https://example.com) for details\n"
+        let result = MarkdownRenderer.attributed(source, font: font)
+        let urlInsideParens = (source as NSString).range(of: "https://example.com")
+        let link = result.attribute(.link, at: urlInsideParens.location,
+                                     effectiveRange: nil) as? URL
+        XCTAssertNil(link, "URL inside a markdown link destination must NOT be re-autolinked")
+        // And the LABEL `the docs` still IS a link.
+        let labelLoc = (source as NSString).range(of: "the docs").location
+        let labelLink = result.attribute(.link, at: labelLoc, effectiveRange: nil) as? URL
+        XCTAssertEqual(labelLink?.absoluteString, "https://example.com")
+    }
+
+    func testCursorAtBlockEndKeepsMarkersVisible() {
+        // Regression: NSRange.contains is half-open, so a cursor at NSMaxRange
+        // of a block was not matching any block and the marker-reveal pass
+        // hid every marker — including for the block the user was editing.
+        let source = "**hi**\n"
+        let cursorAtEnd = (source as NSString).length - 1  // just before final \n
+        let result = MarkdownRenderer.attributed(source, font: font, cursorOffset: cursorAtEnd)
+        let markerLoc = (source as NSString).range(of: "**").location
+        let color = result.attribute(.foregroundColor, at: markerLoc,
+                                      effectiveRange: nil) as? NSColor
+        XCTAssertNotEqual(color, .clear,
+                          "markers in the block containing the cursor must stay visible, even when cursor is at block end")
+    }
+
     func testCursorProximityRevealHidesMarkersInOtherBlocks() {
         // Two paragraphs. Place cursor in the second — markers in the first
         // should be hidden (foreground=clear); markers in the second should

@@ -751,50 +751,60 @@ final class MarkdownNSTextView: NSTextView {
         lm.ensureLayout(for: tc)
         let origin = textContainerOrigin
 
+        // Compute the visible character range so per-character decoration passes
+        // (inline-code pills, list bullets) only scan what's actually on screen
+        // instead of the entire document on every redraw.
+        let visibleRange: NSRange = {
+            // dirtyRect is in the text view's coordinate space; shift into the
+            // text container's space by subtracting the container origin.
+            let containerRect = rect.offsetBy(dx: -origin.x, dy: -origin.y)
+            let glyphRange = lm.glyphRange(forBoundingRect: containerRect, in: tc)
+            return lm.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        }()
+
         drawCodeBlocks(storage: storage, lm: lm, tc: tc, origin: origin)
         drawBlockquotes(storage: storage, lm: lm, tc: tc, origin: origin)
         drawHorizontalRules(storage: storage, lm: lm, tc: tc, origin: origin)
-        drawInlineCodePills(storage: storage, lm: lm, tc: tc, origin: origin)
+        drawInlineCodePills(storage: storage, lm: lm, tc: tc, origin: origin, in: visibleRange)
+        drawListBullets(storage: storage, lm: lm, tc: tc, origin: origin, in: visibleRange)
     }
 
     private func drawCodeBlocks(storage: NSTextStorage, lm: NSLayoutManager,
                                   tc: NSTextContainer, origin: NSPoint) {
+        // Single soft fill — no border. The fill alone provides enough
+        // figure/ground contrast; a stroke on top reads as "boxed in" and
+        // fights the surrounding prose.
         let bgColor = NSColor(name: nil) { app in
             app.bestMatch(from: [.darkAqua]) == .darkAqua
-                ? NSColor(white: 1.0, alpha: 0.09)
-                : NSColor(white: 0.0, alpha: 0.06)
-        }
-        let borderColor = NSColor(name: nil) { app in
-            app.bestMatch(from: [.darkAqua]) == .darkAqua
                 ? NSColor(white: 1.0, alpha: 0.06)
-                : NSColor(white: 0.0, alpha: 0.05)
+                : NSColor(white: 0.0, alpha: 0.04)
         }
-        let langColor = NSColor.tertiaryLabelColor
+        // Language tag — very low contrast so it reads as metadata, not chrome.
+        let langColor = NSColor.tertiaryLabelColor.withAlphaComponent(0.65)
 
         forContiguousRanges(in: storage, key: .codeBlockLine) { charRange in
             let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
             let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            // Generous internal padding (10pt top/bottom) — code blocks should
+            // feel like a "room" you enter, not a thin sliver behind the text.
             let blockRect = NSRect(
-                x: 4,
-                y: cr.minY + origin.y - 6,
-                width: bounds.width - 8,
-                height: cr.height + 12
+                x: origin.x - 4,
+                y: cr.minY + origin.y - 10,
+                width: bounds.width - origin.x * 2 + 8,
+                height: cr.height + 20
             )
-            let path = NSBezierPath(roundedRect: blockRect, xRadius: 6, yRadius: 6)
+            let path = NSBezierPath(roundedRect: blockRect, xRadius: 8, yRadius: 8)
             bgColor.setFill()
             path.fill()
-            borderColor.setStroke()
-            path.lineWidth = 0.5
-            path.stroke()
 
-            // Language label (top-right corner). Source: `.codeBlockLanguage` attribute
-            // emitted by MarkdownRenderer; empty string means no fence info-string.
+            // Language label, top-right, low contrast.
             let lang = storage.attribute(.codeBlockLanguage, at: charRange.location,
                                           effectiveRange: nil) as? String ?? ""
             guard !lang.isEmpty else { return }
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
+                .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
                 .foregroundColor: langColor,
+                .kern: 0.4,
             ]
             let label = NSAttributedString(string: lang.uppercased(), attributes: attrs)
             let labelSize = label.size()
@@ -807,22 +817,20 @@ final class MarkdownNSTextView: NSTextView {
     }
 
     private func drawInlineCodePills(storage: NSTextStorage, lm: NSLayoutManager,
-                                      tc: NSTextContainer, origin: NSPoint) {
+                                      tc: NSTextContainer, origin: NSPoint,
+                                      in scanRange: NSRange) {
+        // Borderless pill. Border on inline code reads as "input field" —
+        // a soft fill alone is enough to mark the run as code.
         let pillColor = NSColor(name: nil) { app in
             app.bestMatch(from: [.darkAqua]) == .darkAqua
-                ? NSColor(white: 1.0, alpha: 0.12)
-                : NSColor(white: 0.0, alpha: 0.06)
+                ? NSColor(white: 1.0, alpha: 0.10)
+                : NSColor(white: 0.0, alpha: 0.05)
         }
-        let pillBorder = NSColor(name: nil) { app in
-            app.bestMatch(from: [.darkAqua]) == .darkAqua
-                ? NSColor(white: 1.0, alpha: 0.08)
-                : NSColor(white: 0.0, alpha: 0.06)
-        }
-        // For each .scribeInlineCode run, compute the bounding rect of its glyphs
-        // and draw a rounded pill behind. Multi-line spans (rare) get one pill
-        // per line via per-line-rect enumeration.
-        var i = 0
-        let total = storage.length
+        // Scan only the visible character range to avoid walking the entire
+        // storage on every redraw — long documents would otherwise enumerate
+        // every inline-code span just to redraw the on-screen ones.
+        var i = scanRange.location
+        let total = min(NSMaxRange(scanRange), storage.length)
         while i < total {
             var effective = NSRange()
             let hasAttr = storage.attribute(.scribeInlineCode, at: i,
@@ -835,18 +843,16 @@ final class MarkdownNSTextView: NSTextView {
                     withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
                     in: tc
                 ) { rect, _ in
+                    // Tight padding (2pt horizontal, 1pt vertical) so the pill
+                    // hugs the glyphs; tighter than block-code by design.
                     let pill = NSRect(
-                        x: rect.minX + origin.x - 3,
-                        y: rect.minY + origin.y - 1,
-                        width: rect.width + 6,
-                        height: rect.height + 2
+                        x: rect.minX + origin.x - 2,
+                        y: rect.minY + origin.y - 0.5,
+                        width: rect.width + 4,
+                        height: rect.height + 1
                     )
-                    let path = NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4)
                     pillColor.setFill()
-                    path.fill()
-                    pillBorder.setStroke()
-                    path.lineWidth = 0.5
-                    path.stroke()
+                    NSBezierPath(roundedRect: pill, xRadius: 3.5, yRadius: 3.5).fill()
                 }
                 i = NSMaxRange(effective)
             } else {
@@ -857,43 +863,112 @@ final class MarkdownNSTextView: NSTextView {
 
     private func drawBlockquotes(storage: NSTextStorage, lm: NSLayoutManager,
                                    tc: NSTextContainer, origin: NSPoint) {
-        // Accent-tinted bar at the leading edge, matches Apple Notes' visual.
-        let barColor = NSColor.controlAccentColor.withAlphaComponent(0.55)
-        let bgColor = NSColor(name: nil) { app in
-            app.bestMatch(from: [.darkAqua]) == .darkAqua
-                ? NSColor(white: 1.0, alpha: 0.04)
-                : NSColor(white: 0.0, alpha: 0.03)
-        }
+        // Bear-style blockquote: just an accent-tinted vertical bar to the
+        // left of the indented italic text. No background — the italic + indent
+        // + bar combination is the visual; adding a fill makes it feel boxed.
+        let barColor = NSColor.tertiaryLabelColor.withAlphaComponent(0.6)
 
         forContiguousRanges(in: storage, key: .blockquoteLine) { charRange in
             let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
             let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
-            let blockRect = NSRect(
-                x: origin.x,
-                y: cr.minY + origin.y - 3,
-                width: bounds.width - origin.x * 2,
-                height: cr.height + 6
+            // 3pt bar, sitting flush against the leading edge of the text
+            // container, full block height with a tiny inset top/bottom so it
+            // doesn't crash into the line above/below.
+            let barRect = NSRect(
+                x: origin.x + 4,
+                y: cr.minY + origin.y + 2,
+                width: 3,
+                height: cr.height - 4
             )
-            bgColor.setFill()
-            NSBezierPath(roundedRect: blockRect, xRadius: 4, yRadius: 4).fill()
-
-            let borderRect = NSRect(x: origin.x, y: blockRect.minY, width: 4, height: blockRect.height)
             barColor.setFill()
-            NSBezierPath(roundedRect: borderRect, xRadius: 2, yRadius: 2).fill()
+            NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5).fill()
         }
     }
 
     private func drawHorizontalRules(storage: NSTextStorage, lm: NSLayoutManager,
                                        tc: NSTextContainer, origin: NSPoint) {
-        let lineColor = NSColor.separatorColor
+        // Subtle but clearly visible line — separatorColor was nearly invisible
+        // against the body. Use a tinted gray with explicit alpha so it reads
+        // as an intentional break.
+        let lineColor = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.18)
+                : NSColor(white: 0.0, alpha: 0.14)
+        }
         forContiguousRanges(in: storage, key: .horizontalRule) { charRange in
             let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
             let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
             let midY = cr.midY + origin.y
-            let hrRect = NSRect(x: origin.x, y: midY - 0.5,
-                                width: bounds.width - origin.x * 2, height: 1)
+            // Inset 24pt from each side — full-bleed HRs read as table borders.
+            let inset: CGFloat = 24
+            let hrRect = NSRect(
+                x: origin.x + inset,
+                y: midY - 0.5,
+                width: bounds.width - origin.x * 2 - inset * 2,
+                height: 1
+            )
             lineColor.setFill()
             hrRect.fill()
+        }
+    }
+
+    private func drawListBullets(storage: NSTextStorage, lm: NSLayoutManager,
+                                   tc: NSTextContainer, origin: NSPoint,
+                                   in scanRange: NSRange) {
+        // Unordered list markers (`-`, `*`, `+`) are rendered with their bullet
+        // glyph as foreground=clear by the renderer. We overlay a real bullet
+        // glyph (• at depth 0, ◦ at depth 1+) at the original char's position,
+        // sized to match the surrounding text. Walk only the visible range so
+        // documents with hundreds of bullet points don't pay for off-screen
+        // glyph redraws on every scroll tick.
+        let bulletColor = NSColor.tertiaryLabelColor
+        let plain = storage.string as NSString
+        var i = scanRange.location
+        let total = min(NSMaxRange(scanRange), storage.length)
+        while i < total {
+            var effective = NSRange()
+            let isMarker = storage.attribute(.scribeListMarker, at: i,
+                                              effectiveRange: &effective) as? Bool == true
+            guard isMarker else {
+                i = effective.length > 0 ? NSMaxRange(effective) : i + 1
+                continue
+            }
+            // Find the bullet character — the first non-space, non-digit char.
+            let markerText = plain.substring(with: effective)
+            guard let bulletCharIndex = markerText.firstIndex(where: { "-*+".contains($0) }) else {
+                // Ordered list (digit prefix) — leave the number as-is.
+                i = NSMaxRange(effective)
+                continue
+            }
+            let bulletOffset = markerText.distance(from: markerText.startIndex, to: bulletCharIndex)
+            let bulletCharRange = NSRange(location: effective.location + bulletOffset, length: 1)
+            let depth = storage.attribute(.scribeListDepth, at: effective.location,
+                                           effectiveRange: nil) as? Int ?? 0
+            let glyph = depth == 0 ? "•" : "◦"
+
+            // Compute the glyph's bounding rect so we can centre the bullet.
+            let glyphRange = lm.glyphRange(forCharacterRange: bulletCharRange,
+                                             actualCharacterRange: nil)
+            guard glyphRange.length > 0 else {
+                i = NSMaxRange(effective)
+                continue
+            }
+            let rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+
+            // Slightly larger and centred against the cap-height of the row.
+            let bulletFont = NSFont.systemFont(ofSize: 13, weight: .bold)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: bulletFont,
+                .foregroundColor: bulletColor,
+            ]
+            let bullet = NSAttributedString(string: glyph, attributes: attrs)
+            let size = bullet.size()
+            let drawAt = NSPoint(
+                x: rect.midX + origin.x - size.width / 2,
+                y: rect.midY + origin.y - size.height / 2 + 0.5
+            )
+            bullet.draw(at: drawAt)
+            i = NSMaxRange(effective)
         }
     }
 
