@@ -55,7 +55,7 @@ enum DesignTokens {
         /// Sans-serif section headline inside detail content.
         static let section = Font.system(.headline, weight: .semibold)
         /// Section / eyebrow label, small, letter-spaced. Pair with `.tracking`.
-        static let eyebrow = Font.system(.caption2, weight: .semibold)
+        static let eyebrow = Font.system(.caption, weight: .semibold)
         /// Body copy for transcript text and summaries.
         static let body = Font.system(.body)
         /// Callout body for metadata strips.
