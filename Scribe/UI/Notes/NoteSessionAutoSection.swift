@@ -22,7 +22,7 @@ struct NoteSessionAutoSection: View {
             actionItemsBlock
             entitiesBlock
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, DesignTokens.Spacing.xl)
         .padding(.vertical, DesignTokens.Spacing.md)
         .background(DesignTokens.Palette.surfaceSunken)
         .onAppear {

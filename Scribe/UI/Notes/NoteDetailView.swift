@@ -12,6 +12,7 @@ struct NoteDetailView: View {
     @State private var userExplicitlyCollapsed: Bool = false
     @State private var openedTaskFromAction: TodoTask?
     @State private var openedTranscriptSession: Session?
+    @FocusState private var titleFocused: Bool
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -34,6 +35,14 @@ struct NoteDetailView: View {
                 .font(.system(size: 20, weight: .semibold, design: .serif))
                 .textFieldStyle(.plain)
                 .foregroundStyle(.primary)
+                .focused($titleFocused)
+                .padding(.vertical, 2)
+                .padding(.horizontal, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
+                        .fill(titleFocused ? Color.accentColor.opacity(0.07) : .clear)
+                        .animation(.easeOut(duration: DesignTokens.Motion.fast), value: titleFocused)
+                )
 
                 HStack(spacing: DesignTokens.Spacing.md) {
                     HStack(spacing: DesignTokens.Spacing.sm) {
@@ -58,7 +67,7 @@ struct NoteDetailView: View {
                     Spacer()
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, DesignTokens.Spacing.xl)
             .padding(.top, DesignTokens.Spacing.sm)
             .padding(.bottom, DesignTokens.Spacing.xs)
 
@@ -74,13 +83,16 @@ struct NoteDetailView: View {
             }
             if let selectedId = selectedSessionId,
                let session = vm.sessions.first(where: { $0.id == selectedId }) {
-                NoteSessionAutoSection(
-                    viewModel: vm.transcriptDetailViewModel(for: session),
-                    onOpenSession: { sess in openedTranscriptSession = sess },
-                    onConvertActionItem: { _, task in
-                        openedTaskFromAction = task
-                    }
-                )
+                ScrollView {
+                    NoteSessionAutoSection(
+                        viewModel: vm.transcriptDetailViewModel(for: session),
+                        onOpenSession: { sess in openedTranscriptSession = sess },
+                        onConvertActionItem: { _, task in
+                            openedTaskFromAction = task
+                        }
+                    )
+                }
+                .frame(maxHeight: 280)
             }
             Divider()
 
@@ -108,28 +120,19 @@ struct NoteDetailView: View {
             }
         }
         .onChange(of: selectedSessionId) { _, newValue in
-            if newValue == nil && !vm.sessions.isEmpty {
-                userExplicitlyCollapsed = true
-            } else if newValue != nil {
-                userExplicitlyCollapsed = false
+            if let updated = SessionSelectionReducer.userCollapsedFromTransition(
+                newSelection: newValue,
+                hasSessions: !vm.sessions.isEmpty
+            ) {
+                userExplicitlyCollapsed = updated
             }
         }
         .onChange(of: vm.sessions) { _, newSessions in
-            // Don't re-expand if the user explicitly collapsed.
-            guard !userExplicitlyCollapsed else {
-                // But still clear a stale selection that no longer exists.
-                if let id = selectedSessionId,
-                   !newSessions.contains(where: { $0.id == id }) {
-                    selectedSessionId = newSessions.first?.id
-                }
-                return
-            }
-            if selectedSessionId == nil, let first = newSessions.first {
-                selectedSessionId = first.id
-            } else if let id = selectedSessionId,
-                      !newSessions.contains(where: { $0.id == id }) {
-                selectedSessionId = newSessions.first?.id
-            }
+            selectedSessionId = SessionSelectionReducer.selection(
+                forNewSessions: newSessions,
+                currentSelection: selectedSessionId,
+                userExplicitlyCollapsed: userExplicitlyCollapsed
+            )
         }
         .alert("Error", isPresented: Binding(
             get: { vm.errorMessage != nil },
@@ -171,15 +174,9 @@ struct NoteDetailView: View {
         // an in-memory instance.
         let markdown = NoteMarkdownExporter.export(note: vm.note,
                                                    transcriptStore: vm.transcriptStore)
-        let rawTitle = vm.note.title.isEmpty ? "Untitled-note" : vm.note.title
-        let illegal = CharacterSet(charactersIn: "/:\\?%*|\"<>")
-        let safeTitle = rawTitle
-            .components(separatedBy: illegal)
-            .joined(separator: "-")
-            .replacingOccurrences(of: " ", with: "_")
         ExportManager.saveToFile(
             content: markdown,
-            defaultName: safeTitle,
+            defaultName: ExportFileName.safe(vm.note.title),
             fileExtension: "md"
         )
     }
@@ -211,8 +208,8 @@ private struct BacklinksBar: View {
                 }
                 .font(DesignTokens.Typography.eyebrow)
                 .tracking(0.5)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 20)
+                .foregroundStyle(.primary)
+                .padding(.horizontal, DesignTokens.Spacing.xl)
                 .padding(.vertical, DesignTokens.Spacing.sm)
                 .contentShape(Rectangle())
             }
@@ -246,7 +243,7 @@ private struct BacklinksBar: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, DesignTokens.Spacing.xl)
                     .padding(.vertical, DesignTokens.Spacing.sm)
                 }
             }
