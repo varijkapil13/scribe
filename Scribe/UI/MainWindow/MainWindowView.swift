@@ -45,7 +45,6 @@ struct MainWindowView: View {
     @State private var isCreatingTopNotebook: Bool = false
     @State private var topNotebookDraftName: String = ""
     @State private var detailNote: Note? = nil
-    @State private var todayNote: Note? = nil
     @State private var tagReloadTask: Task<Void, Never>? = nil
 
     var body: some View {
@@ -432,17 +431,7 @@ struct MainWindowView: View {
     private func notesDetailView(filter: NotesFilter) -> some View {
         switch filter {
         case .today:
-            Group {
-                if let note = todayNote {
-                    NoteDetailView(note: note, onNavigate: { selection = .note($0) })
-                        .id(note.id)
-                } else {
-                    DailyNoteView(onNavigate: { selection = .note($0) })
-                }
-            }
-            .task {
-                todayNote = try? NoteStore.shared.fetchExistingDailyNote(for: Date())
-            }
+            TodayNotePane(onNavigate: { selection = .note($0) })
         case .daily:
             DailyNoteView(onNavigate: { selection = .note($0) })
         case .graph:
