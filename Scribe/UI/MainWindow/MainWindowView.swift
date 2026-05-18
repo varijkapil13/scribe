@@ -42,10 +42,8 @@ struct MainWindowView: View {
     @State private var notebooks: [Notebook] = []
     @State private var allNotes: [Note] = []
     @State private var showUniversalSearch: Bool = false
-    @State private var isCreatingNotebook: Bool = false
-    @State private var notebookDraftName: String = ""
-    @State private var renamingNotebookId: String? = nil
-    @State private var inlineRenameName: String = ""
+    @State private var isCreatingTopNotebook: Bool = false
+    @State private var topNotebookDraftName: String = ""
     @State private var detailNote: Note? = nil
     @State private var todayNote: Note? = nil
     @State private var tagReloadTask: Task<Void, Never>? = nil
@@ -306,62 +304,28 @@ struct MainWindowView: View {
 
                 Section {
                     if notebooksExpanded {
-                        ForEach(notebooks) { nb in
-                            if renamingNotebookId == nb.id {
-                                InlineNameField(
-                                    text: $inlineRenameName,
-                                    placeholder: nb.name,
-                                    systemImage: "folder"
-                                ) {
-                                    let name = inlineRenameName.trimmingCharacters(in: .whitespaces)
-                                    if !name.isEmpty {
-                                        var copy = nb
-                                        copy.name = name
-                                        try? NoteStore.shared.updateNotebook(copy)
-                                    }
-                                    renamingNotebookId = nil
-                                } onCancel: {
-                                    renamingNotebookId = nil
-                                }
-                            } else {
-                                NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
-                                    Label(nb.name, systemImage: "folder")
-                                }
-                                .contextMenu {
-                                    Button {
-                                        renamingNotebookId = nb.id
-                                        inlineRenameName = nb.name
-                                    } label: {
-                                        Label("Rename", systemImage: "pencil")
-                                    }
-                                    Divider()
-                                    Button(role: .destructive) {
-                                        try? NoteStore.shared.deleteNotebook(id: nb.id)
-                                        if case .notes(.notebook(let id)) = selection, id == nb.id {
-                                            selection = .notes(.all)
-                                        }
-                                    } label: {
-                                        Label("Delete Notebook", systemImage: "trash")
-                                    }
-                                }
-                            }
-                        }
+                        NotebookTreeView(
+                            parentId: nil,
+                            notebooks: notebooks,
+                            notes: allNotes,
+                            selection: $selection
+                        )
 
-                        if isCreatingNotebook {
+                        if isCreatingTopNotebook {
                             InlineNameField(
-                                text: $notebookDraftName,
+                                text: $topNotebookDraftName,
                                 placeholder: "New Notebook",
                                 systemImage: "folder"
                             ) {
-                                let name = notebookDraftName.trimmingCharacters(in: .whitespaces)
+                                let name = topNotebookDraftName.trimmingCharacters(in: .whitespaces)
                                 if !name.isEmpty {
                                     try? NoteStore.shared.createNotebook(name: name)
                                 }
-                                isCreatingNotebook = false
-                                notebookDraftName = ""
+                                isCreatingTopNotebook = false
+                                topNotebookDraftName = ""
                             } onCancel: {
-                                isCreatingNotebook = false
-                                notebookDraftName = ""
+                                isCreatingTopNotebook = false
+                                topNotebookDraftName = ""
                             }
                         }
                     }
@@ -371,8 +335,8 @@ struct MainWindowView: View {
                         Spacer()
                         Button {
                             notebooksExpanded = true
-                            isCreatingNotebook = true
-                            notebookDraftName = ""
+                            isCreatingTopNotebook = true
+                            topNotebookDraftName = ""
                         } label: {
                             Image(systemName: "plus.circle")
                                 .frame(width: 22, height: 22)
