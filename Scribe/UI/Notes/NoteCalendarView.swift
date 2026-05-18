@@ -4,7 +4,7 @@ import Combine
 
 struct NoteCalendarView: View {
     @State private var displayedMonth: Date = Calendar.current.startOfMonth(for: Date())
-    @State private var datesWithNotes: Set<String> = []
+    @State private var datesWithNotes: Set<String>
     @State private var noteChangeCancellable: AnyCancellable?
     var onSelectDate: (Date) -> Void
 
@@ -16,6 +16,14 @@ struct NoteCalendarView: View {
         f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
+
+    init(onSelectDate: @escaping (Date) -> Void) {
+        self.onSelectDate = onSelectDate
+        // Seed dates synchronously so the day-cell indicator dots are present
+        // on the first frame — otherwise they pop in after .onAppear.
+        let seed = Set((try? NoteStore.shared.fetchDailyDates()) ?? [])
+        _datesWithNotes = State(initialValue: seed)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -92,7 +100,8 @@ struct NoteCalendarView: View {
             Spacer()
         }
         .onAppear {
-            loadDailyNoteDates()
+            // Initial seed is loaded synchronously in init; here we only wire
+            // up live updates so dot indicators refresh as notes are added.
             noteChangeCancellable = NoteStore.shared.observeNotes()
                 .sink(receiveCompletion: { _ in },
                       receiveValue: { [self] _ in loadDailyNoteDates() })

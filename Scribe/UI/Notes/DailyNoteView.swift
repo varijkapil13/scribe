@@ -3,13 +3,17 @@ import SwiftUI
 
 struct DailyNoteView: View {
     enum DailyState {
-        case none
         case existing(Note)
         case draft(Date)    // date selected, note not yet persisted
     }
 
-    @State private var state: DailyState = .none
+    @State private var state: DailyState
     var onNavigate: (String) -> Void
+
+    init(onNavigate: @escaping (String) -> Void) {
+        self.onNavigate = onNavigate
+        _state = State(initialValue: Self.initialState(for: Date()))
+    }
 
     var body: some View {
         HSplitView {
@@ -25,21 +29,6 @@ struct DailyNoteView: View {
             // ── Content pane ─────────────────────────────────────────────
             Group {
                 switch state {
-                case .none:
-                    VStack(spacing: DesignTokens.Spacing.sm) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 36, weight: .light))
-                            .foregroundStyle(.quaternary)
-                        Text("Pick a date")
-                            .font(DesignTokens.Typography.section)
-                            .foregroundStyle(.secondary)
-                        Text("Select a day to view or create that day's note.")
-                            .font(.callout)
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
                 case .existing(let note):
                     NoteDetailView(note: note, onNavigate: onNavigate)
                         .id(note.id)
@@ -54,21 +43,50 @@ struct DailyNoteView: View {
                 }
             }
         }
-        .onAppear {
-            // Load today — but only if a note already exists; don't create.
-            selectDate(Date())
+    }
+
+    /// Synchronous lookup used for both the initial state (in `init`) and
+    /// user-initiated date selections. Keeps the first render glitch-free —
+    /// no placeholder flash, no onAppear-triggered cross-fade animation.
+    private static func initialState(for date: Date) -> DailyState {
+        if let note = try? NoteStore.shared.fetchExistingDailyNote(for: date) {
+            return .existing(note)
         }
+        return .draft(date)
     }
 
     private func selectDate(_ date: Date) {
-        if let note = try? NoteStore.shared.fetchExistingDailyNote(for: date) {
-            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                state = .existing(note)
-            }
+        withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+            state = Self.initialState(for: date)
+        }
+    }
+}
+
+// MARK: - Today pane
+
+/// Sidebar "Today's Note" destination. When today's daily note exists, shows
+/// it directly (no calendar). When none exists yet, falls back to the full
+/// `DailyNoteView` so the user can draft one.
+///
+/// The lookup runs synchronously in `init` — previously this fetch happened
+/// in `.task`, which made `DailyNoteView` (with calendar sidebar) render for
+/// one frame before swapping to `NoteDetailView`, producing a visible layout
+/// shift glitch.
+struct TodayNotePane: View {
+    @State private var todayNote: Note?
+    let onNavigate: (String) -> Void
+
+    init(onNavigate: @escaping (String) -> Void) {
+        self.onNavigate = onNavigate
+        _todayNote = State(initialValue: try? NoteStore.shared.fetchExistingDailyNote(for: Date()))
+    }
+
+    var body: some View {
+        if let note = todayNote {
+            NoteDetailView(note: note, onNavigate: onNavigate)
+                .id(note.id)
         } else {
-            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                state = .draft(date)
-            }
+            DailyNoteView(onNavigate: onNavigate)
         }
     }
 }
