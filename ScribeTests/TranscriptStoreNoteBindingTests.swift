@@ -32,11 +32,14 @@ final class TranscriptStoreNoteBindingTests: XCTestCase {
         XCTAssertEqual(fetched?.noteId, note.id)
     }
 
-    func testBindSessionToNilDetaches() throws {
+    func testUnbindSessionForTestingDetaches() throws {
+        // unbindSessionForTesting is the only API that can produce a NULL
+        // noteId — it lives behind `#if DEBUG` precisely to keep production
+        // code from violating the post-v11 invariant.
         let note = try notes.createNote(title: "N", body: "")
         let session = try TestHelpers.makeBoundSession(title: "S", notes: notes, transcripts: transcripts)
         try transcripts.bindSession(session.id, toNote: note.id)
-        try transcripts.bindSession(session.id, toNote: nil)
+        try transcripts.unbindSessionForTesting(session.id)
         let fetched = try transcripts.fetchSession(id: session.id)
         XCTAssertNil(fetched?.noteId)
     }

@@ -79,13 +79,13 @@ final class TranscriptStore: @unchecked Sendable {
 
     // MARK: - Note binding
 
-    /// Binds a session to a note (or detaches when passed `nil`).
-    ///
-    /// Tests only — production sessions get their `noteId` at create-time via
-    /// `createSession(title:noteId:)`. The migration backfill (v11) operates
-    /// in raw SQL inside the migrator transaction and doesn't go through this
-    /// API.
-    func bindSession(_ sessionId: String, toNote noteId: String?) throws {
+    /// Binds a session to a note. Non-optional — every session belongs to a
+    /// note. Production callers obtain a session that's already bound at
+    /// create-time via `createSession(title:noteId:)`; this method is here
+    /// to re-bind an existing session (e.g. moving a transcript between
+    /// notes in a future UI). The migration backfill (v11) operates in raw
+    /// SQL inside the migrator transaction and doesn't route through here.
+    func bindSession(_ sessionId: String, toNote noteId: String) throws {
         try db.write { database in
             try database.execute(
                 sql: "UPDATE sessions SET noteId = ? WHERE id = ?",
@@ -93,6 +93,22 @@ final class TranscriptStore: @unchecked Sendable {
             )
         }
     }
+
+    #if DEBUG
+    /// Test-only escape hatch that detaches a session from any note. Lives
+    /// behind `#if DEBUG` so production code can't accidentally produce a
+    /// NULL-noteId session, which would violate the post-v11 invariant.
+    /// Used by `TranscriptStoreNoteBindingTests` to exercise the legacy
+    /// orphan code paths.
+    func unbindSessionForTesting(_ sessionId: String) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE sessions SET noteId = NULL WHERE id = ?",
+                arguments: [sessionId]
+            )
+        }
+    }
+    #endif
 
     /// Returns all sessions bound to a note, most recent first.
     func fetchSessions(forNoteId noteId: String) throws -> [Session] {

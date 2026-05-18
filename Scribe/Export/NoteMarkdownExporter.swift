@@ -15,8 +15,9 @@ struct NoteMarkdownExporter {
     ) -> String {
         var lines: [String] = []
 
-        // Title
-        let title = note.title.isEmpty ? "Untitled note" : note.title
+        // Title — escape so `Q3 [draft]` / `**warning**` titles render
+        // verbatim instead of as malformed markdown.
+        let title = note.title.isEmpty ? "Untitled note" : escapeInline(note.title)
         lines.append("# \(title)")
         lines.append("")
         lines.append("**Last edited:** \(formatDate(note.updatedAt))")
@@ -52,7 +53,7 @@ struct NoteMarkdownExporter {
         transcriptStore: TranscriptStore,
         into lines: inout [String]
     ) {
-        let sessionTitle = session.title.isEmpty ? "Untitled session" : session.title
+        let sessionTitle = session.title.isEmpty ? "Untitled session" : escapeInline(session.title)
         lines.append("### \(sessionTitle) — \(formatDate(session.createdAt))")
         lines.append("")
         if let secs = session.durationSeconds, secs > 0 {
@@ -64,13 +65,16 @@ struct NoteMarkdownExporter {
         if let summary = try? transcriptStore.fetchSummary(sessionId: session.id) {
             lines.append("**Summary**")
             lines.append("")
+            // The summary body is a free-form paragraph the model produced;
+            // it may already contain intentional markdown (bullets, bold).
+            // Avoid double-escaping — emit verbatim.
             lines.append(summary.summary)
             lines.append("")
 
             if !summary.keyDecisions.isEmpty {
                 lines.append("**Key decisions**")
                 for decision in summary.keyDecisions {
-                    lines.append("- \(decision)")
+                    lines.append("- \(escapeInline(decision))")
                 }
                 lines.append("")
             }
@@ -81,12 +85,12 @@ struct NoteMarkdownExporter {
                     .fetchCompletedActionItemIds(sessionId: session.id)) ?? []
                 for item in summary.actionItems {
                     let checkbox = completedIds.contains(item.id) ? "[x]" : "[ ]"
-                    var line = "- \(checkbox) \(item.description)"
+                    var line = "- \(checkbox) \(escapeInline(item.description))"
                     if let assignee = item.assignee, !assignee.isEmpty {
-                        line += " — _\(assignee)_"
+                        line += " — _\(escapeInline(assignee))_"
                     }
                     if let deadline = item.deadline, !deadline.isEmpty {
-                        line += " (due \(deadline))"
+                        line += " (due \(escapeInline(deadline)))"
                     }
                     lines.append(line)
                 }
@@ -96,7 +100,7 @@ struct NoteMarkdownExporter {
             if !summary.keyTopics.isEmpty {
                 lines.append("**Topics**")
                 for topic in summary.keyTopics {
-                    lines.append("- \(topic)")
+                    lines.append("- \(escapeInline(topic))")
                 }
                 lines.append("")
             }
@@ -110,7 +114,7 @@ struct NoteMarkdownExporter {
             // Stable ordering: person → organization → place → date
             for entityType in ExtractedEntity.EntityType.allCases {
                 guard let items = grouped[entityType], !items.isEmpty else { continue }
-                let names = items.map(\.text).joined(separator: ", ")
+                let names = items.map { escapeInline($0.text) }.joined(separator: ", ")
                 lines.append("- \(displayLabel(for: entityType)): \(names)")
             }
             lines.append("")
@@ -118,6 +122,26 @@ struct NoteMarkdownExporter {
     }
 
     // MARK: - Helpers
+
+    /// Escapes characters that have markdown meaning when they appear inline
+    /// (in titles, bullet contents, link text, etc.) so values written by
+    /// the model — e.g. a session title `"Q3 [draft]"` or a topic `"**scope**"` —
+    /// render verbatim instead of triggering unintended formatting downstream.
+    /// Internal so tests can assert on the exact escape set.
+    static func escapeInline(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        for scalar in raw.unicodeScalars {
+            switch scalar {
+            case "\\", "`", "*", "_", "[", "]", "(", ")", "#", "|", "<", ">", "~":
+                out.append("\\")
+                out.unicodeScalars.append(scalar)
+            default:
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
+    }
 
     private static func displayLabel(for type: ExtractedEntity.EntityType) -> String {
         switch type {

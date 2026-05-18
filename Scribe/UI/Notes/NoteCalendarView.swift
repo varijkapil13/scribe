@@ -111,18 +111,11 @@ struct NoteCalendarView: View {
     }
 
     private func monthDays() -> [Date?] {
-        guard let monthInterval = calendar.dateInterval(of: .month, for: displayedMonth) else { return [] }
-        let firstDay = monthInterval.start
-        let weekday = calendar.component(.weekday, from: firstDay)
-        let firstWeekday = calendar.firstWeekday
-        let leadingBlanks = (weekday - firstWeekday + 7) % 7
-        var days: [Date?] = Array(repeating: nil, count: leadingBlanks)
-        var current = firstDay
-        while current < monthInterval.end {
-            days.append(current)
-            current = calendar.date(byAdding: .day, value: 1, to: current)!
-        }
-        return days
+        CalendarMonthGrid.cells(
+            forMonth: displayedMonth,
+            calendar: calendar,
+            padTrailing: false
+        )
     }
 
     private func loadDailyNoteDates() {

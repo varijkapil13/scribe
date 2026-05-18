@@ -55,7 +55,7 @@ final class AppStateNoteBindingTests: XCTestCase {
         let notes = NoteStore(databaseManager: dbm)
         let note = try notes.createNote(title: "Existing", body: "")
 
-        let resolved = AppDelegate.resolveNoteContext(
+        let resolved = try AppDelegate.resolveNoteContext(
             selection: .note(note.id),
             noteStore: notes,
             now: Date()
@@ -70,15 +70,14 @@ final class AppStateNoteBindingTests: XCTestCase {
         let notes = NoteStore(databaseManager: dbm)
 
         let fixedDate = Date(timeIntervalSince1970: 1_715_000_000)
-        let resolved = AppDelegate.resolveNoteContext(
+        let resolved = try AppDelegate.resolveNoteContext(
             selection: nil,
             noteStore: notes,
             now: fixedDate
         )
 
-        XCTAssertNotNil(resolved.noteId)
         XCTAssertTrue(resolved.didCreateNote)
-        let created = try notes.fetchNote(id: resolved.noteId!)
+        let created = try notes.fetchNote(id: resolved.noteId)
         XCTAssertNotNil(created)
         XCTAssertTrue(created!.title.hasPrefix("Meeting on"),
                       "Got: \(created!.title)")
@@ -88,13 +87,31 @@ final class AppStateNoteBindingTests: XCTestCase {
         let dbm = try DatabaseManager(path: ":memory:")
         let notes = NoteStore(databaseManager: dbm)
 
-        let resolved = AppDelegate.resolveNoteContext(
+        let resolved = try AppDelegate.resolveNoteContext(
             selection: .tasks(.inbox),
             noteStore: notes,
             now: Date()
         )
 
-        XCTAssertNotNil(resolved.noteId)
+        XCTAssertFalse(resolved.noteId.isEmpty)
         XCTAssertTrue(resolved.didCreateNote)
+    }
+
+    // MARK: - NoteContextError surfacing (review item #12)
+
+    func testNoteContextErrorIncludesUnderlyingMessage() {
+        // resolveNoteContext wraps any createNote failure in
+        // NoteContextError.autoCreateFailed so the user sees a meaningful
+        // message ("disk full…") instead of the downstream generic
+        // AppStateError.sessionRequiresNoteId.
+        struct DiskFullStub: LocalizedError {
+            var errorDescription: String? { "disk is full" }
+        }
+        let wrapped = NoteContextError.autoCreateFailed(underlying: DiskFullStub())
+        let message = wrapped.errorDescription ?? ""
+        XCTAssertTrue(message.contains("disk is full"),
+                      "Underlying error message must be preserved. Got: \(message)")
+        XCTAssertTrue(message.lowercased().contains("meeting note"),
+                      "Wrapped error should explain it's about the auto-created meeting note. Got: \(message)")
     }
 }

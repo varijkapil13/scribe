@@ -40,6 +40,18 @@ final class DatabaseManager: @unchecked Sendable {
     // MARK: - Migrations
 
     private func runMigrations() throws {
+        var migrator = Self.makeMigrator()
+        try migrator.migrate(database)
+    }
+
+    /// Builds the project's full migrator (registers v1…vN in order).
+    ///
+    /// Exposed `internal` so tests can run migrations up to a specific step
+    /// (e.g. `migrator.migrate(queue, upTo: "v10_session_noteId")`), insert
+    /// fixture rows that simulate a legacy database state, then drive the
+    /// next migration to verify its real SQL — instead of mirroring the
+    /// migration body inline in a test, which can drift from production.
+    static func makeMigrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         // Always re-run migrations in development builds so schema changes
@@ -385,10 +397,12 @@ final class DatabaseManager: @unchecked Sendable {
 
         migrator.registerMigration("v10_session_noteId") { db in
             // sessions.noteId — links a recording session to a Note.
-            // Nullable (NULL = unattached). FK is NOT enforced via ALTER TABLE in
-            // this codebase (matches notes.notebookId pattern); NoteStore.deleteNote
-            // is responsible for sweeping noteId to NULL before deleting a note so
-            // transcripts survive note deletion.
+            // Column is nullable for backwards compatibility with v1–v9 rows;
+            // v11 backfills every NULL with an auto-created "Meeting on …"
+            // note so production never observes a NULL. FK is not enforced
+            // via ALTER TABLE in this codebase (matches notes.notebookId
+            // pattern); `NoteStore.deleteNote` cascades into `sessions`
+            // explicitly, so deleting a note also removes its recordings.
             try db.alter(table: "sessions") { t in
                 t.add(column: "noteId", .text)
             }
@@ -424,6 +438,12 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
-        try migrator.migrate(database)
+        migrator.registerMigration("v12_notebook_parentId") { db in
+            try db.alter(table: "notebooks") { t in
+                t.add(column: "parentId", .text).references("notebooks", onDelete: .setNull)
+            }
+        }
+
+        return migrator
     }
 }

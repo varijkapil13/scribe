@@ -271,7 +271,7 @@ struct MainWindowView: View {
                 Section {
                     if notesExpanded {
                         NavigationLink(value: MainSelection.notes(.today)) {
-                            Label("Today's Note", systemImage: "sun.max")
+                            Label("Today's Note", systemImage: "note.text")
                         }
                         NavigationLink(value: MainSelection.notes(.inbox)) {
                             Label("Unfiled", systemImage: "tray")
@@ -455,7 +455,13 @@ struct MainWindowView: View {
 
     private var sidebarSearchResults: [Note] {
         guard !searchText.isEmpty else { return [] }
-        return (try? NoteStore.shared.searchNotes(query: searchText)) ?? []
+        let query = searchText.lowercased()
+        return allNotes
+            .filter {
+                $0.title.lowercased().contains(query) ||
+                $0.body.lowercased().contains(query)
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     @ViewBuilder

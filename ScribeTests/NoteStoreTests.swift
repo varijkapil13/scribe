@@ -245,4 +245,38 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path),
                        "deleteNote should remove the attachments folder")
     }
+
+    // MARK: - sessionCount(forNoteId:)
+
+    func testSessionCountIsZeroForUnboundNote() throws {
+        let store = NoteStore(databaseManager: db)
+        let note = try store.createNote(title: "Solo", body: "")
+        XCTAssertEqual(try store.sessionCount(forNoteId: note.id), 0)
+    }
+
+    func testSessionCountReflectsBoundSessions() throws {
+        let store = NoteStore(databaseManager: db)
+        let transcripts = TranscriptStore(databaseManager: db)
+        let note = try store.createNote(title: "Sync", body: "")
+        _ = try transcripts.createSession(title: "R1", noteId: note.id)
+        _ = try transcripts.createSession(title: "R2", noteId: note.id)
+        XCTAssertEqual(try store.sessionCount(forNoteId: note.id), 2)
+    }
+
+    func testSessionCountIgnoresSessionsBoundToOtherNotes() throws {
+        let store = NoteStore(databaseManager: db)
+        let transcripts = TranscriptStore(databaseManager: db)
+        let a = try store.createNote(title: "A", body: "")
+        let b = try store.createNote(title: "B", body: "")
+        _ = try transcripts.createSession(title: "for-a", noteId: a.id)
+        _ = try transcripts.createSession(title: "for-b1", noteId: b.id)
+        _ = try transcripts.createSession(title: "for-b2", noteId: b.id)
+        XCTAssertEqual(try store.sessionCount(forNoteId: a.id), 1)
+        XCTAssertEqual(try store.sessionCount(forNoteId: b.id), 2)
+    }
+
+    func testSessionCountZeroForUnknownNoteId() throws {
+        let store = NoteStore(databaseManager: db)
+        XCTAssertEqual(try store.sessionCount(forNoteId: "does-not-exist"), 0)
+    }
 }

@@ -394,22 +394,10 @@ final class TaskStore {
         }
     }
 
-    /// Builds a safe FTS5 MATCH expression from raw user input. Splits on
-    /// whitespace, drops anything that isn't alphanumeric, wraps each
-    /// surviving token in double quotes (so single quotes / hyphens don't
-    /// break the parser), and appends `*` for prefix matching.
-    static func ftsQuery(from raw: String) -> String {
-        let tokens = raw
-            .components(separatedBy: .whitespacesAndNewlines)
-            .map { token in
-                token.unicodeScalars
-                    .filter { CharacterSet.alphanumerics.contains($0) }
-                    .reduce(into: "") { $0.append(Character($1)) }
-            }
-            .filter { !$0.isEmpty }
-        guard !tokens.isEmpty else { return "" }
-        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
-    }
+    /// Thin wrapper kept for source-compatibility. Real logic lives in
+    /// `FTSQuery.escape` so notes, tasks, and the universal transcripts
+    /// search share the same escaper.
+    static func ftsQuery(from raw: String) -> String { FTSQuery.escape(raw) }
 
     // MARK: - Observation
 

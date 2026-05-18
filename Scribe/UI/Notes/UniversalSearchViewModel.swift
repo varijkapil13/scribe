@@ -56,55 +56,23 @@ final class UniversalSearchViewModel: ObservableObject {
 
     private func searchNotes(_ q: String) async -> SearchResultSection {
         let notes = (try? noteStore.searchNotes(query: q)) ?? []
-        let results = notes.prefix(10).map { note in
-            SearchResult(
-                id: "note-\(note.id)",
-                title: note.title.isEmpty ? "(Untitled)" : note.title,
-                snippet: String(note.body.prefix(80)),
-                destination: .note(note.id),
-                icon: "note.text"
-            )
-        }
-        return SearchResultSection(id: "notes", title: "Notes", results: Array(results))
+        return UniversalSearchSectionBuilder.notesSection(from: notes)
     }
 
     private func searchTasks(_ q: String) async -> SearchResultSection {
         let tasks = (try? taskStore.searchTasks(query: q)) ?? []
-        let results = tasks.prefix(10).map { task in
-            SearchResult(
-                id: "task-\(task.id)",
-                title: task.title,
-                snippet: String(task.notes.prefix(80)),
-                destination: .tasks(.all),
-                icon: "checkmark.circle"
-            )
-        }
-        return SearchResultSection(id: "tasks", title: "Tasks", results: Array(results))
+        return UniversalSearchSectionBuilder.tasksSection(from: tasks)
     }
 
     private func searchTranscripts(_ q: String) async -> SearchResultSection {
         guard !q.isEmpty else {
-            return SearchResultSection(id: "transcripts", title: "Transcripts", results: [])
+            return UniversalSearchSectionBuilder.transcriptsSection(from: [])
         }
-        let fts = NoteStore.ftsQuery(from: q)
+        let fts = FTSQuery.escape(q)
         guard !fts.isEmpty else {
-            return SearchResultSection(id: "transcripts", title: "Transcripts", results: [])
+            return UniversalSearchSectionBuilder.transcriptsSection(from: [])
         }
         let hits = (try? transcriptStore.searchTranscripts(query: fts)) ?? []
-        // Each hit is a (Session, [Segment]). Sessions without a noteId are
-        // impossible after migration v11; skip any stragglers defensively.
-        let results: [SearchResult] = hits.prefix(10).compactMap { pair in
-            let (session, segments) = pair
-            guard let noteId = session.noteId else { return nil }
-            let snippet = segments.first?.text ?? ""
-            return SearchResult(
-                id: "transcript-\(session.id)",
-                title: session.title.isEmpty ? "Untitled session" : session.title,
-                snippet: String(snippet.prefix(80)),
-                destination: .note(noteId),
-                icon: "waveform"
-            )
-        }
-        return SearchResultSection(id: "transcripts", title: "Transcripts", results: results)
+        return UniversalSearchSectionBuilder.transcriptsSection(from: hits)
     }
 }

@@ -183,28 +183,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         appState.audioManager.shouldCaptureSystemAudio = captureSystemAudio
 
-        let resolved = Self.resolveNoteContext(
-            selection: appState.currentSelection,
-            noteStore: .shared,
-            now: Date()
-        )
+        let resolved: ResolvedNoteContext
+        do {
+            resolved = try Self.resolveNoteContext(
+                selection: appState.currentSelection,
+                noteStore: .shared,
+                now: Date()
+            )
+        } catch {
+            // Surface the underlying createNote error to the user instead of
+            // the generic "A note must exist…" message that would otherwise
+            // come from AppStateError.sessionRequiresNoteId downstream.
+            showPermissionAlert(
+                title: "Couldn't Start Recording",
+                message: error.localizedDescription,
+                panel: nil
+            )
+            return
+        }
+
+        // Post the navigate notification BEFORE `startSession` flips
+        // `isTranscribing`. MainWindowView's `.onChange(of:isTranscribing)`
+        // would otherwise observe a still-stale `selection` and flash the
+        // LiveSessionView for one frame before the navigate handler runs.
+        // Posting first means `selection = .note(id)` lands before the
+        // recording flip, and the existing `if case .note = selection`
+        // guard suppresses the flash.
+        if resolved.didCreateNote {
+            NotificationCenter.default.post(
+                name: .scribeRequestNavigateToNote,
+                object: nil,
+                userInfo: ["noteId": resolved.noteId]
+            )
+        }
 
         do {
             try await appState.startSession(noteId: resolved.noteId)
-            if resolved.didCreateNote, let id = resolved.noteId {
-                // `appState.currentSelection` is a one-way mirror of the
-                // sidebar `selection` (written from MainWindowView's
-                // .onChange). Setting it here doesn't route the UI — the
-                // notification is what flips the sidebar. The mirror will
-                // catch up via MainWindowView's onChange after that.
-                NotificationCenter.default.post(
-                    name: .scribeRequestNavigateToNote,
-                    object: nil,
-                    userInfo: ["noteId": id]
-                )
-            }
-            // The main window's live view observes `appState.isTranscribing`
-            // and auto-navigates to the live transcript.
         } catch {
             showPermissionAlert(
                 title: "Couldn't Start Recording",
@@ -353,22 +367,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
 // MARK: - Note resolution for global recording
 
+enum NoteContextError: Error, LocalizedError {
+    case autoCreateFailed(underlying: Error)
+    var errorDescription: String? {
+        switch self {
+        case .autoCreateFailed(let err):
+            return "Couldn't create a meeting note: \(err.localizedDescription)"
+        }
+    }
+}
+
 extension AppDelegate {
 
     struct ResolvedNoteContext {
-        let noteId: String?
+        let noteId: String
         let didCreateNote: Bool
     }
 
     /// Pure resolver: decides which Note a new global recording should be
     /// bound to, creating a "Meeting on <datetime>" Note when no note is
-    /// currently open. Extracted as a static helper so it's unit-testable
-    /// without booting audio.
+    /// currently open. Throws `NoteContextError.autoCreateFailed` when the
+    /// auto-create path fails — callers surface the underlying message so
+    /// users see "disk full"-style errors instead of the downstream
+    /// generic "A note must exist before starting a recording."
+    /// Extracted as a static helper so it's unit-testable without booting
+    /// audio.
     static func resolveNoteContext(
         selection: MainSelection?,
         noteStore: NoteStore,
         now: Date
-    ) -> ResolvedNoteContext {
+    ) throws -> ResolvedNoteContext {
         if case .note(let noteId)? = selection {
             return ResolvedNoteContext(noteId: noteId, didCreateNote: false)
         }
@@ -381,7 +409,7 @@ extension AppDelegate {
             return ResolvedNoteContext(noteId: created.id, didCreateNote: true)
         } catch {
             Log.app.error("Failed to auto-create meeting note: \(error.localizedDescription, privacy: .private)")
-            return ResolvedNoteContext(noteId: nil, didCreateNote: false)
+            throw NoteContextError.autoCreateFailed(underlying: error)
         }
     }
 }

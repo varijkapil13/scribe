@@ -197,12 +197,20 @@ Once tasks and notes both exist, wire the joins:
 
 - [x] **Slice 15 — Storage + migration.** Migration
       `v10_session_noteId` adds nullable `sessions.noteId` column +
-      `sessions_noteId_idx`. `Session.noteId: String?` with Codable
-      round-trip. `TranscriptStore.bindSession/fetchSessions/observeSessions(forNoteId:)`.
-      `NoteStore.deleteNote` sweeps `sessions.noteId → NULL` so
-      transcripts survive note deletion. Tests in
-      `SessionNoteIdMigrationTests`, `TranscriptStoreNoteBindingTests`,
-      and `DatabaseIntegrationTests`.
+      `sessions_noteId_idx`; `v11_session_noteId_backfill` auto-creates
+      a Note for every legacy orphan so production never observes a
+      NULL noteId. `Session.noteId: String?` with Codable round-trip.
+      `TranscriptStore.bindSession/fetchSessions/observeSessions(forNoteId:)`.
+      `NoteStore.deleteNote` cascades into `sessions` (DELETE … WHERE
+      noteId = ?) so a note's recordings — and the v1/v2 FK-cascaded
+      `segments`, `meeting_summaries`, `action_items`,
+      `extracted_entities` — are removed alongside it. Tasks
+      converted from action items survive via
+      `tasks.sourceSessionId ON DELETE SET NULL`. The UI gates this
+      destructive operation with a confirmation that surfaces the
+      linked-recording count. Tests in `SessionNoteIdMigrationTests`,
+      `TranscriptStoreNoteBindingTests`, and
+      `DatabaseIntegrationTests`.
 
 - [x] **Slice 16 — Sessions strip (read-only) in `NoteDetailView`.**
       `NoteDetailViewModel` observes

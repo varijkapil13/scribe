@@ -58,8 +58,7 @@ struct NoteListView: View {
                         .tag(note.id)
                         .contextMenu {
                             Button(role: .destructive) {
-                                vm.deleteNote(id: note.id)
-                                if selectedNoteId == note.id { selectedNoteId = nil }
+                                vm.requestDelete(id: note.id)
                             } label: {
                                 Label("Delete Note", systemImage: "trash")
                             }
@@ -67,6 +66,22 @@ struct NoteListView: View {
                 }
                 .listStyle(.sidebar)
             }
+        }
+        .confirmationDialog(
+            deletionTitle(for: vm.pendingDelete),
+            isPresented: Binding(
+                get: { vm.pendingDelete != nil },
+                set: { newValue in if !newValue { vm.pendingDelete = nil } }
+            ),
+            presenting: vm.pendingDelete
+        ) { request in
+            Button("Delete", role: .destructive) {
+                let deletedId = vm.confirmDelete(request)
+                if let id = deletedId, selectedNoteId == id { selectedNoteId = nil }
+            }
+            Button("Cancel", role: .cancel) { vm.pendingDelete = nil }
+        } message: { request in
+            Text(deletionMessage(for: request))
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -79,6 +94,35 @@ struct NoteListView: View {
                 .help("New note")
             }
         }
+    }
+
+    private func deletionTitle(for request: DeleteNoteRequest?) -> String {
+        DeletionPrompt.title(for: request)
+    }
+
+    private func deletionMessage(for request: DeleteNoteRequest) -> String {
+        DeletionPrompt.message(for: request)
+    }
+}
+
+/// Pure, testable copy-builder for the delete-note confirmation dialog.
+/// Lives at file scope so the dialog text — particularly the "X linked
+/// recording(s) … will also be deleted" warning — can be asserted without
+/// instantiating a SwiftUI hierarchy.
+enum DeletionPrompt {
+    static func title(for request: DeleteNoteRequest?) -> String {
+        let displayName = (request?.noteTitle.isEmpty ?? true)
+            ? "this note"
+            : "\u{201C}\(request!.noteTitle)\u{201D}"
+        return "Delete \(displayName)?"
+    }
+
+    static func message(for request: DeleteNoteRequest) -> String {
+        if request.sessionCount == 0 {
+            return "This note will be permanently deleted."
+        }
+        let recordingLabel = request.sessionCount == 1 ? "recording" : "recordings"
+        return "This note has \(request.sessionCount) linked \(recordingLabel) — the recording\(request.sessionCount == 1 ? "" : "s"), transcript segments, summary, action items, and entities will also be permanently deleted. Tasks you converted from this recording will keep their text but lose the source link."
     }
 }
 

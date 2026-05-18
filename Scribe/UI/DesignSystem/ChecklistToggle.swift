@@ -27,6 +27,39 @@ enum ChecklistToggle {
         let result = nsSource.replacingCharacters(in: lineRange, with: newLine + suffix)
         return result
     }
+
+    /// Toolbar / ⌘⇧U behaviour: adds a `- [ ] ` checklist marker to the line
+    /// containing `selection`, or removes one if it's already present.
+    /// Pure so it can be unit-tested without mounting an NSTextView.
+    ///
+    /// - Returns: `(newSource, newCursorLocation)`. The cursor stays inside
+    ///   the line — it's shifted forward when a marker is inserted and
+    ///   pulled back (clamped to line start) when a marker is removed.
+    static func toggleListMarker(source: String, selection: NSRange) -> (String, Int) {
+        let nsSource = source as NSString
+        let lineRange = nsSource.lineRange(for: selection)
+        let lineWithNewline = nsSource.substring(with: lineRange)
+        let line = lineWithNewline.trimmingCharacters(in: .newlines)
+        let trailingNewline = lineRange.length > (line as NSString).length ? "\n" : ""
+
+        if let markerMatch = line.range(of: #"^(\s*)- \[[ xX]\] "#, options: .regularExpression) {
+            let markerStr = String(line[markerMatch])
+            let indent = markerStr.prefix(while: { $0 == " " || $0 == "\t" })
+            let stripped = String(indent) + String(line[markerMatch.upperBound...])
+            let newSource = nsSource.replacingCharacters(
+                in: lineRange,
+                with: stripped + trailingNewline
+            )
+            let markerLen = (markerStr as NSString).length - (indent as NSString).length
+            let newCursor = max(lineRange.location, selection.location - markerLen)
+            return (newSource, newCursor)
+        }
+
+        let newLine = "- [ ] " + line
+        let newSource = nsSource.replacingCharacters(in: lineRange, with: newLine + trailingNewline)
+        let shift = ("- [ ] " as NSString).length
+        return (newSource, selection.location + shift)
+    }
 }
 
 private extension String {

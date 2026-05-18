@@ -96,15 +96,19 @@ struct MarkdownEditorView: NSViewRepresentable {
             liveSource = tv.string
         }
         if liveSource != text {
+            // Single storage write per update tick. The earlier two-step
+            // sequence (`tv.string = text` followed by `applyFormatting`)
+            // queued two storage replacements back-to-back, leaving
+            // NSLayoutManager's glyph cache in a transient state that the
+            // next `drawBackground` → `ensureLayoutForTextContainer` would
+            // crash on with `[NSRLEArray objectAtRunIndex:length:]`. Route
+            // every external write through `applyFormatting(sourceOverride:)`
+            // so storage is updated exactly once.
             if text.isEmpty {
-                tv.textStorage?.beginEditing()
-                tv.textStorage?.setAttributedString(NSAttributedString(string: ""))
-                tv.textStorage?.endEditing()
-                tv.string = ""
+                context.coordinator.applyFormatting(to: tv, sourceOverride: "")
                 tv.needsDisplay = true
             } else if tv.window?.firstResponder !== tv {
-                tv.string = text
-                context.coordinator.applyFormatting(to: tv)
+                context.coordinator.applyFormatting(to: tv, sourceOverride: text)
             }
         }
     }
@@ -253,19 +257,8 @@ struct MarkdownEditorView: NSViewRepresentable {
 
         func toggleChecklistOnSelection() {
             editSource { source, sel in
-                let nsSource = source as NSString
-                let lineRange = nsSource.lineRange(for: sel)
-                let line = nsSource.substring(with: lineRange).trimmingCharacters(in: .newlines)
-                // If the line is already a checklist, no-op so we don't insert a second marker.
-                if line.range(of: #"^\s*- \[[ xX]\] "#, options: .regularExpression) != nil {
-                    return (source, sel)
-                }
-                let newLine = "- [ ] " + line
-                let trailingNewline = lineRange.length > (line as NSString).length ? "\n" : ""
-                let newSource = nsSource.replacingCharacters(in: lineRange,
-                                                             with: newLine + trailingNewline)
-                let shift = ("- [ ] " as NSString).length
-                return (newSource, NSRange(location: sel.location + shift, length: 0))
+                let (newSource, newCursor) = ChecklistToggle.toggleListMarker(source: source, selection: sel)
+                return (newSource, NSRange(location: newCursor, length: 0))
             }
         }
 
@@ -991,12 +984,14 @@ final class MarkdownNSTextView: NSTextView {
         }
         let pt = convert(event.locationInWindow, from: nil)
         let glyphIdx = lm.glyphIndex(for: pt, in: tc)
+
+        // Checklist case is the ONLY path that skips super — we don't want
+        // the cursor to land on the attachment glyph itself; the toggle is
+        // the entire interaction. Sniff for it first.
         if glyphIdx < lm.numberOfGlyphs {
             let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
             if charIdx < storage.length {
                 let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
-
-                // Checklist click → toggle the markdown source.
                 if let isChecklist = attrs[.checklistMarker] as? Bool, isChecklist,
                    let coord = delegate as? MarkdownEditorView.Coordinator {
                     let registry = FoldRegistry.decompose(storage).registry
@@ -1009,18 +1004,24 @@ final class MarkdownNSTextView: NSTextView {
                     }
                     return
                 }
-
-                // Wiki-link click.
-                if let onLinkClick,
-                   let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty {
-                    super.mouseDown(with: event)
-                    onLinkClick(anchor)
-                    return
-                }
             }
         }
 
+        // Every non-checklist path delegates to super FIRST so AppKit can
+        // place the cursor / start selection before we hand off to any
+        // navigation callback that may tear down the editor.
         super.mouseDown(with: event)
+
+        if glyphIdx < lm.numberOfGlyphs {
+            let charIdx = lm.characterIndexForGlyph(at: glyphIdx)
+            if charIdx < storage.length {
+                let attrs = storage.attributes(at: charIdx, effectiveRange: nil)
+                if let onLinkClick,
+                   let anchor = attrs[.wikiAnchor] as? String, !anchor.isEmpty {
+                    onLinkClick(anchor)
+                }
+            }
+        }
     }
 
     // MARK: - Image drag-and-drop

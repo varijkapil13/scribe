@@ -121,4 +121,106 @@ final class NoteMarkdownExporterTests: XCTestCase {
         XCTAssertTrue(md.hasSuffix("\n"))
         XCTAssertFalse(md.hasSuffix("\n\n\n"))
     }
+
+    // MARK: - Inline escaping (review item #8)
+
+    func testEscapeInlineLeavesPlainTextAlone() {
+        XCTAssertEqual(NoteMarkdownExporter.escapeInline("hello world"),
+                       "hello world")
+        XCTAssertEqual(NoteMarkdownExporter.escapeInline(""),
+                       "")
+    }
+
+    func testEscapeInlineEscapesMarkdownMetacharacters() {
+        // Every char that has structural meaning in CommonMark inline
+        // contexts must be backslash-escaped.
+        let raw = "*_`[]()#|<>~\\"
+        let escaped = NoteMarkdownExporter.escapeInline(raw)
+        XCTAssertEqual(escaped, "\\*\\_\\`\\[\\]\\(\\)\\#\\|\\<\\>\\~\\\\")
+    }
+
+    func testTitleWithBracketsIsEscaped() throws {
+        let note = try notes.createNote(title: "Q3 [draft]", body: "")
+        let md = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts)
+        XCTAssertTrue(md.contains("# Q3 \\[draft\\]"),
+                      "Title brackets must be escaped to avoid breaking link parsing. Got: \(md)")
+    }
+
+    func testSessionTitleWithBoldMarkersIsEscaped() throws {
+        let note = try notes.createNote(title: "N", body: "")
+        _ = try transcripts.createSession(title: "**Important**", noteId: note.id)
+        let md = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts)
+        XCTAssertTrue(md.contains("\\*\\*Important\\*\\*"),
+                      "Bold markers in session title must be escaped. Got: \(md)")
+        XCTAssertFalse(md.contains("**Important**"),
+                       "Unescaped bold markers would render as bold instead of literal.")
+    }
+
+    func testActionItemDescriptionWithPipesIsEscaped() throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let session = try transcripts.createSession(title: "S", noteId: note.id)
+        let item = ActionItem(
+            id: UUID(),
+            description: "Diff old | new",
+            assignee: "Alice|Bob",
+            deadline: "Mon | Tue",
+            priority: nil,
+            sourceText: ""
+        )
+        let summary = MeetingSummary(
+            id: UUID(),
+            sessionId: session.id,
+            summary: "Plain summary text",
+            keyDecisions: [],
+            actionItems: [item],
+            keyTopics: [],
+            followUpQuestions: [],
+            createdAt: Date()
+        )
+        try transcripts.saveSummary(summary)
+
+        let md = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts)
+        XCTAssertTrue(md.contains("Diff old \\| new"))
+        XCTAssertTrue(md.contains("Alice\\|Bob"))
+        XCTAssertTrue(md.contains("Mon \\| Tue"))
+    }
+
+    func testEntityTextWithBackticksIsEscaped() throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let session = try transcripts.createSession(title: "S", noteId: note.id)
+        try transcripts.saveEntities(
+            [ExtractedEntity(id: UUID(),
+                             text: "`prod-db-1`",
+                             type: .organization,
+                             range: nil,
+                             segmentId: nil)],
+            sessionId: session.id
+        )
+
+        let md = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts)
+        XCTAssertTrue(md.contains("\\`prod-db-1\\`"),
+                      "Backticks in entity text must be escaped — otherwise the entity would render as a code span. Got: \(md)")
+    }
+
+    func testSummaryBodyIsEmittedVerbatim() throws {
+        // The summary paragraph itself is allowed to contain real markdown
+        // (the model emits bullets / bold by design). Only the field-level
+        // values (titles, action item parts, entity names) get escaped.
+        let note = try notes.createNote(title: "N", body: "")
+        let session = try transcripts.createSession(title: "S", noteId: note.id)
+        let summary = MeetingSummary(
+            id: UUID(),
+            sessionId: session.id,
+            summary: "**Highlights:** budget *approved*.",
+            keyDecisions: [],
+            actionItems: [],
+            keyTopics: [],
+            followUpQuestions: [],
+            createdAt: Date()
+        )
+        try transcripts.saveSummary(summary)
+        let md = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts)
+        XCTAssertTrue(md.contains("**Highlights:** budget *approved*."),
+                      "Summary paragraph stays verbatim. Got: \(md)")
+    }
 }

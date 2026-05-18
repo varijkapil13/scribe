@@ -64,6 +64,8 @@ enum AttachmentsDirectory {
     }
 
     /// Removes the note's attachments directory if present. No-op when missing.
+    /// Throws on permission errors / filesystem failure so callers can decide
+    /// whether to swallow or surface; `NoteStore.deleteNote` swallows + logs.
     static func cleanup(forNoteId noteId: String, root: URL = defaultRoot()) throws {
         let dir = root
             .appendingPathComponent("attachments", isDirectory: true)

@@ -6,11 +6,13 @@ struct Notebook: Codable, Identifiable, Equatable, Hashable {
     var id: String
     var name: String
     var sortOrder: Int
+    var parentId: String?
 
-    init(id: String = UUID().uuidString, name: String, sortOrder: Int = 0) {
+    init(id: String = UUID().uuidString, name: String, sortOrder: Int = 0, parentId: String? = nil) {
         self.id = id
         self.name = name
         self.sortOrder = sortOrder
+        self.parentId = parentId
     }
 }
 

@@ -17,24 +17,48 @@ enum ImageLoader {
     private static let cacheCap = 32
 
     static func load(path: String) -> NSImage? {
-        // Path-traversal guard: reject any path containing `..` segments so a
-        // crafted markdown link can't escape the attachments root. The note
-        // body is user-trusted but cheap to harden.
+        // Defence in depth: a markdown body is user-trusted today but might be
+        // pasted from elsewhere tomorrow. We constrain every load to resolve
+        // inside the per-app attachments root so a crafted link can't read
+        // arbitrary files. Three guards, in order:
+        //
+        //   1. Reject `..` segments before any URL resolution.
+        //   2. Resolve the candidate URL the same way as before.
+        //   3. After standardising + resolving symlinks on both sides,
+        //      enforce that the candidate's canonical path is a sub-path of
+        //      the canonical attachments root. If not, refuse to load.
+        //
+        // Result: `![](attachments/<noteId>/<file>)` works; `![](/etc/passwd)`,
+        // `![](file:///etc/passwd)`, and `![](attachments/../../../etc/...)`
+        // all return nil.
         if path.split(separator: "/").contains("..") { return nil }
 
         if let cached = cacheQueue.sync(execute: { fetchAndBump(path) }) {
             return cached
         }
-        let url: URL
+
+        let root = AttachmentsDirectory.defaultRoot()
+        let candidate: URL
         if path.hasPrefix("file://") {
-            url = URL(fileURLWithPath: String(path.dropFirst("file://".count)))
+            candidate = URL(fileURLWithPath: String(path.dropFirst("file://".count)))
         } else if path.hasPrefix("/") {
-            url = URL(fileURLWithPath: path)
+            candidate = URL(fileURLWithPath: path)
         } else {
-            let root = AttachmentsDirectory.defaultRoot()
-            url = root.appendingPathComponent(path)
+            candidate = root.appendingPathComponent(path)
         }
-        guard let img = NSImage(contentsOf: url) else { return nil }
+
+        let canonicalCandidate = candidate.standardizedFileURL.resolvingSymlinksInPath().path
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath().path
+        // Require the candidate to be the root or live strictly underneath it.
+        // The trailing "/" is what makes "/Foo/Scribe-evil" fail to match
+        // "/Foo/Scribe".
+        let rootPrefix = canonicalRoot.hasSuffix("/") ? canonicalRoot : canonicalRoot + "/"
+        guard canonicalCandidate == canonicalRoot
+                || canonicalCandidate.hasPrefix(rootPrefix) else {
+            return nil
+        }
+
+        guard let img = NSImage(contentsOf: candidate) else { return nil }
         cacheQueue.sync { insert(path, img) }
         return img
     }

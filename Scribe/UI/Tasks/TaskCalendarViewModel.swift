@@ -97,27 +97,12 @@ final class TaskCalendarViewModel: ObservableObject {
 
     // MARK: - Grid building
 
-    struct CalendarCell {
-        let date: Date?
-        let isCurrentMonth: Bool
-    }
+    /// Re-exposed for view-side convenience. The grid math itself lives in
+    /// `CalendarMonthGrid` so it's locale-aware and unit-testable.
+    typealias CalendarCell = CalendarMonthGrid.LabelledCell
 
     func buildCells() -> [CalendarCell] {
-        let firstDay  = displayMonth
-        let weekday   = cal.component(.weekday, from: firstDay) // 1=Sun … 7=Sat
-        guard let range = cal.range(of: .day, in: .month, for: firstDay) else { return [] }
-
-        var cells = Array(repeating: CalendarCell(date: nil, isCurrentMonth: false),
-                          count: weekday - 1)
-        for day in range {
-            guard let date = cal.date(byAdding: .day, value: day - 1, to: firstDay) else { continue }
-            cells.append(CalendarCell(date: date, isCurrentMonth: true))
-        }
-        // Pad to complete the last week row
-        while cells.count % 7 != 0 {
-            cells.append(CalendarCell(date: nil, isCurrentMonth: false))
-        }
-        return cells
+        CalendarMonthGrid.labelledCells(forMonth: displayMonth, calendar: cal)
     }
 
     // MARK: - Actions

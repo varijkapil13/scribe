@@ -48,3 +48,6 @@ models/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Superpowers tool artifacts
+.superpowers/

@@ -1,0 +1,265 @@
+import SwiftUI
+
+// MARK: - Root entry point
+
+/// Renders the full notebook hierarchy starting from `parentId` (nil = roots).
+/// Pass the flat notebooks + notes arrays from the sidebar observer so the tree
+/// never makes extra DB calls — all filtering is done in-memory per node.
+struct NotebookTreeView: View {
+    let parentId: String?
+    let notebooks: [Notebook]
+    let notes: [Note]
+    @Binding var selection: MainSelection?
+
+    /// IDs of currently expanded notebooks, persisted across launches.
+    @AppStorage("expandedNotebookIds") private var expandedRaw: String = ""
+
+    private var expanded: Set<String> {
+        get { Set(expandedRaw.split(separator: ",").map(String.init)) }
+    }
+
+    private func setExpanded(_ id: String, _ value: Bool) {
+        var s = expanded
+        if value { s.insert(id) } else { s.remove(id) }
+        expandedRaw = s.joined(separator: ",")
+    }
+
+    private var children: [Notebook] {
+        notebooks
+            .filter { $0.parentId == parentId }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    var body: some View {
+        ForEach(children) { nb in
+            NotebookTreeRow(
+                notebook: nb,
+                notebooks: notebooks,
+                notes: notes,
+                selection: $selection,
+                isExpanded: expanded.contains(nb.id),
+                onToggle: { setExpanded(nb.id, $0) }
+            )
+        }
+    }
+}
+
+// MARK: - Folder row
+
+private struct NotebookTreeRow: View {
+    let notebook: Notebook
+    let notebooks: [Notebook]
+    let notes: [Note]
+    @Binding var selection: MainSelection?
+    let isExpanded: Bool
+    let onToggle: (Bool) -> Void
+
+    @State private var isRenaming = false
+    @State private var renameText = ""
+    @State private var isCreatingNote = false
+    @State private var noteTitle = ""
+    @State private var isCreatingChild = false
+    @State private var childName = ""
+
+    private var hasChildren: Bool {
+        notebooks.contains { $0.parentId == notebook.id } ||
+        notes.contains { $0.notebookId == notebook.id && !$0.isDailyNote }
+    }
+
+    private var childNotes: [Note] {
+        notes
+            .filter { $0.notebookId == notebook.id && !$0.isDailyNote }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    var body: some View {
+        Group {
+            if isRenaming {
+                InlineNameField(
+                    text: $renameText,
+                    placeholder: notebook.name,
+                    systemImage: "folder"
+                ) {
+                    let name = renameText.trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty {
+                        var copy = notebook; copy.name = name
+                        try? NoteStore.shared.updateNotebook(copy)
+                    }
+                    isRenaming = false
+                } onCancel: {
+                    isRenaming = false
+                }
+            } else {
+                folderRow
+            }
+
+            if isExpanded {
+                // Sub-notebooks (recursive)
+                NotebookTreeView(
+                    parentId: notebook.id,
+                    notebooks: notebooks,
+                    notes: notes,
+                    selection: $selection
+                )
+                .padding(.leading, 16)
+
+                // Note leaves
+                ForEach(childNotes) { note in
+                    NoteLeafRow(note: note, selection: $selection)
+                        .padding(.leading, 16)
+                }
+
+                // Inline new-note field
+                if isCreatingNote {
+                    InlineNameField(
+                        text: $noteTitle,
+                        placeholder: "New Note",
+                        systemImage: "doc.text"
+                    ) {
+                        let t = noteTitle.trimmingCharacters(in: .whitespaces)
+                        if let created = try? NoteStore.shared.createNote(
+                            title: t.isEmpty ? "Untitled" : t,
+                            notebookId: notebook.id
+                        ) {
+                            selection = .note(created.id)
+                        }
+                        isCreatingNote = false; noteTitle = ""
+                    } onCancel: {
+                        isCreatingNote = false; noteTitle = ""
+                    }
+                    .padding(.leading, 16)
+                }
+
+                // Inline new-subfolder field
+                if isCreatingChild {
+                    InlineNameField(
+                        text: $childName,
+                        placeholder: "New Folder",
+                        systemImage: "folder"
+                    ) {
+                        let n = childName.trimmingCharacters(in: .whitespaces)
+                        if !n.isEmpty {
+                            try? NoteStore.shared.createNotebook(name: n, parentId: notebook.id)
+                        }
+                        isCreatingChild = false; childName = ""
+                    } onCancel: {
+                        isCreatingChild = false; childName = ""
+                    }
+                    .padding(.leading, 16)
+                }
+            }
+        }
+    }
+
+    // MARK: - Folder label row
+
+    private var folderRow: some View {
+        HStack(spacing: 2) {
+            // Disclosure chevron
+            Button {
+                onToggle(!isExpanded)
+            } label: {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .opacity(hasChildren ? 1 : 0)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Folder icon + name — clicking also toggles expansion
+            Button {
+                onToggle(!isExpanded)
+            } label: {
+                Label(notebook.name, systemImage: isExpanded ? "folder.fill" : "folder")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .contextMenu { contextMenuItems }
+    }
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        Button {
+            onToggle(true)
+            isCreatingNote = true
+            noteTitle = ""
+        } label: {
+            Label("New Note Here", systemImage: "square.and.pencil")
+        }
+        Button {
+            onToggle(true)
+            isCreatingChild = true
+            childName = ""
+        } label: {
+            Label("New Subfolder", systemImage: "folder.badge.plus")
+        }
+        Divider()
+        Button {
+            isRenaming = true
+            renameText = notebook.name
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        Divider()
+        Button(role: .destructive) {
+            if case .note(let id) = selection,
+               notes.first(where: { $0.id == id })?.notebookId == notebook.id {
+                selection = .notes(.all)
+            }
+            try? NoteStore.shared.deleteNotebook(id: notebook.id)
+        } label: {
+            Label("Delete Folder", systemImage: "trash")
+        }
+    }
+}
+
+// MARK: - Note leaf row
+
+struct NoteLeafRow: View {
+    let note: Note
+    @Binding var selection: MainSelection?
+
+    private var isSelected: Bool {
+        if case .note(let id) = selection { return id == note.id }
+        return false
+    }
+
+    var body: some View {
+        Button {
+            selection = .note(note.id)
+        } label: {
+            Label(note.title.isEmpty ? "Untitled" : note.title, systemImage: "doc.text")
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 6)
+        .background(Color.accentColor.opacity(isSelected ? 0.15 : 0))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                selection = .note(note.id)
+            } label: {
+                Label("Open", systemImage: "arrow.up.right.square")
+            }
+            Divider()
+            Button(role: .destructive) {
+                if isSelected { selection = .notes(.all) }
+                try? NoteStore.shared.deleteNote(id: note.id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+}
