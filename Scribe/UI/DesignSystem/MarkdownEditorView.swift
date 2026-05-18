@@ -88,6 +88,11 @@ struct MarkdownEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let tv = scrollView.documentView as? MarkdownNSTextView else { return }
         context.coordinator.parent = self
+        // Switching notes invalidates the undo history — pressing Cmd-Z
+        // on note B should never revert to note A's body.
+        if tv.noteId != noteId {
+            context.coordinator.resetUndoHistory()
+        }
         tv.noteId = noteId
         let liveSource: String
         if let storage = tv.textStorage {
@@ -127,6 +132,17 @@ struct MarkdownEditorView: NSViewRepresentable {
         /// When set, applyFormatting uses this source-coord selection instead of reading
         /// the current display selection. Cleared after each apply.
         var pendingSourceSelectionOverride: NSRange? = nil
+
+        /// Source-level undo state. The AST renderer destroys AppKit's
+        /// position-based undo on every keystroke (full storage swap via
+        /// setAttributedString), so we record snapshots of the markdown
+        /// source instead and apply them through the same `editSource`
+        /// path toolbar actions use. See `MarkdownUndoBuffer` for the
+        /// coalescing rules.
+        private var undoBuffer = MarkdownUndoBuffer()
+        /// True while applying an undo/redo, so the change-recording
+        /// path doesn't push the in-progress state back into the stack.
+        private var isApplyingUndoRedo: Bool = false
 
         /// Set during applyFormatting to suppress recursive selection-change reformat (Task 5).
         var isApplyingFormatting: Bool = false
@@ -304,8 +320,52 @@ struct MarkdownEditorView: NSViewRepresentable {
 
             let (newSource, newSourceSel) = edit(currentSource, sourceSel)
 
+            // Toolbar / shortcut edits are deliberate, atomic actions —
+            // flush any in-flight typing burst so the previous burst and
+            // the new edit end up as separate undo steps.
+            undoBuffer.endTypingBurst()
+
             pendingSourceSelectionOverride = newSourceSel
             applyFormatting(to: tv, sourceOverride: newSource)
+        }
+
+        // MARK: - Source-level undo / redo
+
+        /// Clears the undo / redo stacks. Called when the editor switches
+        /// to a different note so the new note doesn't inherit history
+        /// from the previous one.
+        func resetUndoHistory() {
+            undoBuffer.reset()
+        }
+
+        func recordChangeForUndo(source: String, selection: NSRange) {
+            // The undo/redo apply path already advanced the buffer's
+            // pointer through popUndo / popRedo — the subsequent
+            // applyFormatting just paints the storage. Skip the record
+            // so we don't double-count.
+            if isApplyingUndoRedo { return }
+            undoBuffer.record(source: source, selection: selection)
+        }
+
+        @discardableResult
+        func performSourceUndo() -> Bool {
+            guard let snap = undoBuffer.popUndo(), let tv = textView else { return false }
+            applyUndoRedoSnapshot(snap, to: tv)
+            return true
+        }
+
+        @discardableResult
+        func performSourceRedo() -> Bool {
+            guard let snap = undoBuffer.popRedo(), let tv = textView else { return false }
+            applyUndoRedoSnapshot(snap, to: tv)
+            return true
+        }
+
+        private func applyUndoRedoSnapshot(_ snap: MarkdownUndoBuffer.Snapshot, to tv: NSTextView) {
+            isApplyingUndoRedo = true
+            defer { isApplyingUndoRedo = false }
+            pendingSourceSelectionOverride = snap.selection
+            applyFormatting(to: tv, sourceOverride: snap.source)
         }
 
         private func detectWikiLinkTyping(in tv: NSTextView) {
@@ -373,6 +433,7 @@ struct MarkdownEditorView: NSViewRepresentable {
                 storage.endEditing()
                 tv.undoManager?.enableUndoRegistration()
                 foldRegistry = []
+                recordChangeForUndo(source: currentSource, selection: sourceSel)
                 return
             }
 
@@ -551,6 +612,8 @@ struct MarkdownEditorView: NSViewRepresentable {
             let ce = max(cs, min(dispEnd, len))
             tv.setSelectedRange(NSRange(location: cs, length: ce - cs))
             (tv as? MarkdownNSTextView)?.needsDisplay = true
+
+            recordChangeForUndo(source: currentSource, selection: sourceSel)
         }
 
         /// Place the cursor in the body of the fold's source range and trigger a reformat
@@ -1117,7 +1180,7 @@ final class MarkdownNSTextView: NSTextView {
             case "i":  coord?.applyMarker("*");     return true
             case "`":  coord?.applyMarker("`");     return true
             case "k":  coord?.applyLinkFormat();    return true
-            case "z":  undoManager?.undo();         return true
+            case "z":  coord?.performSourceUndo();  return true
             default: break
             }
         }
@@ -1128,7 +1191,7 @@ final class MarkdownNSTextView: NSTextView {
             case "8":       coord?.applyLinePrefix("- ");   return true
             case "7":       coord?.applyOrderedList();      return true
             case "u", "U":  coord?.toggleChecklistOnSelection(); return true
-            case "z", "Z":  undoManager?.redo();            return true
+            case "z", "Z":  coord?.performSourceRedo();    return true
             default: break
             }
         }
