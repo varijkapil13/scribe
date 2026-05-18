@@ -204,8 +204,8 @@ struct MultilineQuickAddField: NSViewRepresentable {
                     }
                     result.append(chunk)
                 } else {
-                    // Notes lines — Bear-style Markdown highlighting
-                    result.append(MarkdownFormatter.attributed(line, font: noteFont))
+                    // Notes lines — Bear-style Markdown highlighting via AST renderer.
+                    result.append(MarkdownRenderer.attributed(line, font: noteFont))
                 }
             }
             return result

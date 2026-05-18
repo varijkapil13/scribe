@@ -377,8 +377,18 @@ struct MarkdownEditorView: NSViewRepresentable {
             }
 
             // 4. Build base formatted attributed string from source.
+            //    The AST-driven `MarkdownRenderer` replaces the legacy regex
+            //    `MarkdownFormatter` and handles nesting, autolinks, and the
+            //    cursor-proximity marker reveal. We pass the source-coord cursor
+            //    so the renderer can keep markers visible only inside the active
+            //    block (Bear-style).
             let font = tv.font ?? parent.font
-            let formatted = MarkdownFormatter.attributed(currentSource, font: font)
+            let cursorForReveal = sourceSel.location
+            let formatted = MarkdownRenderer.attributed(
+                currentSource,
+                font: font,
+                cursorOffset: cursorForReveal
+            )
             let mutable = NSMutableAttributedString(attributedString: formatted)
             parent.extraHighlighter?(mutable)
 
@@ -744,6 +754,7 @@ final class MarkdownNSTextView: NSTextView {
         drawCodeBlocks(storage: storage, lm: lm, tc: tc, origin: origin)
         drawBlockquotes(storage: storage, lm: lm, tc: tc, origin: origin)
         drawHorizontalRules(storage: storage, lm: lm, tc: tc, origin: origin)
+        drawInlineCodePills(storage: storage, lm: lm, tc: tc, origin: origin)
     }
 
     private func drawCodeBlocks(storage: NSTextStorage, lm: NSLayoutManager,
@@ -753,10 +764,16 @@ final class MarkdownNSTextView: NSTextView {
                 ? NSColor(white: 1.0, alpha: 0.09)
                 : NSColor(white: 0.0, alpha: 0.06)
         }
+        let borderColor = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.06)
+                : NSColor(white: 0.0, alpha: 0.05)
+        }
+        let langColor = NSColor.tertiaryLabelColor
 
         forContiguousRanges(in: storage, key: .codeBlockLine) { charRange in
             let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
-            var cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
             let blockRect = NSRect(
                 x: 4,
                 y: cr.minY + origin.y - 6,
@@ -766,7 +783,75 @@ final class MarkdownNSTextView: NSTextView {
             let path = NSBezierPath(roundedRect: blockRect, xRadius: 6, yRadius: 6)
             bgColor.setFill()
             path.fill()
-            _ = cr  // suppress unused warning
+            borderColor.setStroke()
+            path.lineWidth = 0.5
+            path.stroke()
+
+            // Language label (top-right corner). Source: `.codeBlockLanguage` attribute
+            // emitted by MarkdownRenderer; empty string means no fence info-string.
+            let lang = storage.attribute(.codeBlockLanguage, at: charRange.location,
+                                          effectiveRange: nil) as? String ?? ""
+            guard !lang.isEmpty else { return }
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
+                .foregroundColor: langColor,
+            ]
+            let label = NSAttributedString(string: lang.uppercased(), attributes: attrs)
+            let labelSize = label.size()
+            let labelOrigin = NSPoint(
+                x: blockRect.maxX - labelSize.width - 10,
+                y: blockRect.maxY - labelSize.height - 4
+            )
+            label.draw(at: labelOrigin)
+        }
+    }
+
+    private func drawInlineCodePills(storage: NSTextStorage, lm: NSLayoutManager,
+                                      tc: NSTextContainer, origin: NSPoint) {
+        let pillColor = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.12)
+                : NSColor(white: 0.0, alpha: 0.06)
+        }
+        let pillBorder = NSColor(name: nil) { app in
+            app.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(white: 1.0, alpha: 0.08)
+                : NSColor(white: 0.0, alpha: 0.06)
+        }
+        // For each .scribeInlineCode run, compute the bounding rect of its glyphs
+        // and draw a rounded pill behind. Multi-line spans (rare) get one pill
+        // per line via per-line-rect enumeration.
+        var i = 0
+        let total = storage.length
+        while i < total {
+            var effective = NSRange()
+            let hasAttr = storage.attribute(.scribeInlineCode, at: i,
+                                             effectiveRange: &effective) as? Bool == true
+            if hasAttr {
+                let glyphRange = lm.glyphRange(forCharacterRange: effective,
+                                                 actualCharacterRange: nil)
+                lm.enumerateEnclosingRects(
+                    forGlyphRange: glyphRange,
+                    withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                    in: tc
+                ) { rect, _ in
+                    let pill = NSRect(
+                        x: rect.minX + origin.x - 3,
+                        y: rect.minY + origin.y - 1,
+                        width: rect.width + 6,
+                        height: rect.height + 2
+                    )
+                    let path = NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4)
+                    pillColor.setFill()
+                    path.fill()
+                    pillBorder.setStroke()
+                    path.lineWidth = 0.5
+                    path.stroke()
+                }
+                i = NSMaxRange(effective)
+            } else {
+                i = effective.length > 0 ? NSMaxRange(effective) : i + 1
+            }
         }
     }
 
@@ -1114,379 +1199,6 @@ final class MarkdownNSTextView: NSTextView {
                        height: bounds.height),
             withAttributes: attrs
         )
-    }
-}
-
-// MARK: - Formatting engine
-
-enum MarkdownFormatter {
-
-    static func attributed(_ text: String, font: NSFont) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        let lines = text.components(separatedBy: "\n")
-        let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
-        let dim = NSColor.tertiaryLabelColor
-        var inFence = false
-        var seenFirstH1 = false   // tracks whether the auto-title H1 has been rendered
-
-        for (i, line) in lines.enumerated() {
-            if i > 0 {
-                // Mark the inter-line newline as codeBlock when inside a fence,
-                // so drawBackground finds one contiguous range per block.
-                let nl = NSMutableAttributedString(string: "\n")
-                if inFence {
-                    nl.addAttribute(.codeBlockLine, value: true,
-                                    range: NSRange(location: 0, length: 1))
-                    nl.addAttributes(codeLineAttrs(font: monoFont),
-                                     range: NSRange(location: 0, length: 1))
-                }
-                result.append(nl)
-            }
-
-            if line.hasPrefix("```") {
-                inFence.toggle()
-                let display = line.isEmpty ? " " : line
-                let fenceAttr = NSMutableAttributedString(string: display,
-                                                           attributes: codeLineAttrs(font: monoFont))
-                let full = NSRange(location: 0, length: fenceAttr.length)
-                fenceAttr.addAttribute(.foregroundColor, value: dim, range: full)
-                fenceAttr.addAttribute(.codeBlockLine, value: true, range: full)
-                result.append(fenceAttr)
-            } else if inFence {
-                let display = line.isEmpty ? " " : line
-                let codeAttr = NSMutableAttributedString(string: display,
-                                                          attributes: codeLineAttrs(font: monoFont))
-                codeAttr.addAttribute(.codeBlockLine, value: true,
-                                      range: NSRange(location: 0, length: codeAttr.length))
-                result.append(codeAttr)
-            } else {
-                result.append(formattedLine(line, font: font, seenFirstH1: &seenFirstH1))
-            }
-        }
-        applyTableStyling(to: result, source: text, font: font)
-        return result
-    }
-
-    private static func applyTableStyling(
-        to attr: NSMutableAttributedString,
-        source: String,
-        font: NSFont
-    ) {
-        let tables = MarkdownTable.detect(in: source)
-        guard !tables.isEmpty else { return }
-        let lines = source.components(separatedBy: "\n")
-        // Pre-compute line ranges in the source so we can map row index to NSRange in attr.
-        var lineRanges: [NSRange] = []
-        var cursor = 0
-        for line in lines {
-            let len = (line as NSString).length
-            lineRanges.append(NSRange(location: cursor, length: len))
-            cursor += len + 1 // \n
-        }
-
-        // Cell text inside a table is rendered in monospace so accidental
-        // column alignment works for short cells. We preserve any inline
-        // bold/italic traits already applied by `applyInline` during the
-        // per-line formatter pass.
-        for table in tables {
-            let applyRows = [table.headerRow] + table.bodyRows
-            for row in applyRows {
-                guard row < lineRanges.count else { continue }
-                let range = lineRanges[row]
-                guard range.location >= 0, NSMaxRange(range) <= attr.length, range.length > 0 else { continue }
-                let isHeader = row == table.headerRow
-                applyMonospaceTrait(attr: attr, range: range, isHeader: isHeader, size: font.pointSize)
-            }
-
-            // Separator row: dim so it's quieter than data rows.
-            if table.separatorRow < lineRanges.count {
-                let sepRange = lineRanges[table.separatorRow]
-                if NSMaxRange(sepRange) <= attr.length, sepRange.length > 0 {
-                    let monoFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
-                    attr.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: sepRange)
-                    attr.addAttribute(.font, value: monoFont, range: sepRange)
-                }
-            }
-        }
-    }
-
-    /// Walks the row's existing `.font` attribute runs, snapshots their
-    /// symbolic traits, then rewrites each run with a monospace variant that
-    /// preserves bold / italic. Ranges with no prior `.font` get the base
-    /// monospace (semibold for header rows).
-    private static func applyMonospaceTrait(
-        attr: NSMutableAttributedString,
-        range: NSRange,
-        isHeader: Bool,
-        size: CGFloat
-    ) {
-        let baseWeight: NSFont.Weight = isHeader ? .semibold : .regular
-        let baseMono = NSFont.monospacedSystemFont(ofSize: size, weight: baseWeight)
-
-        // Snapshot every existing `.font` run in the row BEFORE we mutate,
-        // so the trait info (bold / italic) doesn't get erased.
-        struct Snapshot { let range: NSRange; let traits: NSFontDescriptor.SymbolicTraits }
-        var snapshots: [Snapshot] = []
-        attr.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-            let traits = (value as? NSFont)?.fontDescriptor.symbolicTraits ?? []
-            snapshots.append(Snapshot(range: subRange, traits: traits))
-        }
-
-        // Set the base monospace across the row first.
-        attr.addAttribute(.font, value: baseMono, range: range)
-
-        // Lift bold/italic into the monospace variant for the spans that had
-        // them in the source-level formatter pass.
-        for snap in snapshots {
-            let wantBold = snap.traits.contains(.bold)
-            let wantItalic = snap.traits.contains(.italic)
-            guard wantBold || wantItalic else { continue }
-            var desc = baseMono.fontDescriptor
-            if wantBold {
-                desc = desc.withSymbolicTraits(desc.symbolicTraits.union(.bold))
-            }
-            if wantItalic {
-                desc = desc.withSymbolicTraits(desc.symbolicTraits.union(.italic))
-            }
-            if let traited = NSFont(descriptor: desc, size: size) {
-                attr.addAttribute(.font, value: traited, range: snap.range)
-            }
-        }
-    }
-
-    private static func codeLineAttrs(font: NSFont) -> [NSAttributedString.Key: Any] {
-        let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.4
-        style.paragraphSpacing = 0
-        style.paragraphSpacingBefore = 0
-        style.headIndent = 14
-        style.firstLineHeadIndent = 14
-        return [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style]
-    }
-
-    // MARK: Per-line
-
-    private static func formattedLine(_ line: String, font: NSFont, seenFirstH1: inout Bool) -> NSAttributedString {
-        let dim  = NSColor.tertiaryLabelColor
-        let mono = NSFont.monospacedSystemFont(ofSize: font.pointSize - 0.5, weight: .regular)
-
-        // Horizontal rule — invisible text, drawn by drawBackground
-        if line.trimmingCharacters(in: .whitespaces).matches(#"^[-*_]{3,}$"#) {
-            let hrStyle = NSMutableParagraphStyle()
-            hrStyle.paragraphSpacingBefore = 8
-            hrStyle.paragraphSpacing = 8
-            let result = NSMutableAttributedString(string: line, attributes: [
-                .font: font, .foregroundColor: NSColor.clear, .paragraphStyle: hrStyle
-            ])
-            result.addAttribute(.horizontalRule, value: true,
-                                range: NSRange(location: 0, length: line.utf16.count))
-            return result
-        }
-
-        // Headings
-        if let (hashes, rest) = parseHeading(line) {
-            let level = min(hashes, 3)
-            let spacingsBefore: [CGFloat] = [24, 18, 12]
-
-            let size: CGFloat
-            let weight: NSFont.Weight
-            if level == 1 {
-                if !seenFirstH1 {
-                    size = 28
-                    weight = .semibold
-                    seenFirstH1 = true
-                } else {
-                    size = 22
-                    weight = .bold
-                }
-            } else if level == 2 {
-                size = 20
-                weight = .semibold
-            } else { // 3+
-                size = 17
-                weight = .semibold
-            }
-
-            let headFont = NSFont.systemFont(ofSize: size, weight: weight)
-            let headMono = NSFont.monospacedSystemFont(ofSize: size - 1, weight: .regular)
-
-            let style = NSMutableParagraphStyle()
-            style.lineHeightMultiple = 1.2
-            style.paragraphSpacingBefore = spacingsBefore[level - 1]
-            style.paragraphSpacing = 6
-
-            let result = NSMutableAttributedString(string: line, attributes: [
-                .font: headFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style
-            ])
-            let prefixLen = hashes + 1
-            let prefixRange = NSRange(location: 0, length: min(prefixLen, line.utf16.count))
-            let textRange = NSRange(location: min(prefixLen, line.utf16.count),
-                                    length: max(0, line.utf16.count - prefixLen))
-            result.addAttribute(.foregroundColor, value: NSColor.quaternaryLabelColor, range: prefixRange)
-            result.addAttribute(.font, value: NSFont.systemFont(ofSize: font.pointSize - 1), range: prefixRange)
-            if textRange.length > 0 {
-                applyInline(to: result, offset: prefixLen, text: rest,
-                            baseFont: headFont, dim: dim, mono: headMono)
-            }
-            return result
-        }
-
-        // Blockquote
-        if line.hasPrefix("> ") {
-            let style = NSMutableParagraphStyle()
-            style.lineHeightMultiple = 1.5
-            style.paragraphSpacing = 1
-            style.headIndent = 28
-            style.firstLineHeadIndent = 28
-
-            let result = NSMutableAttributedString(string: line, attributes: [
-                .font: font,
-                .foregroundColor: NSColor.secondaryLabelColor,
-                .paragraphStyle: style
-            ])
-            let prefixLen = min(2, line.utf16.count)
-            result.addAttribute(.foregroundColor, value: NSColor.quaternaryLabelColor,
-                                range: NSRange(location: 0, length: prefixLen))
-            result.addAttribute(.blockquoteLine, value: true,
-                                range: NSRange(location: 0, length: line.utf16.count))
-            if line.utf16.count > 2 {
-                let content = String(line.dropFirst(2))
-                applyInline(to: result, offset: 2, text: content,
-                            baseFont: font, dim: dim, mono: mono)
-            }
-            return result
-        }
-
-        // Lists — hanging indent so text wraps under content, not under bullet
-        let result = NSMutableAttributedString(string: line, attributes: base(font))
-        if let prefixLen = listPrefixLength(line) {
-            let leadingSpaces = line.prefix(while: { $0 == " " }).count
-            let indentBase: CGFloat = CGFloat(leadingSpaces / 2) * 20
-            let style = NSMutableParagraphStyle()
-            style.lineHeightMultiple = 1.5
-            style.paragraphSpacing = 1
-            style.firstLineHeadIndent = indentBase
-            style.headIndent = indentBase + 18
-            result.addAttribute(.paragraphStyle, value: style,
-                                range: NSRange(location: 0, length: line.utf16.count))
-            result.addAttribute(.foregroundColor, value: dim,
-                                range: NSRange(location: 0, length: prefixLen))
-        }
-
-        applyInline(to: result, offset: 0, text: line, baseFont: font, dim: dim, mono: mono)
-        return result
-    }
-
-    // MARK: Inline formatting
-
-    private static func applyInline(
-        to str: NSMutableAttributedString,
-        offset: Int, text: String, baseFont: NSFont, dim: NSColor, mono: NSFont
-    ) {
-        let boldItalic = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits([.bold, .italic]),
-                                size: baseFont.pointSize) ?? baseFont
-        let bold   = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits(.bold),   size: baseFont.pointSize) ?? baseFont
-        let italic = NSFont(descriptor: baseFont.fontDescriptor.withSymbolicTraits(.italic), size: baseFont.pointSize) ?? baseFont
-
-        apply(pattern: #"\*{3}([^*\n]+?)\*{3}"#, in: text, offset: offset, to: str) { m, c in
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: boldItalic, range: c)
-        }
-        apply(pattern: #"\*{2}([^*\n]+?)\*{2}"#, in: text, offset: offset, to: str) { m, c in
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: bold, range: c)
-        }
-        apply(pattern: #"_{2}([^_\n]+?)_{2}"#, in: text, offset: offset, to: str) { m, c in
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: bold, range: c)
-        }
-        apply(pattern: #"(?<!\*)\*([^*\n]+?)\*(?!\*)"#, in: text, offset: offset, to: str) { m, c in
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: italic, range: c)
-        }
-        apply(pattern: #"(?<!_)_([^_\n]+?)_(?!_)"#, in: text, offset: offset, to: str) { m, c in
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.font, value: italic, range: c)
-        }
-        // Inline code — subtle box, secondary color (no orange)
-        let inlineCodeBg = NSColor(name: nil) { app in
-            app.bestMatch(from: [.darkAqua]) == .darkAqua
-                ? NSColor(white: 1.0, alpha: 0.10)
-                : NSColor(white: 0.0, alpha: 0.07)
-        }
-        apply(pattern: #"`([^`\n]+?)`"#, in: text, offset: offset, to: str) { m, c in
-            let fullRange = NSRange(location: m.first?.location ?? c.location,
-                                    length: (m.last.map { $0.location + $0.length } ?? (c.location + c.length))
-                                           - (m.first?.location ?? c.location))
-            str.addAttribute(.font, value: mono, range: c)
-            str.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: c)
-            str.addAttribute(.backgroundColor, value: inlineCodeBg, range: fullRange)
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-        }
-        apply(pattern: #"~~([^~\n]+?)~~"#, in: text, offset: offset, to: str) { m, c in
-            m.forEach { str.addAttribute(.foregroundColor, value: dim, range: $0) }
-            str.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: c)
-        }
-    }
-
-    // MARK: Pattern helper
-
-    private static func apply(
-        pattern: String, in text: String, offset: Int,
-        to str: NSMutableAttributedString,
-        _ body: ([NSRange], NSRange) -> Void
-    ) {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-        let fullText = NSRange(text.startIndex..., in: text)
-        for match in regex.matches(in: text, range: fullText) {
-            guard match.numberOfRanges >= 2 else { continue }
-            let fullNS    = match.range
-            let captureNS = match.range(at: 1)
-            guard captureNS.location != NSNotFound, fullNS.location != NSNotFound else { continue }
-            let fullOff    = NSRange(location: fullNS.location + offset,    length: fullNS.length)
-            let captureOff = NSRange(location: captureNS.location + offset, length: captureNS.length)
-            let prefixLen = captureOff.location - fullOff.location
-            let suffixLen = (fullOff.location + fullOff.length) - (captureOff.location + captureOff.length)
-            var markers: [NSRange] = []
-            if prefixLen > 0 { markers.append(NSRange(location: fullOff.location, length: prefixLen)) }
-            if suffixLen > 0 { markers.append(NSRange(location: captureOff.location + captureOff.length, length: suffixLen)) }
-            body(markers, captureOff)
-        }
-    }
-
-    // MARK: Helpers
-
-    private static func base(_ font: NSFont) -> [NSAttributedString.Key: Any] {
-        let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.5
-        style.paragraphSpacing = 2
-        return [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style]
-    }
-
-    private static func parseHeading(_ line: String) -> (Int, String)? {
-        guard line.hasPrefix("#") else { return nil }
-        var i = line.startIndex
-        var count = 0
-        while i < line.endIndex, line[i] == "#" { count += 1; i = line.index(after: i) }
-        guard count <= 6, i < line.endIndex, line[i] == " " else { return nil }
-        return (count, String(line[line.index(after: i)...]))
-    }
-
-    private static func listPrefixLength(_ line: String) -> Int? {
-        if let r = line.range(of: #"^\s*[-*+] "#, options: .regularExpression) {
-            return line.distance(from: line.startIndex, to: r.upperBound)
-        }
-        if let r = line.range(of: #"^\s*\d+\. "#, options: .regularExpression) {
-            return line.distance(from: line.startIndex, to: r.upperBound)
-        }
-        return nil
-    }
-}
-
-private extension String {
-    func matches(_ pattern: String) -> Bool {
-        (try? NSRegularExpression(pattern: pattern))
-            .map { $0.firstMatch(in: self, range: NSRange(startIndex..., in: self)) != nil } ?? false
     }
 }
 

@@ -17,6 +17,8 @@ targets:
       - package: GRDB.swift
         product: GRDB
       - package: KeyboardShortcuts
+      - package: swift-markdown
+        product: Markdown
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
@@ -58,3 +60,6 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     from: "2.0.0"
+  swift-markdown:
+    url: https://github.com/apple/swift-markdown.git
+    from: "0.6.0"
