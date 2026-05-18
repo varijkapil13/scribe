@@ -769,7 +769,7 @@ struct ProjectSidebarRow: View {
 
 /// Inline editable text field for sidebar rows (notebook create / rename).
 /// Commits on Return, cancels on Escape.
-private struct InlineNameField: View {
+struct InlineNameField: View {
     @Binding var text: String
     let placeholder: String
     let systemImage: String
