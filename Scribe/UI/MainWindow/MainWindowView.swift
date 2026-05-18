@@ -40,6 +40,7 @@ struct MainWindowView: View {
     @State private var settingsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
+    @State private var allNotes: [Note] = []
     @State private var showUniversalSearch: Bool = false
     @State private var isCreatingNotebook: Bool = false
     @State private var notebookDraftName: String = ""
@@ -86,6 +87,7 @@ struct MainWindowView: View {
         .onDisappear { projectsViewModel.stop() }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in scheduleTagReload() }
         .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
+        .onReceive(NoteStore.shared.observeAllNotes().replaceError(with: [])) { allNotes = $0 }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
             case .create:
@@ -186,220 +188,248 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: $selection) {
-            if appState.isTranscribing {
+            if searchText.isEmpty {
+                if appState.isTranscribing {
+                    Section {
+                        NavigationLink(value: MainSelection.live) {
+                            LiveSidebarRow(
+                                isPaused: appState.audioManager.isPaused,
+                                duration: appState.audioManager.recordingDuration
+                            )
+                        }
+                    } header: {
+                        Text("Now")
+                            .eyebrowStyle()
+                    }
+                }
+
                 Section {
-                    NavigationLink(value: MainSelection.live) {
-                        LiveSidebarRow(
-                            isPaused: appState.audioManager.isPaused,
-                            duration: appState.audioManager.recordingDuration
-                        )
+                    if tasksExpanded {
+                        ForEach(TaskSidebarItem.smartFilters) { item in
+                            NavigationLink(value: MainSelection.tasks(item.filter)) {
+                                Label(item.title, systemImage: item.systemImage)
+                            }
+                        }
+                        NavigationLink(value: MainSelection.taskCalendar) {
+                            Label("Calendar", systemImage: "calendar")
+                        }
                     }
                 } header: {
-                    Text("Now")
-                        .eyebrowStyle()
+                    CollapsibleSectionHeader(title: "Tasks", isExpanded: $tasksExpanded)
                 }
-            }
 
-            Section {
-                if tasksExpanded {
-                    ForEach(TaskSidebarItem.smartFilters) { item in
-                        NavigationLink(value: MainSelection.tasks(item.filter)) {
-                            Label(item.title, systemImage: item.systemImage)
-                        }
-                    }
-                    NavigationLink(value: MainSelection.taskCalendar) {
-                        Label("Calendar", systemImage: "calendar")
-                    }
-                }
-            } header: {
-                CollapsibleSectionHeader(title: "Tasks", isExpanded: $tasksExpanded)
-            }
-
-            Section {
-                if projectsExpanded {
-                    ForEach(projectsViewModel.projects) { project in
-                        NavigationLink(value: MainSelection.tasks(.project(project.id))) {
-                            ProjectSidebarRow(project: project)
-                        }
-                        .contextMenu {
-                            Button {
-                                projectEditorMode = .edit(project)
-                            } label: {
-                                Label("Edit…", systemImage: "pencil")
-                            }
-                            Button(role: .destructive) {
-                                projectsViewModel.delete(id: project.id)
-                                if case .tasks(.project(let id)) = selection, id == project.id {
-                                    selection = .tasks(.inbox)
-                                }
-                            } label: {
-                                Label("Delete project", systemImage: "trash")
-                            }
-                        }
-                        .dropDestination(for: TaskDragPayload.self) { items, _ in
-                            for item in items {
-                                projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
-                            }
-                            return !items.isEmpty
-                        }
-                    }
-                    .onMove { source, destination in
-                        projectsViewModel.reorder(from: source, to: destination)
-                    }
-                }
-            } header: {
-                HStack(alignment: .center) {
-                    CollapsibleSectionHeader(title: "Projects", isExpanded: $projectsExpanded)
-                    Spacer()
-                    Button {
-                        projectEditorMode = .create
-                    } label: {
-                        Image(systemName: "plus.circle")
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("New project")
-                }
-            }
-
-            Section {
-                if notesExpanded {
-                    NavigationLink(value: MainSelection.notes(.today)) {
-                        Label("Today's Note", systemImage: "note.text")
-                    }
-                    NavigationLink(value: MainSelection.notes(.inbox)) {
-                        Label("Unfiled", systemImage: "tray")
-                    }
-                    NavigationLink(value: MainSelection.notes(.all)) {
-                        Label("All Notes", systemImage: "doc.on.doc")
-                    }
-                    NavigationLink(value: MainSelection.notes(.daily)) {
-                        Label("All Daily Notes", systemImage: "calendar.badge.clock")
-                    }
-                    NavigationLink(value: MainSelection.notes(.graph)) {
-                        Label("Graph", systemImage: "circle.hexagongrid")
-                    }
-                }
-            } header: {
-                HStack(alignment: .center) {
-                    CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
-                    Spacer()
-                    Button {
-                        let note = try? NoteStore.shared.createNote(title: "", body: "")
-                        if let note { selection = .note(note.id) }
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("New note (⌘N)")
-                    .keyboardShortcut("n", modifiers: .command)
-                }
-            }
-
-            Section {
-                if notebooksExpanded {
-                    ForEach(notebooks) { nb in
-                        if renamingNotebookId == nb.id {
-                            InlineNameField(
-                                text: $inlineRenameName,
-                                placeholder: nb.name,
-                                systemImage: "folder"
-                            ) {
-                                let name = inlineRenameName.trimmingCharacters(in: .whitespaces)
-                                if !name.isEmpty {
-                                    var copy = nb
-                                    copy.name = name
-                                    try? NoteStore.shared.updateNotebook(copy)
-                                }
-                                renamingNotebookId = nil
-                            } onCancel: {
-                                renamingNotebookId = nil
-                            }
-                        } else {
-                            NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
-                                Label(nb.name, systemImage: "folder")
+                Section {
+                    if projectsExpanded {
+                        ForEach(projectsViewModel.projects) { project in
+                            NavigationLink(value: MainSelection.tasks(.project(project.id))) {
+                                ProjectSidebarRow(project: project)
                             }
                             .contextMenu {
                                 Button {
-                                    renamingNotebookId = nb.id
-                                    inlineRenameName = nb.name
+                                    projectEditorMode = .edit(project)
                                 } label: {
-                                    Label("Rename", systemImage: "pencil")
+                                    Label("Edit…", systemImage: "pencil")
                                 }
-                                Divider()
                                 Button(role: .destructive) {
-                                    try? NoteStore.shared.deleteNotebook(id: nb.id)
-                                    if case .notes(.notebook(let id)) = selection, id == nb.id {
-                                        selection = .notes(.all)
+                                    projectsViewModel.delete(id: project.id)
+                                    if case .tasks(.project(let id)) = selection, id == project.id {
+                                        selection = .tasks(.inbox)
                                     }
                                 } label: {
-                                    Label("Delete Notebook", systemImage: "trash")
+                                    Label("Delete project", systemImage: "trash")
+                                }
+                            }
+                            .dropDestination(for: TaskDragPayload.self) { items, _ in
+                                for item in items {
+                                    projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
+                                }
+                                return !items.isEmpty
+                            }
+                        }
+                        .onMove { source, destination in
+                            projectsViewModel.reorder(from: source, to: destination)
+                        }
+                    }
+                } header: {
+                    HStack(alignment: .center) {
+                        CollapsibleSectionHeader(title: "Projects", isExpanded: $projectsExpanded)
+                        Spacer()
+                        Button {
+                            projectEditorMode = .create
+                        } label: {
+                            Image(systemName: "plus.circle")
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("New project")
+                    }
+                }
+
+                Section {
+                    if notesExpanded {
+                        NavigationLink(value: MainSelection.notes(.today)) {
+                            Label("Today's Note", systemImage: "note.text")
+                        }
+                        NavigationLink(value: MainSelection.notes(.inbox)) {
+                            Label("Unfiled", systemImage: "tray")
+                        }
+                        NavigationLink(value: MainSelection.notes(.all)) {
+                            Label("All Notes", systemImage: "doc.on.doc")
+                        }
+                        NavigationLink(value: MainSelection.notes(.daily)) {
+                            Label("All Daily Notes", systemImage: "calendar.badge.clock")
+                        }
+                        NavigationLink(value: MainSelection.notes(.graph)) {
+                            Label("Graph", systemImage: "circle.hexagongrid")
+                        }
+                    }
+                } header: {
+                    HStack(alignment: .center) {
+                        CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
+                        Spacer()
+                        Button {
+                            let note = try? NoteStore.shared.createNote(title: "", body: "")
+                            if let note { selection = .note(note.id) }
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("New note (⌘N)")
+                        .keyboardShortcut("n", modifiers: .command)
+                    }
+                }
+
+                Section {
+                    if notebooksExpanded {
+                        ForEach(notebooks) { nb in
+                            if renamingNotebookId == nb.id {
+                                InlineNameField(
+                                    text: $inlineRenameName,
+                                    placeholder: nb.name,
+                                    systemImage: "folder"
+                                ) {
+                                    let name = inlineRenameName.trimmingCharacters(in: .whitespaces)
+                                    if !name.isEmpty {
+                                        var copy = nb
+                                        copy.name = name
+                                        try? NoteStore.shared.updateNotebook(copy)
+                                    }
+                                    renamingNotebookId = nil
+                                } onCancel: {
+                                    renamingNotebookId = nil
+                                }
+                            } else {
+                                NavigationLink(value: MainSelection.notes(.notebook(nb.id))) {
+                                    Label(nb.name, systemImage: "folder")
+                                }
+                                .contextMenu {
+                                    Button {
+                                        renamingNotebookId = nb.id
+                                        inlineRenameName = nb.name
+                                    } label: {
+                                        Label("Rename", systemImage: "pencil")
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) {
+                                        try? NoteStore.shared.deleteNotebook(id: nb.id)
+                                        if case .notes(.notebook(let id)) = selection, id == nb.id {
+                                            selection = .notes(.all)
+                                        }
+                                    } label: {
+                                        Label("Delete Notebook", systemImage: "trash")
+                                    }
+                                }
+                            }
+                        }
+
+                        if isCreatingNotebook {
+                            InlineNameField(
+                                text: $notebookDraftName,
+                                placeholder: "New Notebook",
+                                systemImage: "folder"
+                            ) {
+                                let name = notebookDraftName.trimmingCharacters(in: .whitespaces)
+                                if !name.isEmpty {
+                                    try? NoteStore.shared.createNotebook(name: name)
+                                }
+                                isCreatingNotebook = false
+                                notebookDraftName = ""
+                            } onCancel: {
+                                isCreatingNotebook = false
+                                notebookDraftName = ""
+                            }
+                        }
+                    }
+                } header: {
+                    HStack(alignment: .center) {
+                        CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
+                        Spacer()
+                        Button {
+                            notebooksExpanded = true
+                            isCreatingNotebook = true
+                            notebookDraftName = ""
+                        } label: {
+                            Image(systemName: "plus.circle")
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("New notebook")
+                    }
+                }
+
+                Section {
+                    if notesTagsExpanded {
+                        ForEach(unifiedTags, id: \.self) { tag in
+                            NavigationLink(value: MainSelection.notes(.tag(tag))) {
+                                Label(tag, systemImage: "tag")
+                            }
+                        }
+                    }
+                } header: {
+                    CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
+                }
+
+                Section {
+                    if settingsExpanded {
+                        ForEach(SettingsPane.allCases) { pane in
+                            NavigationLink(value: MainSelection.settings(pane)) {
+                                Label(pane.title, systemImage: pane.systemImage)
+                            }
+                        }
+                    }
+                } header: {
+                    CollapsibleSectionHeader(title: "Settings", isExpanded: $settingsExpanded)
+                }
+            } else {
+                Section {
+                    let results = sidebarSearchResults
+                    if results.isEmpty {
+                        Label("No results", systemImage: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(results) { note in
+                            NavigationLink(value: MainSelection.note(note.id)) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(note.title.isEmpty ? "Untitled" : note.title)
+                                        .font(.body)
+                                        .fontWeight(.medium)
+                                        .lineLimit(1)
+                                    Text(note.updatedAt, style: .relative)
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
                                 }
                             }
                         }
                     }
-
-                    if isCreatingNotebook {
-                        InlineNameField(
-                            text: $notebookDraftName,
-                            placeholder: "New Notebook",
-                            systemImage: "folder"
-                        ) {
-                            let name = notebookDraftName.trimmingCharacters(in: .whitespaces)
-                            if !name.isEmpty {
-                                try? NoteStore.shared.createNotebook(name: name)
-                            }
-                            isCreatingNotebook = false
-                            notebookDraftName = ""
-                        } onCancel: {
-                            isCreatingNotebook = false
-                            notebookDraftName = ""
-                        }
-                    }
+                } header: {
+                    Text("Notes")
+                        .eyebrowStyle()
                 }
-            } header: {
-                HStack(alignment: .center) {
-                    CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
-                    Spacer()
-                    Button {
-                        notebooksExpanded = true
-                        isCreatingNotebook = true
-                        notebookDraftName = ""
-                    } label: {
-                        Image(systemName: "plus.circle")
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("New notebook")
-                }
-            }
-
-            Section {
-                if notesTagsExpanded {
-                    ForEach(unifiedTags, id: \.self) { tag in
-                        NavigationLink(value: MainSelection.notes(.tag(tag))) {
-                            Label(tag, systemImage: "tag")
-                        }
-                    }
-                }
-            } header: {
-                CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
-            }
-
-            Section {
-                if settingsExpanded {
-                    ForEach(SettingsPane.allCases) { pane in
-                        NavigationLink(value: MainSelection.settings(pane)) {
-                            Label(pane.title, systemImage: pane.systemImage)
-                        }
-                    }
-                }
-            } header: {
-                CollapsibleSectionHeader(title: "Settings", isExpanded: $settingsExpanded)
             }
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search…")
@@ -419,6 +449,17 @@ struct MainWindowView: View {
             guard !Task.isCancelled else { return }
             reloadTags()
         }
+    }
+
+    private var sidebarSearchResults: [Note] {
+        guard !searchText.isEmpty else { return [] }
+        let query = searchText.lowercased()
+        return allNotes
+            .filter {
+                $0.title.lowercased().contains(query) ||
+                $0.body.lowercased().contains(query)
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     @ViewBuilder
