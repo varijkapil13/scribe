@@ -11,22 +11,31 @@ struct DailyNoteView: View {
         case draft(Date)
     }
 
+    /// Compact per-day load surfaced inside the expanded month grid. Encoded
+    /// in a small struct (count + dominant priority) so the cell can render a
+    /// priority-tinted count badge without holding full ``TodoTask`` objects.
+    struct DaySummary: Equatable {
+        let taskCount: Int
+        let highestPriority: TodoTask.Priority?
+    }
+
     @State private var state: DailyState
-    @State private var selectedDate: Date
+    @Binding private var selectedDate: Date
     @State private var datesWithNotes: Set<String> = []
-    @State private var showCalendarPopover: Bool = false
+    @State private var taskSummariesByDay: [String: DaySummary] = [:]
     @State private var noteChangeCancellable: AnyCancellable?
+    @State private var taskChangeCancellable: AnyCancellable?
 
     var onNavigate: (String) -> Void
 
-    init(onNavigate: @escaping (String) -> Void) {
+    init(selectedDate: Binding<Date>, onNavigate: @escaping (String) -> Void) {
         self.onNavigate = onNavigate
-        let today = Calendar.current.startOfDay(for: Date())
-        _selectedDate = State(initialValue: today)
-        if let note = try? NoteStore.shared.fetchExistingDailyNote(for: today) {
+        self._selectedDate = selectedDate
+        let day = Calendar.current.startOfDay(for: selectedDate.wrappedValue)
+        if let note = try? NoteStore.shared.fetchExistingDailyNote(for: day) {
             _state = State(initialValue: .existing(note))
         } else {
-            _state = State(initialValue: .draft(today))
+            _state = State(initialValue: .draft(day))
         }
     }
 
@@ -35,7 +44,7 @@ struct DailyNoteView: View {
             DailyNoteHeader(
                 selectedDate: $selectedDate,
                 datesWithNotes: datesWithNotes,
-                showCalendarPopover: $showCalendarPopover,
+                taskSummariesByDay: taskSummariesByDay,
                 onShift: { delta in
                     let cal = Calendar.current
                     if let new = cal.date(byAdding: .day, value: delta, to: selectedDate) {
@@ -72,7 +81,40 @@ struct DailyNoteView: View {
                       receiveValue: { _ in
                           datesWithNotes = Set((try? NoteStore.shared.fetchDailyDates()) ?? [])
                       })
+            taskChangeCancellable = TaskStore.shared.observeTasks(filter: .all)
+                .sink(receiveCompletion: { _ in },
+                      receiveValue: { tasks in
+                          taskSummariesByDay = Self.buildSummaries(tasks: tasks)
+                      })
         }
+    }
+
+    /// Buckets incomplete dated tasks by `yyyy-MM-dd` key and reduces each
+    /// bucket to a `DaySummary`. Priority ranking: high > medium > low > none.
+    /// The dominant priority drives the cell badge tint.
+    private static func buildSummaries(tasks: [TodoTask]) -> [String: DaySummary] {
+        var grouped: [String: [TodoTask]] = [:]
+        for task in tasks where task.dueAt != nil {
+            let key = dayKey(for: task.dueAt!)
+            grouped[key, default: []].append(task)
+        }
+        return grouped.mapValues { tasksForDay in
+            let priorityRank: (TodoTask.Priority?) -> Int = { p in
+                switch p {
+                case .high?:   return 3
+                case .medium?: return 2
+                case .low?:    return 1
+                case nil:      return 0
+                }
+            }
+            let highest = tasksForDay.map(\.priority).max { priorityRank($0) < priorityRank($1) } ?? nil
+            return DaySummary(taskCount: tasksForDay.count, highestPriority: highest)
+        }
+    }
+
+    private static func dayKey(for date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     private func selectDate(_ date: Date) {
@@ -91,18 +133,51 @@ struct DailyNoteView: View {
     }
 }
 
+/// Self-contained host for callers that don't need to observe the selected
+/// date externally (e.g. the legacy `NotesFilter.today` / `.daily` routes in
+/// the sidebar). Owns its own state; defaults to today.
+struct StandaloneDailyNoteView: View {
+    @State private var selectedDate: Date = Calendar.current.startOfDay(for: Date())
+    var onNavigate: (String) -> Void
+
+    var body: some View {
+        DailyNoteView(selectedDate: $selectedDate, onNavigate: onNavigate)
+    }
+}
+
 // MARK: - Header
 
-/// Title + horizontal day strip + calendar trigger. Replaces the previous
-/// `HSplitView` calendar sidebar; the full month picker is one click away in
-/// a popover.
+/// Title + adaptive calendar surface + calendar trigger. The bottom region
+/// flips between two layouts driven by ``isCalendarExpanded`` (persisted via
+/// `@AppStorage`):
+///   • **Collapsed** — a horizontal 7-day strip showing the days adjacent to
+///     `selectedDate`. Compact, glanceable.
+///   • **Expanded** — a multi-row month grid centred on `displayedMonth`,
+///     with prev/next month navigation. Full-visibility view without
+///     leaving Today.
+/// The calendar icon in the header toggles between modes; tinted accent
+/// when expanded so the active state is unambiguous.
 private struct DailyNoteHeader: View {
     @Binding var selectedDate: Date
     let datesWithNotes: Set<String>
-    @Binding var showCalendarPopover: Bool
+    let taskSummariesByDay: [String: DailyNoteView.DaySummary]
     let onShift: (Int) -> Void
 
+    @AppStorage("scribe.today.calendarExpanded") private var isCalendarExpanded: Bool = false
+    @State private var displayedMonth: Date
+
     private let calendar = Calendar.current
+
+    init(selectedDate: Binding<Date>,
+         datesWithNotes: Set<String>,
+         taskSummariesByDay: [String: DailyNoteView.DaySummary],
+         onShift: @escaping (Int) -> Void) {
+        self._selectedDate = selectedDate
+        self.datesWithNotes = datesWithNotes
+        self.taskSummariesByDay = taskSummariesByDay
+        self.onShift = onShift
+        _displayedMonth = State(initialValue: Calendar.current.startOfMonth(for: selectedDate.wrappedValue))
+    }
 
     private static let titleFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -162,39 +237,158 @@ private struct DailyNoteHeader: View {
                 .buttonStyle(.plain)
                 .help("Jump to today")
 
-                Button { showCalendarPopover.toggle() } label: {
+                Button {
+                    withAnimation(.easeInOut(duration: DesignTokens.Motion.standard)) {
+                        isCalendarExpanded.toggle()
+                        // Reset the month view to the selected date's month
+                        // each time the user expands — otherwise scrolling
+                        // months back, collapsing, then re-expanding leaves
+                        // the user disoriented far from their selection.
+                        if isCalendarExpanded {
+                            displayedMonth = calendar.startOfMonth(for: selectedDate)
+                        }
+                    }
+                } label: {
                     Image(systemName: "calendar")
                         .font(.system(size: 12, weight: .medium))
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .popover(isPresented: $showCalendarPopover, arrowEdge: .bottom) {
-                    NoteCalendarView { date in
-                        showCalendarPopover = false
-                        selectedDate = calendar.startOfDay(for: date)
-                    }
-                    .frame(width: 280, height: 320)
-                }
-                .help("Pick a date")
+                .foregroundStyle(isCalendarExpanded ? Color.accentColor : .secondary)
+                .help(isCalendarExpanded ? "Hide calendar" : "Show calendar")
+                .accessibilityLabel(isCalendarExpanded ? "Hide month calendar" : "Show month calendar")
+                .accessibilityAddTraits(isCalendarExpanded ? .isSelected : [])
             }
 
-            HStack(spacing: 2) {
-                ForEach(adjacentDays(), id: \.timeIntervalSince1970) { date in
-                    DayPill(
-                        date: date,
-                        isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
-                        isToday: calendar.isDateInToday(date),
-                        hasNote: datesWithNotes.contains(Self.keyFormatter.string(from: date)),
-                        onTap: { selectedDate = calendar.startOfDay(for: date) }
-                    )
-                }
+            if isCalendarExpanded {
+                monthGrid
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                weekStrip
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
         .padding(.top, DesignTokens.Spacing.sm)
         .padding(.bottom, DesignTokens.Spacing.xs)
+        .onChange(of: selectedDate) { _, newDate in
+            // Keep the visible month aligned with the selection so navigating
+            // via prev/next chevrons or the date strip doesn't strand the
+            // expanded grid on a different month.
+            let target = calendar.startOfMonth(for: newDate)
+            if target != displayedMonth {
+                withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+                    displayedMonth = target
+                }
+            }
+        }
+    }
+
+    // MARK: - Collapsed week strip
+
+    private var weekStrip: some View {
+        HStack(spacing: 2) {
+            ForEach(adjacentDays(), id: \.timeIntervalSince1970) { date in
+                DayPill(
+                    date: date,
+                    isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                    isToday: calendar.isDateInToday(date),
+                    hasNote: datesWithNotes.contains(Self.keyFormatter.string(from: date)),
+                    onTap: { selectedDate = calendar.startOfDay(for: date) }
+                )
+            }
+        }
+    }
+
+    // MARK: - Expanded month grid
+
+    private var monthGrid: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Text(displayedMonth, format: .dateTime.month(.wide).year())
+                    .font(DesignTokens.Typography.eyebrow)
+                    .tracking(0.6)
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+
+                Spacer()
+
+                Button { shiftMonth(-1) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Previous month")
+                .accessibilityLabel("Previous month")
+
+                Button { shiftMonth(1) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Next month")
+                .accessibilityLabel("Next month")
+            }
+            .padding(.top, 2)
+
+            HStack(spacing: 2) {
+                ForEach(weekdaySymbols, id: \.self) { symbol in
+                    Text(symbol)
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7),
+                spacing: 2
+            ) {
+                ForEach(monthCells.indices, id: \.self) { idx in
+                    if let date = monthCells[idx] {
+                        let key = Self.keyFormatter.string(from: date)
+                        MonthDayCell(
+                            date: date,
+                            isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                            isToday: calendar.isDateInToday(date),
+                            hasNote: datesWithNotes.contains(key),
+                            summary: taskSummariesByDay[key],
+                            onTap: { selectedDate = calendar.startOfDay(for: date) }
+                        )
+                    } else {
+                        Color.clear.frame(height: 42)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Month calendar")
+    }
+
+    private func shiftMonth(_ delta: Int) {
+        guard let next = calendar.date(byAdding: .month, value: delta, to: displayedMonth) else { return }
+        withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+            displayedMonth = calendar.startOfMonth(for: next)
+        }
+    }
+
+    private var weekdaySymbols: [String] {
+        let symbols = calendar.veryShortWeekdaySymbols
+        let first = calendar.firstWeekday - 1
+        return Array(symbols[first...] + symbols[..<first])
+    }
+
+    private var monthCells: [Date?] {
+        CalendarMonthGrid.cells(forMonth: displayedMonth, calendar: calendar, padTrailing: false)
     }
 
     private var titleText: String {
@@ -292,6 +486,159 @@ private struct DayPill: View {
 
     private var borderTint: Color {
         Color.accentColor.opacity(0.4)
+    }
+}
+
+/// Compact day cell used inside the expanded month grid. Echoes the load
+/// signals from ``TaskCalendarView`` — priority-tinted task count badge plus
+/// a note indicator — at inline scale. Selection follows ``DayPill``'s accent
+/// fill so the two surfaces feel like one design language.
+///
+/// Layout: day number on top, a single info row underneath holding the note
+/// dot (if any) and the task-count capsule (if any). When neither exists the
+/// info row collapses to a fixed spacer height so cell heights stay aligned
+/// across the grid.
+private struct MonthDayCell: View {
+    let date: Date
+    let isSelected: Bool
+    let isToday: Bool
+    let hasNote: Bool
+    let summary: DailyNoteView.DaySummary?
+    let onTap: () -> Void
+
+    @State private var isHovered = false
+    private let calendar = Calendar.current
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 2) {
+                Text("\(calendar.component(.day, from: date))")
+                    .font(.system(size: 12, weight: isSelected || isToday ? .semibold : .regular))
+                    .monospacedDigit()
+                    .foregroundStyle(numberTint)
+
+                infoRow
+                    .frame(height: 12)
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 2)
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
+                    .strokeBorder(borderTint, lineWidth: isToday && !isSelected ? 1 : 0)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.1), value: isHovered)
+        .help(tooltip)
+        .accessibilityLabel(Self.a11yFormatter.string(from: date))
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    // MARK: - Info row
+
+    @ViewBuilder
+    private var infoRow: some View {
+        HStack(spacing: 3) {
+            if hasNote {
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(noteTint)
+                    .accessibilityHidden(true)
+            }
+            if let summary, summary.taskCount > 0 {
+                Text("\(summary.taskCount)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(badgeTextTint(for: summary))
+                    .padding(.horizontal, 4)
+                    .frame(minWidth: 14, minHeight: 12)
+                    .background(
+                        Capsule().fill(badgeFill(for: summary))
+                    )
+            }
+        }
+    }
+
+    private static let a11yFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .full
+        f.timeStyle = .none
+        return f
+    }()
+
+    private var tooltip: String {
+        var parts: [String] = [Self.a11yFormatter.string(from: date)]
+        if let summary, summary.taskCount > 0 {
+            parts.append("\(summary.taskCount) task\(summary.taskCount == 1 ? "" : "s")")
+        }
+        if hasNote { parts.append("daily note") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        if isToday { parts.append("Today") }
+        if let summary, summary.taskCount > 0 {
+            parts.append("\(summary.taskCount) task\(summary.taskCount == 1 ? "" : "s")")
+        }
+        if hasNote { parts.append("has note") }
+        return parts.joined(separator: ", ")
+    }
+
+    // MARK: - Tints
+
+    @ViewBuilder
+    private var background: some View {
+        if isSelected {
+            Color.accentColor
+        } else if isHovered {
+            Color.primary.opacity(0.07)
+        } else {
+            Color.clear
+        }
+    }
+
+    private var numberTint: Color {
+        if isSelected { return .white }
+        if isToday { return Color.accentColor }
+        return .primary
+    }
+
+    private var noteTint: Color {
+        isSelected ? Color.white.opacity(0.9) : Color.accentColor.opacity(0.75)
+    }
+
+    private var borderTint: Color {
+        Color.accentColor.opacity(0.4)
+    }
+
+    private func priorityColor(_ priority: TodoTask.Priority?) -> Color {
+        switch priority {
+        case .high:   return DesignTokens.Palette.priorityHigh
+        case .medium: return DesignTokens.Palette.priorityMedium
+        case .low:    return DesignTokens.Palette.priorityLow
+        case .none:   return Color.accentColor
+        }
+    }
+
+    private func badgeFill(for summary: DailyNoteView.DaySummary) -> Color {
+        if isSelected {
+            return Color.white.opacity(0.9)
+        }
+        return priorityColor(summary.highestPriority)
+    }
+
+    private func badgeTextTint(for summary: DailyNoteView.DaySummary) -> Color {
+        if isSelected {
+            return priorityColor(summary.highestPriority)
+        }
+        return .white
     }
 }
 

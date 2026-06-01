@@ -131,7 +131,7 @@ final class TaskListViewModel: ObservableObject {
                 notes: notes,
                 projectId: projectId,
                 priority: parsed.priority,
-                dueAt: parsed.dueAt ?? quickAddDueDate ?? Calendar.current.startOfDay(for: Date()),
+                dueAt: parsed.dueAt ?? quickAddDueDate ?? defaultDueDate(),
                 tags: parsed.tags
             )
             quickAddText = ""
@@ -139,6 +139,17 @@ final class TaskListViewModel: ObservableObject {
         } catch {
             Log.ui.error("TaskListViewModel.commitQuickAdd failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Default due date for newly quick-added tasks when the user didn't
+    /// type a date phrase and didn't pick one from the calendar popover.
+    /// On the `.dueOn(date)` filter we honour the viewed date so tasks
+    /// added from "yesterday" or "tomorrow" land in that same rail.
+    private func defaultDueDate() -> Date {
+        if case .dueOn(let date) = filter {
+            return Calendar.current.startOfDay(for: date)
+        }
+        return Calendar.current.startOfDay(for: Date())
     }
 
     // MARK: - Row actions

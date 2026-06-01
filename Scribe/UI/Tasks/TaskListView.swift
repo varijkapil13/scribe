@@ -124,7 +124,12 @@ struct TaskListView: View {
     // MARK: - Focus
 
     private func focusQuickAddIfNeeded() {
-        guard filter == .today || filter == .inbox else { return }
+        switch filter {
+        case .today, .inbox, .dueOn:
+            break
+        default:
+            return
+        }
         // Small async hop so NSTextField's notification observer is registered
         // before the post fires (makeNSView runs during the same layout pass as onAppear).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -138,6 +143,8 @@ struct TaskListView: View {
         switch filter {
         case .inbox:        return "Inbox"
         case .today:        return "Today"
+        case .dueOn(let date):
+            return Self.dueOnFormatter.string(from: date)
         case .upcoming:     return "Upcoming"
         case .all:          return "All Tasks"
         case .completed:    return "Completed"
@@ -145,6 +152,12 @@ struct TaskListView: View {
         case .tag(let tag):    return "#\(tag)"
         }
     }
+
+    private static let dueOnFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return f
+    }()
 
     // MARK: - Quick add
 
@@ -379,6 +392,7 @@ struct TaskListView: View {
         switch filter {
         case .inbox:    return "Tasks without a project show up here."
         case .today:    return "Nothing due today."
+        case .dueOn:    return "Nothing scheduled for this day."
         case .upcoming: return "No tasks due in the next 7 days."
         case .completed: return "Completed tasks will appear here."
         default:        return "Add a task with the field above to get started."

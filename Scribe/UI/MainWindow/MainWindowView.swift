@@ -465,7 +465,7 @@ struct MainWindowView: View {
     private func notesDetailView(filter: NotesFilter) -> some View {
         switch filter {
         case .today, .daily:
-            DailyNoteView(onNavigate: { selection = .note($0) })
+            StandaloneDailyNoteView(onNavigate: { selection = .note($0) })
         case .graph:
             GraphView(onNavigate: { selection = .note($0) })
         case .tag(let tag):

@@ -28,6 +28,10 @@ final class TaskStore {
         case inbox
         /// Tasks with `dueAt` falling on the current calendar day (or overdue).
         case today
+        /// Tasks with `dueAt` falling on the given calendar day only. Used by
+        /// the Today destination when the user navigates to a non-today date
+        /// via the date strip — strict day window, no overdue inclusion.
+        case dueOn(Date)
         /// Tasks with `dueAt` within the next 7 days (excluding today).
         case upcoming
         /// Every non-completed task.
@@ -301,6 +305,14 @@ final class TaskStore {
             request = request
                 .filter(Column("completedAt") == nil)
                 .filter(Column("dueAt") != nil && Column("dueAt") < startOfTomorrow)
+        case .dueOn(let date):
+            let startOfDay = calendar.startOfDay(for: date)
+            let startOfNext = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: startOfDay)!)
+            request = request
+                .filter(Column("completedAt") == nil)
+                .filter(Column("dueAt") != nil
+                        && Column("dueAt") >= startOfDay
+                        && Column("dueAt") < startOfNext)
         case .upcoming:
             let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
             let endOfWindow = calendar.date(byAdding: .day, value: 7, to: startOfTomorrow)!
