@@ -65,6 +65,16 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 920, minHeight: 620)
         .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    nav.goBack()
+                } label: {
+                    Image(systemName: "chevron.backward")
+                }
+                .help("Back (⌘[)")
+                .accessibilityLabel("Back")
+                .disabled(!nav.canGoBack)
+            }
             ToolbarItem(placement: .navigation) {
                 RecordingStatusPill(audioManager: appState.audioManager, appState: appState)
                     .onTapGesture {
@@ -124,9 +134,22 @@ struct MainWindowView: View {
             }
         }
         .background(
-            Button("") { showUniversalSearch.toggle() }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-                .hidden()
+            Group {
+                // ⌘K is the conventional palette shortcut; ⌘⇧F kept one release
+                // as a muscle-memory alias.
+                Button("") { showUniversalSearch.toggle() }
+                    .keyboardShortcut("k", modifiers: [.command])
+                Button("") { showUniversalSearch.toggle() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                // History traversal.
+                Button("") { nav.goBack() }
+                    .keyboardShortcut("[", modifiers: [.command])
+                    .disabled(!nav.canGoBack)
+                Button("") { nav.goForward() }
+                    .keyboardShortcut("]", modifiers: [.command])
+                    .disabled(!nav.canGoForward)
+            }
+            .hidden()
         )
         .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
             let pane = (note.object as? SettingsPane) ?? .general
@@ -645,7 +668,7 @@ private struct WelcomeView: View {
 }
 
 /// Tiny inline "keyboard key caps" renderer for shortcut hints.
-private struct KeyCapGroup: View {
+struct KeyCapGroup: View {
     let keys: [String]
 
     var body: some View {
