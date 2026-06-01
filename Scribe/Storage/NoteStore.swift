@@ -459,6 +459,10 @@ final class NoteStore: @unchecked Sendable {
             body: note.body
         )
         do {
+            // Stamp the write before it lands so the vault watcher suppresses
+            // the reconcile this FSEvents change would otherwise trigger —
+            // the DB/index is already current in-process.
+            VaultWriteGuard.shared.recordSelfWrite()
             try fileStore.write(file)
         } catch {
             Log.storage.error("NoteStore.mirrorToDisk failed for \(note.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -471,6 +475,7 @@ final class NoteStore: @unchecked Sendable {
     private func deleteFromDisk(id: String) {
         guard let fileStore else { return }
         do {
+            VaultWriteGuard.shared.recordSelfWrite()
             _ = try fileStore.delete(id: id)
         } catch {
             Log.storage.error("NoteStore.deleteFromDisk failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")

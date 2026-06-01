@@ -204,6 +204,13 @@ final class VaultCoordinator: ObservableObject {
         let root = fileStore.directory.root
         let reconciler = NoteIndexReconciler(fileStore: fileStore, dbManager: dbManager)
         watcher = NoteVaultWatcher(root: root) {
+            // Skip reconciles caused by Scribe's own writes (autosave). The
+            // in-process write already updated the DB/index; reconciling here
+            // is wasted work and, mid-edit, a write-amplification hazard.
+            // External edits inside the window are caught by the next tick.
+            if VaultWriteGuard.shared.isWithinSelfWriteWindow() {
+                return
+            }
             // Watcher callback can fire on any queue — hop to MainActor
             // for state updates, but keep the reconcile (which is purely
             // DB + disk) off main.

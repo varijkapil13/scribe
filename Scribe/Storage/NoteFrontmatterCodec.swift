@@ -30,6 +30,15 @@ enum NoteFrontmatterCodec {
     /// Marker line that opens *and* closes the frontmatter block.
     static let delimiter = "---"
 
+    /// Keys the codec models with typed fields. Any other key parsed from a
+    /// file is preserved verbatim in `NoteFrontmatter.extra` so external
+    /// tools' metadata (and Scribe's own future `cover:`/`icon:`/`font:`)
+    /// survives a round-trip instead of being dropped on the next save.
+    static let knownKeys: Set<String> = [
+        "id", "title", "created", "updated", "notebookId", "tags",
+        "isDailyNote", "dailyDate",
+    ]
+
     // MARK: - Encode
 
     /// Renders `(id, frontmatter)` as a frontmatter block. Always ends with
@@ -49,6 +58,13 @@ enum NoteFrontmatterCodec {
             out.append("dailyDate: \(dateOnlyFormatter.string(from: dailyDate))")
         } else {
             out.append("dailyDate:")
+        }
+        // Re-emit unknown keys verbatim, after the typed block, so a file
+        // touched by another tool (or carrying Scribe's additive metadata)
+        // round-trips losslessly. Values were captured already-encoded on
+        // decode, so they are emitted as-is.
+        for entry in f.extra where !knownKeys.contains(entry.key) {
+            out.append("\(entry.key): \(entry.value)")
         }
         out.append(delimiter)
         return out.joined(separator: "\n") + "\n"
@@ -112,7 +128,8 @@ enum NoteFrontmatterCodec {
             notebookId: parsed["notebookId"].nonEmpty,
             tags: parsed["tags"].map(decodeTags) ?? [],
             isDailyNote: parsed["isDailyNote"]?.lowercased() == "true",
-            dailyDate: parsed["dailyDate"].flatMap { dateOnlyFormatter.date(from: $0) }
+            dailyDate: parsed["dailyDate"].flatMap { dateOnlyFormatter.date(from: $0) },
+            extra: parseExtraEntries(headerLines)
         )
 
         let bodyLines = lines.suffix(from: bodyStartIndex)
@@ -144,13 +161,31 @@ enum NoteFrontmatterCodec {
     private static func parseHeaderLines(_ lines: [String]) -> [String: String] {
         var out: [String: String] = [:]
         for line in lines {
-            guard let colonIdx = line.firstIndex(of: ":") else { continue }
-            let key = String(line[..<colonIdx]).trimmingCharacters(in: .whitespaces)
-            let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty else { continue }
+            guard let (key, value) = splitKeyValue(line) else { continue }
             out[key] = value
         }
         return out
+    }
+
+    /// Unknown keys, in file order, with non-empty verbatim values. Drives
+    /// `NoteFrontmatter.extra` so a re-encode preserves anything the typed
+    /// fields don't model (external tools' metadata; Scribe's `cover:` etc.).
+    private static func parseExtraEntries(_ lines: [String]) -> [FrontmatterEntry] {
+        var out: [FrontmatterEntry] = []
+        for line in lines {
+            guard let (key, value) = splitKeyValue(line) else { continue }
+            guard !knownKeys.contains(key), !value.isEmpty else { continue }
+            out.append(FrontmatterEntry(key: key, value: value))
+        }
+        return out
+    }
+
+    private static func splitKeyValue(_ line: String) -> (key: String, value: String)? {
+        guard let colonIdx = line.firstIndex(of: ":") else { return nil }
+        let key = String(line[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+        let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return nil }
+        return (key, value)
     }
 
     private static func encodeTags(_ tags: [String]) -> String {

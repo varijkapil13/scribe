@@ -11,6 +11,8 @@ struct HeroRecordButton: View {
     @State private var isHovering = false
     @State private var isPressed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Button(action: action) {
@@ -25,23 +27,47 @@ struct HeroRecordButton: View {
             .foregroundStyle(.white)
             .background(
                 Capsule()
-                    .fill(DesignTokens.Palette.recording)
+                    .fill(fillStyle)
                     .shadow(color: DesignTokens.Palette.recording.opacity(isHovering ? 0.35 : 0.22),
                             radius: isHovering ? 18 : 10,
                             x: 0, y: isHovering ? 8 : 4)
             )
             .overlay(
+                // Top-edge highlight gives the pill a physical, light-from-above
+                // read (Craft/IINA glass). Decorative only — flattened under
+                // Increase Contrast / Reduce Transparency.
                 Capsule()
-                    .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                    .strokeBorder(edgeHighlight, lineWidth: 1)
             )
             .scaleEffect(reduceMotion ? 1.0 : (isPressed ? 0.97 : (isHovering ? 1.015 : 1.0)))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .pressAction(onPress: { isPressed = true }, onRelease: { isPressed = false })
-        .animation(.easeOut(duration: DesignTokens.Motion.fast), value: isHovering)
-        .animation(.easeOut(duration: DesignTokens.Motion.fast), value: isPressed)
+        .scribeAnimation(DesignTokens.Motion.snappy, value: isHovering)
+        .scribeAnimation(DesignTokens.Motion.snappy, value: isPressed)
         .accessibilityLabel(isRecording ? "Stop recording" : "Start recording")
+    }
+
+    /// True when decorative depth (gradient fill + edge highlight) is allowed.
+    private var decorative: Bool { !reduceTransparency && contrast != .increased }
+
+    private var fillStyle: AnyShapeStyle {
+        let base = DesignTokens.Palette.recording
+        guard decorative else { return AnyShapeStyle(base) }
+        return AnyShapeStyle(LinearGradient(
+            colors: [base, base.opacity(0.88)],
+            startPoint: .top, endPoint: .bottom
+        ))
+    }
+
+    private var edgeHighlight: LinearGradient {
+        LinearGradient(
+            colors: decorative
+                ? [Color.white.opacity(0.30), Color.white.opacity(0.10)]
+                : [Color.white.opacity(0.15), Color.white.opacity(0.15)],
+            startPoint: .top, endPoint: .bottom
+        )
     }
 }
 

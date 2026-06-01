@@ -14,6 +14,7 @@ struct RecordingStatusPill: View {
 
     @State private var pulsePhase: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
@@ -50,21 +51,37 @@ struct RecordingStatusPill: View {
 
     // MARK: - Dot with live pulse
 
+    @ViewBuilder
     private var statusDot: some View {
-        ZStack {
-            // Outer halo — only visible while recording + not paused + not reduced motion.
-            Circle()
-                .fill(tint.opacity(0.35))
+        if differentiateWithoutColor {
+            // Non-color cue: a distinct glyph per state so meaning doesn't
+            // rely on red-vs-amber-vs-gray alone (Differentiate Without Color).
+            Image(systemName: stateSymbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
                 .frame(width: 14, height: 14)
-                .scaleEffect(showHalo ? (0.9 + pulsePhase * 0.5) : 0.6)
-                .opacity(showHalo ? (0.6 - pulsePhase * 0.6) : 0)
-                .animation(.easeOut(duration: 1.4), value: pulsePhase)
+        } else {
+            ZStack {
+                // Outer halo — only visible while recording + not paused + not reduced motion.
+                Circle()
+                    .fill(tint.opacity(0.35))
+                    .frame(width: 14, height: 14)
+                    .scaleEffect(showHalo ? (0.9 + pulsePhase * 0.5) : 0.6)
+                    .opacity(showHalo ? (0.6 - pulsePhase * 0.6) : 0)
+                    .animation(.easeOut(duration: 1.4), value: pulsePhase)
 
-            Circle()
-                .fill(tint)
-                .frame(width: 8, height: 8)
+                Circle()
+                    .fill(tint)
+                    .frame(width: 8, height: 8)
+            }
+            .frame(width: 14, height: 14)
         }
-        .frame(width: 14, height: 14)
+    }
+
+    private var stateSymbol: String {
+        if audioManager.isPaused { return DesignTokens.Palette.pausedSymbol }
+        if appState.isTranscribing { return DesignTokens.Palette.recordingSymbol }
+        return DesignTokens.Palette.idleSymbol
     }
 
     // MARK: - State derivations
