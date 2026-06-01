@@ -39,6 +39,30 @@ final class TaskListViewModel: ObservableObject {
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
     /// Subtask "n/m" progress per visible task id, for the list-row chip.
     @Published private(set) var subtaskProgress: [String: SubtaskProgress] = [:]
+    /// Active within-bucket sort (pinned always float first). `.smart` keeps the
+    /// SQL order. Set by the view from its persisted per-filter preference.
+    @Published var sortMode: TaskSort = .smart {
+        didSet { if oldValue != sortMode { regroup() } }
+    }
+
+    /// Sort options offered in the list's Sort menu (TickTick parity).
+    enum TaskSort: String, CaseIterable, Identifiable, Sendable {
+        case smart    = "Smart"
+        case dueDate  = "Due date"
+        case priority = "Priority"
+        case title    = "Title"
+        case created  = "Date added"
+        var id: String { rawValue }
+        var systemImage: String {
+            switch self {
+            case .smart:    return "sparkles"
+            case .dueDate:  return "calendar"
+            case .priority: return "flag"
+            case .title:    return "textformat"
+            case .created:  return "clock"
+            }
+        }
+    }
     @Published private(set) var taskTags: [String: [String]] = [:]
     @Published var quickAddText: String = ""
     /// Date selected via the calendar icon in the quick-add bar. Used as a
@@ -122,8 +146,45 @@ final class TaskListViewModel: ObservableObject {
                 effective.append(snapshot)
             }
         }
-        groups = Self.bucket(tasks: effective, calendar: .current, now: Date())
+        let bucketed = Self.bucket(tasks: effective, calendar: .current, now: Date())
+        groups = bucketed.map { (bucket: $0.bucket, tasks: sorted($0.tasks)) }
         reloadSubtaskProgress()
+    }
+
+    /// Re-sorts a bucket's tasks by the active `sortMode`, keeping pinned
+    /// tasks first. `.smart` preserves the SQL order untouched.
+    private func sorted(_ tasks: [TodoTask]) -> [TodoTask] {
+        guard sortMode != .smart else { return tasks }
+        return tasks.sorted { a, b in
+            if a.isPinned != b.isPinned { return a.isPinned }
+            switch sortMode {
+            case .smart:
+                return false
+            case .dueDate:
+                switch (a.dueAt, b.dueAt) {
+                case let (x?, y?): return x != y ? x < y : a.sortOrder < b.sortOrder
+                case (_?, nil):    return true
+                case (nil, _?):    return false
+                case (nil, nil):   return a.sortOrder < b.sortOrder
+                }
+            case .priority:
+                let ra = Self.priorityRank(a.priority), rb = Self.priorityRank(b.priority)
+                return ra != rb ? ra < rb : a.sortOrder < b.sortOrder
+            case .title:
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            case .created:
+                return a.createdAt < b.createdAt
+            }
+        }
+    }
+
+    private static func priorityRank(_ p: TodoTask.Priority?) -> Int {
+        switch p {
+        case .high:   return 0
+        case .medium: return 1
+        case .low:    return 2
+        case nil:     return 3
+        }
     }
 
     /// Batch-loads the "n/m" chip progress for the fetched task set (covers

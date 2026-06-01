@@ -37,6 +37,8 @@ struct TaskListView: View {
     /// leaks into every other filter (the old shared local-`Set` bug). Loaded
     /// on appear / filter switch; written on every toggle.
     @State private var collapsedBuckets: Set<String> = []
+    /// Active sort, persisted per filter (TickTick parity).
+    @State private var sortMode: TaskListViewModel.TaskSort = .smart
 
     init(filter: TaskStore.Filter, focusTaskId: String? = nil) {
         self.filter = filter
@@ -71,6 +73,49 @@ struct TaskListView: View {
         UserDefaults.standard.set(Array(collapsedBuckets), forKey: collapseStorageKey)
     }
 
+    private var sortStorageKey: String { "tasks.sort.\(Self.filterKey(filter))" }
+
+    private func loadSortMode() {
+        let raw = UserDefaults.standard.string(forKey: sortStorageKey)
+            ?? TaskListViewModel.TaskSort.smart.rawValue
+        sortMode = TaskListViewModel.TaskSort(rawValue: raw) ?? .smart
+        viewModel.sortMode = sortMode
+    }
+
+    private func setSort(_ sort: TaskListViewModel.TaskSort) {
+        sortMode = sort
+        viewModel.sortMode = sort
+        UserDefaults.standard.set(sort.rawValue, forKey: sortStorageKey)
+    }
+
+    private var listControlsBar: some View {
+        HStack {
+            Spacer()
+            Menu {
+                ForEach(TaskListViewModel.TaskSort.allCases) { sort in
+                    Button { setSort(sort) } label: {
+                        Label(sort.rawValue,
+                              systemImage: sortMode == sort ? "checkmark" : sort.systemImage)
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up.arrow.down")
+                    Text(sortMode == .smart ? "Sort" : sortMode.rawValue)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort tasks")
+            .accessibilityLabel("Sort: \(sortMode.rawValue)")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, 3)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             // Left: quick-add + task list
@@ -80,6 +125,8 @@ struct TaskListView: View {
                     .padding(.top, DesignTokens.Spacing.sm)
                     .padding(.bottom, DesignTokens.Spacing.xs)
                     .background(DesignTokens.Palette.surface)
+
+                listControlsBar
 
                 Divider()
 
@@ -107,6 +154,7 @@ struct TaskListView: View {
         .onAppear {
             viewModel.start()
             loadCollapsedBuckets()
+            loadSortMode()
             if let focusTaskId {
                 viewModel.focusedTaskId = focusTaskId
             } else {
@@ -119,6 +167,7 @@ struct TaskListView: View {
             selectedTask = nil
             todayUpcomingExpanded = false
             loadCollapsedBuckets()
+            loadSortMode()
         }
         // Focus is handled directly by HighlightingQuickAddField observing .scribeFocusQuickAdd.
         .confirmationDialog(
