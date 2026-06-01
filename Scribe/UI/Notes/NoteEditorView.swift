@@ -245,19 +245,22 @@ struct NoteEditorView: View {
 
     private func loadPerNoteTypeface() {
         guard let noteId else { perNoteTypefaceRaw = ""; return }
-        perNoteTypefaceRaw = UserDefaults.standard.string(
-            forKey: NoteTypeface.storageKey(forNoteId: noteId)
-        ) ?? ""
+        // Read from the note's `font:` frontmatter (Obsidian-compatible,
+        // survives vault moves) — falling back to any legacy app-side value.
+        if let font = NoteStore.shared.noteFont(id: noteId) {
+            perNoteTypefaceRaw = font
+        } else {
+            perNoteTypefaceRaw = UserDefaults.standard.string(
+                forKey: NoteTypeface.storageKey(forNoteId: noteId)
+            ) ?? ""
+        }
     }
 
     private func savePerNoteTypeface(_ value: String) {
         guard let noteId else { return }
-        let key = NoteTypeface.storageKey(forNoteId: noteId)
-        if value.isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
-        } else {
-            UserDefaults.standard.set(value, forKey: key)
-        }
+        // Persist to frontmatter (portable); clear the legacy app-side key.
+        NoteStore.shared.setNoteFont(id: noteId, value.isEmpty ? nil : value)
+        UserDefaults.standard.removeObject(forKey: NoteTypeface.storageKey(forNoteId: noteId))
     }
 
     // MARK: - Wiki links (unchanged)

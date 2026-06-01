@@ -130,4 +130,35 @@ final class NoteStoreHybridTests: XCTestCase {
         let listed = try fileStore.listAll()
         XCTAssertTrue(listed.isEmpty)
     }
+
+    // MARK: - Per-note typeface in frontmatter
+
+    func testNoteFontRoundTripsThroughFrontmatter() throws {
+        let note = try store.createNote(title: "Styled", body: "Hello")
+        XCTAssertNil(store.noteFont(id: note.id))
+
+        store.setNoteFont(id: note.id, "serif")
+        XCTAssertEqual(store.noteFont(id: note.id), "serif")
+
+        // Persisted to the actual file's frontmatter (Obsidian-compatible).
+        let url = try XCTUnwrap(fileStore.findURL(for: note.id))
+        XCTAssertEqual(try fileStore.read(at: url).frontmatter.extraValue(forKey: "font"), "serif")
+
+        store.setNoteFont(id: note.id, nil)
+        XCTAssertNil(store.noteFont(id: note.id))
+    }
+
+    func testFontSurvivesDBDrivenWrite() throws {
+        var note = try store.createNote(title: "Styled", body: "Body")
+        store.setNoteFont(id: note.id, "mono")
+
+        // A normal DB-driven save rebuilds frontmatter from the DB — the font
+        // extra must NOT be clobbered (mirrorToDisk merges existing extras).
+        note.body = "Edited body"
+        try store.updateNote(note, tags: [])
+
+        XCTAssertEqual(store.noteFont(id: note.id), "mono",
+                       "per-note font in frontmatter must survive a DB-driven write")
+        XCTAssertEqual(try store.fetchNote(id: note.id)?.body, "Edited body")
+    }
 }

@@ -445,6 +445,15 @@ final class NoteStore: @unchecked Sendable {
     /// roll back a successful DB write. Slice 4 will flip the polarity.
     private func mirrorToDisk(note: Note, tags: [String]) {
         guard let fileStore else { return }
+        // Preserve any unknown frontmatter keys already on disk (per-note
+        // `font:`, external tools' `aliases:`/`cover:`, …). We rebuild the
+        // typed fields from the DB, so without this merge a DB-driven write
+        // would silently drop them.
+        let existingExtra: [FrontmatterEntry] = {
+            guard let url = try? fileStore.findURL(for: note.id),
+                  let parsed = try? fileStore.read(at: url) else { return [] }
+            return parsed.frontmatter.extra
+        }()
         let file = NoteFile(
             id: note.id,
             frontmatter: NoteFrontmatter(
@@ -454,7 +463,8 @@ final class NoteStore: @unchecked Sendable {
                 notebookId: note.notebookId,
                 tags: Self.normalizeTags(tags),
                 isDailyNote: note.isDailyNote,
-                dailyDate: note.dailyDate.flatMap(Self.parseDailyDate(_:))
+                dailyDate: note.dailyDate.flatMap(Self.parseDailyDate(_:)),
+                extra: existingExtra
             ),
             body: note.body
         )
@@ -479,6 +489,34 @@ final class NoteStore: @unchecked Sendable {
             _ = try fileStore.delete(id: id)
         } catch {
             Log.storage.error("NoteStore.deleteFromDisk failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Per-note typeface (Obsidian-compatible frontmatter)
+
+    /// Reads the per-note typeface from the file's `font:` frontmatter key.
+    /// `nil` means "follow the app default".
+    func noteFont(id: String) -> String? {
+        guard let fileStore,
+              let url = try? fileStore.findURL(for: id),
+              let file = try? fileStore.read(at: url) else { return nil }
+        return file.frontmatter.extraValue(forKey: "font")
+    }
+
+    /// Persists the per-note typeface to frontmatter (nil clears it). Disk-only
+    /// — `font` isn't a DB column, so the `.md` file stays the source of truth
+    /// and the choice survives external edits / vault moves. Preserves body +
+    /// other extras.
+    func setNoteFont(id: String, _ font: String?) {
+        guard let fileStore,
+              let url = try? fileStore.findURL(for: id),
+              var file = try? fileStore.read(at: url) else { return }
+        file.frontmatter.setExtra("font", font)
+        do {
+            VaultWriteGuard.shared.recordSelfWrite()
+            try fileStore.write(file)
+        } catch {
+            Log.storage.error("NoteStore.setNoteFont failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
