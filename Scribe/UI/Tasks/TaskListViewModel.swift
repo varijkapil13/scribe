@@ -37,6 +37,8 @@ final class TaskListViewModel: ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
+    /// Subtask "n/m" progress per visible task id, for the list-row chip.
+    @Published private(set) var subtaskProgress: [String: SubtaskProgress] = [:]
     @Published private(set) var taskTags: [String: [String]] = [:]
     @Published var quickAddText: String = ""
     /// Date selected via the calendar icon in the quick-add bar. Used as a
@@ -121,6 +123,14 @@ final class TaskListViewModel: ObservableObject {
             }
         }
         groups = Self.bucket(tasks: effective, calendar: .current, now: Date())
+        reloadSubtaskProgress()
+    }
+
+    /// Batch-loads the "n/m" chip progress for the fetched task set (covers
+    /// both grouped + search rows). Refreshes on each task change / filter
+    /// switch — the inspector shows live checklist state regardless.
+    private func reloadSubtaskProgress() {
+        subtaskProgress = (try? store.subtaskProgress(for: latestTasks.map(\.id))) ?? [:]
     }
 
     func stop() {

@@ -531,7 +531,8 @@ struct TaskListView: View {
             onCyclePriority: { viewModel.cyclePriority(for: task) },
             onSetPriority: { viewModel.setPriority($0, for: task) },
             onMoveProject: { viewModel.moveToProject($0, for: task) },
-            onRename: { viewModel.setTitle($0, for: task) }
+            onRename: { viewModel.setTitle($0, for: task) },
+            subtaskProgress: viewModel.subtaskProgress[task.id]
         )
         .onTapGesture {
             viewModel.focusedTaskId = task.id
@@ -833,6 +834,8 @@ struct TaskRowView: View {
     let onSetPriority: (TodoTask.Priority?) -> Void
     let onMoveProject: (String?) -> Void
     let onRename: (String) -> Void
+    /// Checklist progress for the row "n/m" chip (nil when the task has none).
+    var subtaskProgress: SubtaskProgress? = nil
 
     @State private var isHovered: Bool = false
     @State private var showDuePopover = false
@@ -937,7 +940,24 @@ struct TaskRowView: View {
                     .accessibilityHidden(true)
             }
 
+            subtaskChip
+
             dueControl
+        }
+    }
+
+    @ViewBuilder
+    private var subtaskChip: some View {
+        if let progress = subtaskProgress, progress.total > 0 {
+            HStack(spacing: 2) {
+                Image(systemName: progress.isComplete ? "checklist.checked" : "checklist")
+                    .font(.system(size: 9))
+                Text("\(progress.completed)/\(progress.total)")
+                    .font(.system(size: 10, weight: .medium))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(progress.isComplete ? Color.accentColor : .secondary)
+            .accessibilityLabel("\(progress.completed) of \(progress.total) subtasks completed")
         }
     }
 
