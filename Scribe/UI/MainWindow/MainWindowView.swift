@@ -8,8 +8,10 @@ enum MainSelection: Hashable {
     case today
     case tasks(TaskStore.Filter)
     case taskCalendar
+    case task(String)           // taskId — command-bar deep-link
     case note(String)           // noteId
     case notes(NotesFilter)
+    case session(String)        // sessionId — transcript reader deep-link
 }
 
 enum NotesFilter: Hashable {
@@ -63,9 +65,9 @@ extension MainSelection {
     /// switcher highlight and section filtering.
     var surface: Surface {
         switch self {
-        case .live, .today:         return .capture
-        case .note, .notes:         return .notes
-        case .tasks, .taskCalendar: return .tasks
+        case .live, .today, .session:     return .capture
+        case .note, .notes:               return .notes
+        case .tasks, .taskCalendar, .task: return .tasks
         }
     }
 }
@@ -94,6 +96,7 @@ struct MainWindowView: View {
     @State private var isCreatingTopNotebook: Bool = false
     @State private var topNotebookDraftName: String = ""
     @State private var detailNote: Note? = nil
+    @State private var detailSession: Session? = nil
     @State private var tagReloadTask: Task<Void, Never>? = nil
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showOnboarding = false
@@ -664,8 +667,29 @@ struct MainWindowView: View {
             .task(id: id) {
                 detailNote = try? NoteStore.shared.fetchNote(id: id)
             }
+        case .task(let id):
+            // Command-bar deep-link to a single task: open the All list and
+            // focus it (its inspector opens automatically).
+            TaskListView(filter: .all, focusTaskId: id)
+                .id("task-\(id)")
         case .notes(let filter):
             notesDetailView(filter: filter)
+        case .session(let id):
+            Group {
+                if let session = detailSession, session.id == id {
+                    TranscriptDetailView(session: session)
+                        .id(id)
+                } else {
+                    ContentUnavailableView(
+                        "Recording not found",
+                        systemImage: "waveform",
+                        description: Text("This recording may have been deleted.")
+                    )
+                }
+            }
+            .task(id: id) {
+                detailSession = try? TranscriptStore.shared.fetchSession(id: id)
+            }
         }
     }
 }

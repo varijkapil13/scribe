@@ -48,21 +48,21 @@ final class UniversalSearchSectionBuilderTests: XCTestCase {
         XCTAssertEqual(section.results.first?.title, "Task 0")
     }
 
-    func testTasksSectionRoutesToTasksAll() {
+    func testTasksSectionDeepLinksToTheTask() {
         let task = TodoTask(id: "t1", title: "T")
         let section = UniversalSearchSectionBuilder.tasksSection(from: [task])
-        // Tasks search routes to the .tasks(.all) destination — the
-        // detail panel inside that view filters down to the actual hit.
-        if case .tasks(let filter) = section.results.first?.destination {
-            XCTAssertEqual(filter, .all)
+        // A task hit deep-links to that task (.task(id)) — it opens the All
+        // list focused on the task, not a generic .tasks(.all) dump.
+        if case .task(let id) = section.results.first?.destination {
+            XCTAssertEqual(id, "t1")
         } else {
-            XCTFail("Tasks section should route to .tasks(.all)")
+            XCTFail("Tasks section should deep-link to .task(id)")
         }
     }
 
     // MARK: - Transcripts
 
-    func testTranscriptsSectionRoutesToOwningNote() {
+    func testTranscriptsSectionDeepLinksToTheSession() {
         let session = Session(id: "s1", title: "Meeting", noteId: "n1")
         let segment = Segment(sessionId: "s1", startMs: 0, endMs: 1000,
                               speaker: "you", text: "We discussed scope")
@@ -70,25 +70,25 @@ final class UniversalSearchSectionBuilderTests: XCTestCase {
             from: [(session, [segment])]
         )
         XCTAssertEqual(section.results.count, 1)
-        if case .note(let id) = section.results.first?.destination {
-            XCTAssertEqual(id, "n1",
-                           "Transcript hits must route to the owning note, not the (removed) transcript view.")
+        if case .session(let id) = section.results.first?.destination {
+            XCTAssertEqual(id, "s1",
+                           "Transcript hits deep-link to the transcript reader (.session(id)).")
         } else {
-            XCTFail("Transcript hit didn't route to .note(noteId)")
+            XCTFail("Transcript hit didn't route to .session(id)")
         }
     }
 
-    func testTranscriptsSectionFiltersOutOrphanSessions() {
-        // Defence in depth: post-v11 every session has a noteId, but if
-        // one survives the filter must drop it so navigation can't break.
-        let orphan = Session(id: "s1", title: "Orphan", noteId: nil)
-        let bound = Session(id: "s2", title: "Bound", noteId: "n1")
+    func testTranscriptsSectionIncludesEverySession() {
+        // Every hit is reachable via .session(id) regardless of noteId, so no
+        // session is silently dropped from search.
+        let a = Session(id: "s1", title: "A", noteId: nil)
+        let b = Session(id: "s2", title: "B", noteId: "n1")
         let segment = Segment(sessionId: "s2", startMs: 0, endMs: 1, speaker: "you", text: "x")
         let section = UniversalSearchSectionBuilder.transcriptsSection(
-            from: [(orphan, []), (bound, [segment])]
+            from: [(a, []), (b, [segment])]
         )
-        XCTAssertEqual(section.results.count, 1)
-        XCTAssertEqual(section.results.first?.id, "transcript-s2")
+        XCTAssertEqual(section.results.count, 2)
+        XCTAssertEqual(Set(section.results.map(\.id)), ["transcript-s1", "transcript-s2"])
     }
 
     func testTranscriptsSectionFallsBackToUntitledSession() {

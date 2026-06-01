@@ -5,6 +5,9 @@ import SwiftUI
 struct TaskListView: View {
 
     let filter: TaskStore.Filter
+    /// When set (command-bar / ⌘K deep-link), focus this task and open its
+    /// inspector once the list loads.
+    private let focusTaskId: String?
 
     @StateObject private var viewModel: TaskListViewModel
     @State private var selectedTask: TodoTask?
@@ -35,8 +38,9 @@ struct TaskListView: View {
     /// on appear / filter switch; written on every toggle.
     @State private var collapsedBuckets: Set<String> = []
 
-    init(filter: TaskStore.Filter) {
+    init(filter: TaskStore.Filter, focusTaskId: String? = nil) {
         self.filter = filter
+        self.focusTaskId = focusTaskId
         _viewModel = StateObject(wrappedValue: TaskListViewModel(filter: filter))
     }
 
@@ -103,7 +107,11 @@ struct TaskListView: View {
         .onAppear {
             viewModel.start()
             loadCollapsedBuckets()
-            focusQuickAddIfNeeded()
+            if let focusTaskId {
+                viewModel.focusedTaskId = focusTaskId
+            } else {
+                focusQuickAddIfNeeded()
+            }
         }
         .onDisappear { viewModel.stop() }
         .onChange(of: filter) { _, newFilter in

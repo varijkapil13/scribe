@@ -35,26 +35,24 @@ enum UniversalSearchSectionBuilder {
                 id: "task-\(task.id)",
                 title: task.title,
                 snippet: String(task.notes.prefix(80)),
-                destination: .tasks(.all),
+                destination: .task(task.id),
                 icon: "checkmark.circle"
             )
         }
         return SearchResultSection(id: "tasks", title: "Tasks", results: Array(results))
     }
 
-    /// Transcript hits route to the *owning note* — a session without a
-    /// noteId is impossible after migration v11, but we filter defensively
-    /// so a single stale row doesn't crash navigation.
+    /// Transcript hits deep-link to the transcript reader (`.session(id)`) so
+    /// a search lands on the actual recording, not its owning note's list.
     static func transcriptsSection(from hits: [(Session, [Segment])]) -> SearchResultSection {
-        let results: [SearchResult] = hits.prefix(perSectionLimit).compactMap { pair in
+        let results: [SearchResult] = hits.prefix(perSectionLimit).map { pair in
             let (session, segments) = pair
-            guard let noteId = session.noteId else { return nil }
             let snippet = segments.first?.text ?? ""
             return SearchResult(
                 id: "transcript-\(session.id)",
                 title: session.title.isEmpty ? "Untitled session" : session.title,
                 snippet: String(snippet.prefix(80)),
-                destination: .note(noteId),
+                destination: .session(session.id),
                 icon: "waveform"
             )
         }
