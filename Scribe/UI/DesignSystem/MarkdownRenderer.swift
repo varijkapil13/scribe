@@ -476,6 +476,17 @@ enum MarkdownRenderer {
         out.addAttribute(.blockquoteDepth, value: depth, range: clamped)
         out.addAttribute(.foregroundColor, value: theme.secondary, range: clamped)
 
+        // Obsidian callout: `> [!type]` on the block's first line tints the
+        // whole block (a coloured bar + soft fill drawn by `drawBlockquotes`).
+        if depth == 1,
+           let match = Self.calloutRegex.firstMatch(in: out.string, range: clamped),
+           let kindRange = Range(match.range(at: 1), in: out.string) {
+            let firstNewline = (out.string as NSString).range(of: "\n", range: clamped).location
+            if firstNewline == NSNotFound || match.range.location < firstNewline {
+                out.addAttribute(.calloutKind, value: String(out.string[kindRange]).lowercased(), range: clamped)
+            }
+        }
+
         // Italic for blockquotes (Bear convention — visual cue beyond just
         // the left bar). Apply over the whole block before children recurse
         // so existing bold runs inherit italic too.
@@ -909,6 +920,11 @@ enum MarkdownRenderer {
     private static let blockquotePrefixRegex: NSRegularExpression = {
         // swiftlint:disable:next force_try
         return try! NSRegularExpression(pattern: #"^>+ ?"#)
+    }()
+    /// Obsidian callout marker: `[!type]` (optionally `[!type]+`/`-` for fold).
+    private static let calloutRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return try! NSRegularExpression(pattern: #"\[!([A-Za-z]+)\][-+]?"#)
     }()
     private static let orderedListPrefixRegex: NSRegularExpression = {
         // swiftlint:disable:next force_try

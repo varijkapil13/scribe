@@ -10,6 +10,22 @@ extension NSAttributedString.Key {
     static let blockquoteLine = NSAttributedString.Key("scribe.blockquote")  // Bool: blockquote line
     static let horizontalRule = NSAttributedString.Key("scribe.hr")          // Bool: HR line
     static let checklistMarker = NSAttributedString.Key("scribe.checklist")  // Bool: checkbox attachment
+    static let calloutKind = NSAttributedString.Key("scribe.calloutKind")    // String: callout type (note/tip/…)
+}
+
+/// Obsidian-style callout types (`> [!note]`). Maps a type keyword to its tint
+/// + SF Symbol so the editor can draw a coloured bar + soft background.
+enum MarkdownCallout {
+    static func tint(for kind: String) -> NSColor {
+        switch kind.lowercased() {
+        case "tip", "success", "hint":            return .systemGreen
+        case "warning", "caution", "attention":   return .systemOrange
+        case "danger", "error", "bug", "failure": return .systemRed
+        case "important", "question", "help":      return .systemPurple
+        case "quote", "cite":                      return .tertiaryLabelColor
+        default:                                    return .systemBlue   // note / info / abstract
+        }
+    }
 }
 
 /// Bear-style inline markdown editor: a single NSTextView that formats
@@ -1182,17 +1198,32 @@ final class MarkdownNSTextView: NSTextView {
 
     private func drawBlockquotes(storage: NSTextStorage, lm: NSLayoutManager,
                                    tc: NSTextContainer, origin: NSPoint) {
-        // Bear-style blockquote: just an accent-tinted vertical bar to the
-        // left of the indented italic text. No background — the italic + indent
-        // + bar combination is the visual; adding a fill makes it feel boxed.
-        let barColor = NSColor.tertiaryLabelColor.withAlphaComponent(0.6)
+        // Bear-style blockquote: an accent-tinted vertical bar to the left of
+        // the indented italic text. An Obsidian callout (`> [!type]`) upgrades
+        // this to a type-tinted bar + a soft background panel.
+        let defaultBar = NSColor.tertiaryLabelColor.withAlphaComponent(0.6)
 
         forContiguousRanges(in: storage, key: .blockquoteLine) { charRange in
             let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
             let cr = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
-            // 3pt bar, sitting flush against the leading edge of the text
-            // container, full block height with a tiny inset top/bottom so it
-            // doesn't crash into the line above/below.
+
+            let kind = storage.attribute(.calloutKind, at: charRange.location, effectiveRange: nil) as? String
+            let barColor = kind.map { MarkdownCallout.tint(for: $0) } ?? defaultBar
+
+            // Callout: soft tinted background panel behind the whole block.
+            if kind != nil {
+                let panel = NSRect(
+                    x: origin.x + 2,
+                    y: cr.minY + origin.y,
+                    width: max(0, bounds.width - origin.x * 2 - 4),
+                    height: cr.height
+                )
+                barColor.withAlphaComponent(0.08).setFill()
+                NSBezierPath(roundedRect: panel, xRadius: 6, yRadius: 6).fill()
+            }
+
+            // 3pt bar flush against the leading edge, inset top/bottom so it
+            // doesn't crash into the neighbouring lines.
             let barRect = NSRect(
                 x: origin.x + 4,
                 y: cr.minY + origin.y + 2,
