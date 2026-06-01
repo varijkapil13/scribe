@@ -10,6 +10,8 @@ struct SegmentView: View {
     var isSelected: Bool = false
     var onToggleSelection: (() -> Void)? = nil
 
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             if isSelecting {
@@ -21,6 +23,8 @@ struct SegmentView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 4)
+                .accessibilityLabel(isSelected ? "Deselect segment" : "Select segment")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
 
             // Vertical accent bar keyed to the speaker.
@@ -32,6 +36,14 @@ struct SegmentView: View {
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
+                    // Non-color speaker cue: a glyph supplements the tinted chip
+                    // for users running Differentiate Without Color.
+                    if differentiateWithoutColor {
+                        Image(systemName: SpeakerGlyph.symbol(for: segment.speaker))
+                            .font(.system(.caption2, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
                     SpeakerChip(speaker: segment.speaker)
                     Text(segment.formattedTimestamp)
                         .font(.system(.caption2, design: .monospaced))

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 /// ViewModel that loads and manages data for a single transcript session.
 ///
@@ -22,6 +23,18 @@ final class TranscriptDetailViewModel: ObservableObject {
     /// link exists.
     @Published var convertedActionItems: Set<UUID> = []
     @Published var summaryError: String?
+    @Published var analysisError: String?
+
+    /// Whether on-device Apple Intelligence is usable right now. Read once on
+    /// appear (and re-checked when a generation throws `notAvailable`) so the
+    /// reader can show a calm "unavailable on this Mac" state *before* the user
+    /// taps Generate, instead of only surfacing it as a post-tap error.
+    @Published var intelligenceAvailability: AppleIntelligenceAvailability = .available
+
+    /// Monotonic counters bumped whenever fresh AI content lands. Views observe
+    /// these to drive a reduce-motion-gated reveal of the generated text.
+    @Published private(set) var summaryRevealToken: Int = 0
+    @Published private(set) var analysisRevealToken: Int = 0
 
     // MARK: - Selection State (for moving segments)
 
@@ -177,6 +190,7 @@ final class TranscriptDetailViewModel: ObservableObject {
         isGeneratingSummary = true
         summaryError = nil
         defer { isGeneratingSummary = false }
+        announce("Generating summary with Apple Intelligence")
 
         let segmentData = segments.map {
             (speaker: $0.speaker, text: $0.text, timestamp: $0.formattedTimestamp)
@@ -190,17 +204,47 @@ final class TranscriptDetailViewModel: ObservableObject {
             )
             try? store.saveSummary(summary)
             meetingSummary = summary
+            summaryRevealToken &+= 1
             Log.intelligence.info("generateSummary succeeded — \(summary.actionItems.count) action items")
+            announce("Summary ready. \(summary.actionItems.count) action item\(summary.actionItems.count == 1 ? "" : "s") found.")
         } catch {
             summaryError = error.localizedDescription
+            refreshIntelligenceAvailability()
             Log.intelligence.error("generateSummary failed: \(error.localizedDescription)")
+            announce("Summary generation failed.")
         }
+    }
+
+    /// Re-queries Apple Intelligence availability and stores it for the UI. Cheap
+    /// enough to call on appear and after any generation that throws.
+    func refreshIntelligenceAvailability() {
+        intelligenceAvailability = AppleIntelligenceAvailability.current
+    }
+
+    /// Posts a VoiceOver announcement for generation lifecycle moments. No-op
+    /// for sighted users; routed through AppKit's accessibility notification so
+    /// it doesn't depend on a particular view being focused.
+    private func announce(_ message: String) {
+        NSAccessibility.post(
+            element: NSApp as Any,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue
+            ]
+        )
     }
 
     /// Runs NaturalLanguage analysis (entities, sentiment, topics, language detection)
     /// on the transcript segments.
     func runAnalysis() {
+        guard !segments.isEmpty else {
+            analysisError = "Transcript is empty — record or move segments back before analysing."
+            return
+        }
         isAnalyzing = true
+        analysisError = nil
+        announce("Analyzing transcript")
         let capturedSegments = segments
         let sessionId = session.id
         Task {
@@ -210,7 +254,9 @@ final class TranscriptDetailViewModel: ObservableObject {
 
             try? store.saveEntities(analysis.entities, sessionId: sessionId)
             transcriptAnalysis = analysis
+            analysisRevealToken &+= 1
             isAnalyzing = false
+            announce("Analysis ready.")
         }
     }
 

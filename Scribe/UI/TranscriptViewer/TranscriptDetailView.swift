@@ -14,6 +14,11 @@ struct TranscriptDetailView: View {
     @State var showMoveSheet: Bool = false
     @State var openedTask: TodoTask?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @FocusState private var focusedTab: DetailTab?
+
     private var session: Session { viewModel.session }
 
     enum DetailTab: String, CaseIterable {
@@ -89,8 +94,12 @@ struct TranscriptDetailView: View {
                 } label: {
                     Label("Summarize", systemImage: "sparkles")
                 }
-                .disabled(viewModel.isGeneratingSummary || viewModel.segments.isEmpty)
-                .help("Generate an AI summary with Apple Intelligence")
+                .disabled(viewModel.isGeneratingSummary
+                          || viewModel.segments.isEmpty
+                          || !viewModel.intelligenceAvailability.isAvailable)
+                .help(viewModel.intelligenceAvailability.isAvailable
+                      ? "Generate an AI summary with Apple Intelligence"
+                      : "Apple Intelligence is unavailable on this Mac")
 
                 Button {
                     viewModel.runAnalysis()
@@ -145,6 +154,7 @@ struct TranscriptDetailView: View {
             viewModel.loadSegments()
             viewModel.loadSummary()
             viewModel.loadAnalysis()
+            viewModel.refreshIntelligenceAvailability()
             editedTitle = session.title
             editedTags = session.tags.joined(separator: ", ")
         }
@@ -262,14 +272,19 @@ struct TranscriptDetailView: View {
             }
             Spacer()
         }
+        // Left/Right arrows move between tabs when any tab owns keyboard focus,
+        // matching the VoiceOver tab-bar idiom. `selectedTab` follows focus so
+        // the underline + content track together.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Transcript sections")
+        .onKeyPress(.leftArrow) { moveTabFocus(by: -1) }
+        .onKeyPress(.rightArrow) { moveTabFocus(by: 1) }
     }
 
     private func tabButton(for tab: DetailTab) -> some View {
         let isSelected = selectedTab == tab
         return Button {
-            withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
-                selectedTab = tab
-            }
+            selectTab(tab)
         } label: {
             VStack(spacing: 6) {
                 HStack(spacing: DesignTokens.Spacing.xs) {
@@ -288,7 +303,35 @@ struct TranscriptDetailView: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .focusable()
+        .focused($focusedTab, equals: tab)
+        .readerAnimation(selectedTab, reduceMotion: reduceMotion)
+        // Tab semantics: it's a selectable header for the section below.
+        .accessibilityLabel(tab.rawValue)
+        .accessibilityHint("Shows the \(tab.rawValue.lowercased()) section")
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isHeader] : .isHeader)
+    }
+
+    /// Selects a tab, gating the underline animation on Reduce Motion, and
+    /// moves keyboard focus to it so arrow traversal continues from there.
+    private func selectTab(_ tab: DetailTab) {
+        if let animation = ReaderStyle.spring(reduceMotion: reduceMotion) {
+            withAnimation(animation) { selectedTab = tab }
+        } else {
+            selectedTab = tab
+        }
+        focusedTab = tab
+    }
+
+    /// Moves selection/focus by `offset` tabs, clamped to the ends. Returns a
+    /// `KeyPress.Result` so SwiftUI knows whether we handled the arrow.
+    private func moveTabFocus(by offset: Int) -> KeyPress.Result {
+        let tabs = DetailTab.allCases
+        guard let current = tabs.firstIndex(of: focusedTab ?? selectedTab) else { return .ignored }
+        let next = current + offset
+        guard tabs.indices.contains(next) else { return .ignored }
+        selectTab(tabs[next])
+        return .handled
     }
 
     // MARK: - Transcript
@@ -326,14 +369,14 @@ struct TranscriptDetailView: View {
     @ViewBuilder
     private var summarySection: some View {
         if viewModel.isGeneratingSummary {
-            VStack(spacing: DesignTokens.Spacing.md) {
-                ProgressView()
-                    .controlSize(.large)
-                Text("Generating summary with Apple Intelligence…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, minHeight: 280)
+            GenerationSkeleton(
+                title: "Generating summary with Apple Intelligence…",
+                lineWidths: [1.0, 0.94, 0.7, 0.98, 0.62, 0.85]
+            )
+        } else if case .unavailable(let reason) = viewModel.intelligenceAvailability,
+                  viewModel.meetingSummary == nil {
+            IntelligenceUnavailableView(reason: reason)
+                .frame(minHeight: 280)
         } else if let error = viewModel.summaryError {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
@@ -365,6 +408,8 @@ struct TranscriptDetailView: View {
                         .textSelection(.enabled)
                 }
                 .accentCard(tint: .accentColor)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Executive summary. \(summary.summary)")
 
                 if !summary.keyDecisions.isEmpty {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
@@ -413,6 +458,7 @@ struct TranscriptDetailView: View {
                     .accentCard(tint: .orange)
                 }
             }
+            .modifier(RevealModifier(token: viewModel.summaryRevealToken, reduceMotion: reduceMotion))
         } else {
             EmptyStateView(
                 systemImage: "sparkles",
@@ -429,12 +475,18 @@ struct TranscriptDetailView: View {
 
     @ViewBuilder
     private var actionItemsSection: some View {
-        if let summary = viewModel.meetingSummary, !summary.actionItems.isEmpty {
+        if viewModel.isGeneratingSummary {
+            GenerationSkeleton(
+                title: "Extracting action items…",
+                lineWidths: [0.85, 0.6, 0.92, 0.5]
+            )
+        } else if let summary = viewModel.meetingSummary, !summary.actionItems.isEmpty {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                 Text("\(summary.actionItems.count) action item\(summary.actionItems.count == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.bottom, DesignTokens.Spacing.xs)
+                    .accessibilityAddTraits(.isHeader)
 
                 ForEach(summary.actionItems) { item in
                     ActionItemRow(
@@ -450,6 +502,10 @@ struct TranscriptDetailView: View {
                     )
                 }
             }
+            .modifier(RevealModifier(token: viewModel.summaryRevealToken, reduceMotion: reduceMotion))
+        } else if case .unavailable(let reason) = viewModel.intelligenceAvailability {
+            IntelligenceUnavailableView(reason: reason)
+                .frame(minHeight: 280)
         } else {
             EmptyStateView(
                 systemImage: "checklist",
@@ -467,14 +523,30 @@ struct TranscriptDetailView: View {
     @ViewBuilder
     private var insightsSection: some View {
         if viewModel.isAnalyzing {
-            VStack(spacing: DesignTokens.Spacing.md) {
-                ProgressView()
-                    .controlSize(.large)
-                Text("Analyzing transcript…")
+            GenerationSkeleton(
+                title: "Analyzing transcript…",
+                lineWidths: [0.7, 0.95, 0.55, 0.88]
+            )
+        } else if let error = viewModel.analysisError, viewModel.transcriptAnalysis == nil {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Analysis failed")
+                        .font(.system(.headline, weight: .semibold))
+                }
+                Text(error)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Button("Try Again") {
+                    viewModel.runAnalysis()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.segments.isEmpty)
             }
-            .frame(maxWidth: .infinity, minHeight: 280)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accentCard(tint: .orange)
         } else if let analysis = viewModel.transcriptAnalysis {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 InsightCard(
@@ -508,12 +580,20 @@ struct TranscriptDetailView: View {
                         Divider().padding(.vertical, DesignTokens.Spacing.xs)
                         ForEach(Array(analysis.sentiment.perSpeaker.keys.sorted()), id: \.self) { speaker in
                             HStack {
+                                if differentiateWithoutColor {
+                                    Image(systemName: SpeakerGlyph.symbol(for: speaker))
+                                        .font(.system(.caption2, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                        .accessibilityHidden(true)
+                                }
                                 SpeakerChip(speaker: speaker)
                                 Spacer()
                                 Text(String(format: "%.2f", analysis.sentiment.perSpeaker[speaker] ?? 0))
                                     .font(.system(.callout, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(speaker) sentiment \(String(format: "%.2f", analysis.sentiment.perSpeaker[speaker] ?? 0))")
                         }
                     }
                 }
@@ -533,6 +613,9 @@ struct TranscriptDetailView: View {
                                         .tracking(0.5)
                                         .foregroundStyle(.tertiary)
                                     FlowLayoutView(items: filtered) { entity in
+                                        // The glyph is the non-color cue for the
+                                        // entity kind (person / org / place /
+                                        // date); the capsule tint is decorative.
                                         Label(entity.text, systemImage: type.systemImage)
                                             .font(.caption)
                                             .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -540,6 +623,8 @@ struct TranscriptDetailView: View {
                                             .background(
                                                 Capsule().fill(Color.secondary.opacity(0.12))
                                             )
+                                            .accessibilityElement(children: .ignore)
+                                            .accessibilityLabel("\(entity.text), \(type.rawValue)")
                                     }
                                 }
                                 .padding(.vertical, DesignTokens.Spacing.xs)
@@ -573,6 +658,7 @@ struct TranscriptDetailView: View {
                     }
                 }
             }
+            .modifier(RevealModifier(token: viewModel.analysisRevealToken, reduceMotion: reduceMotion))
         } else {
             EmptyStateView(
                 systemImage: "chart.bar.xaxis",
@@ -603,6 +689,8 @@ private struct ActionItemRow: View {
     let onToggle: () -> Void
     var onConvert: (() -> Void)? = nil
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             Button(action: onToggle) {
@@ -613,6 +701,8 @@ private struct ActionItemRow: View {
             }
             .buttonStyle(.plain)
             .padding(.top, 2)
+            .accessibilityLabel(isCompleted ? "Mark as not done" : "Mark as done")
+            .accessibilityAddTraits(isCompleted ? .isSelected : [])
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 Text(item.description)
@@ -649,12 +739,26 @@ private struct ActionItemRow: View {
                         .help(isConverted
                               ? "Open the linked task in the editor"
                               : "Create a task from this action item")
+                        .accessibilityLabel(isConverted ? "Open linked task" : "Convert to task")
                     }
                 }
             }
         }
         .cardStyle(padding: DesignTokens.Spacing.md, radius: DesignTokens.Radius.md)
-        .animation(.easeOut(duration: DesignTokens.Motion.fast), value: isCompleted)
+        .animation(reduceMotion ? nil : .easeOut(duration: DesignTokens.Motion.fast), value: isCompleted)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    /// A spoken summary of the action item: status, description, then owner /
+    /// deadline / priority when present. The toggle + convert buttons remain
+    /// individually focusable inside this container.
+    private var accessibilityDescription: String {
+        var parts: [String] = [isCompleted ? "Done" : "To do", item.description]
+        if let assignee = item.assignee, !assignee.isEmpty { parts.append("assigned to \(assignee)") }
+        if let deadline = item.deadline, !deadline.isEmpty { parts.append("due \(deadline)") }
+        if let priority = item.priority { parts.append("\(priority.rawValue) priority") }
+        return parts.joined(separator: ", ")
     }
 }
 
