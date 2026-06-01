@@ -6,6 +6,7 @@ import SwiftUI
 enum MainSelection: Hashable {
     case live
     case today
+    case recordings             // transcript archive (browsable session library)
     case tasks(TaskStore.Filter)
     case taskCalendar
     case task(String)           // taskId — command-bar deep-link
@@ -65,9 +66,9 @@ extension MainSelection {
     /// switcher highlight and section filtering.
     var surface: Surface {
         switch self {
-        case .live, .today, .session:     return .capture
-        case .note, .notes:               return .notes
-        case .tasks, .taskCalendar, .task: return .tasks
+        case .live, .today, .session, .recordings: return .capture
+        case .note, .notes:                        return .notes
+        case .tasks, .taskCalendar, .task:         return .tasks
         }
     }
 }
@@ -320,6 +321,9 @@ struct MainWindowView: View {
                 Section {
                     NavigationLink(value: MainSelection.today) {
                         Label("Today", systemImage: "sun.max")
+                    }
+                    NavigationLink(value: MainSelection.recordings) {
+                        Label("Recordings", systemImage: "waveform")
                     }
                 }
                 }  // end Capture surface
@@ -642,6 +646,8 @@ struct MainWindowView: View {
             LiveSessionView()
         case .today:
             TodayView(onNavigate: { nav.navigate(to: .note($0)) })
+        case .recordings:
+            TranscriptArchiveView(onNavigate: { nav.navigate(to: .session($0)) })
         case .tasks(let filter):
             TaskListView(filter: filter)
                 .id(filter)

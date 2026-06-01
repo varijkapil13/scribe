@@ -86,6 +86,7 @@ enum CommandRegistry {
 
         // Navigate.
         items.append(CommandItem(id: "go.today", title: "Go to Today", systemImage: "sun.max", kind: .navigate(.today)))
+        items.append(CommandItem(id: "go.recordings", title: "Recordings", systemImage: "waveform", kind: .navigate(.recordings)))
         items.append(CommandItem(id: "go.tasks", title: "Go to Tasks", systemImage: "tray", kind: .navigate(.tasks(.inbox))))
         items.append(CommandItem(id: "go.notes", title: "Go to Notes", systemImage: "doc.on.doc", kind: .navigate(.notes(.all))))
         items.append(CommandItem(id: "go.calendar", title: "Task Calendar", systemImage: "calendar", kind: .navigate(.taskCalendar)))
