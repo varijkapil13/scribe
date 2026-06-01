@@ -8,9 +8,18 @@ import SwiftUI
 struct NotesBrowserView: View {
     let initialScope: NoteListScope
 
-    @State private var selectedNoteId: String?
-    @State private var selectedNote: Note?
+    /// Craft-style drill-down stack of note IDs. The list selects the root
+    /// (`navPath.first`); clicking a wiki-link/backlink inside a note pushes a
+    /// card; the breadcrumb + Back pop it. `navPath.last` is the displayed note.
+    @State private var navPath: [String] = []
+    @State private var currentNote: Note?
+    @State private var titlesById: [String: String] = [:]
+    /// Direction of the last navigation, so the card transition slides the
+    /// right way (push → in from trailing; pop → in from leading).
+    @State private var goingBack = false
     @State private var activeScope: NoteListScope
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(scope: NoteListScope) {
         self.initialScope = scope
@@ -24,43 +33,139 @@ struct NotesBrowserView: View {
         }
     }
 
+    /// List selection drives the ROOT of the nav stack (resets any drill-down).
+    private var listSelection: Binding<String?> {
+        Binding(
+            get: { navPath.first },
+            set: { newValue in
+                goingBack = false
+                navPath = newValue.map { [$0] } ?? []
+            }
+        )
+    }
+
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
                 if showsScopeChips {
                     NotesScopeChipBar(activeScope: $activeScope)
                 }
-                NoteListView(scope: activeScope, selectedNoteId: $selectedNoteId)
+                NoteListView(scope: activeScope, selectedNoteId: listSelection)
                     .id(NoteListScopeID(scope: activeScope))
             }
             .frame(minWidth: 200, idealWidth: 260, maxWidth: 320)
 
-            Group {
-                if let note = selectedNote {
-                    NoteDetailView(note: note, onNavigate: { noteId in
-                        selectedNoteId = noteId
-                    })
-                    .id(note.id)
-                } else {
-                    VStack(spacing: DesignTokens.Spacing.sm) {
-                        Image(systemName: "note.text")
-                            .font(.system(size: 32, weight: .light))
-                            .foregroundStyle(.quaternary)
-                        Text("No Note Selected")
-                            .font(DesignTokens.Typography.section)
-                            .foregroundStyle(.secondary)
-                        Text("Choose a note from the list.")
-                            .font(.callout)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+            detailColumn
+        }
+        .task(id: navPath.last) {
+            guard let id = navPath.last else { currentNote = nil; return }
+            let note = try? NoteStore.shared.fetchNote(id: id)
+            currentNote = note
+            if let note {
+                titlesById[note.id] = note.title.isEmpty ? "Untitled" : note.title
             }
         }
-        .task(id: selectedNoteId) {
-            guard let id = selectedNoteId else { selectedNote = nil; return }
-            selectedNote = try? NoteStore.shared.fetchNote(id: id)
+    }
+
+    @ViewBuilder
+    private var detailColumn: some View {
+        VStack(spacing: 0) {
+            if navPath.count > 1 {
+                breadcrumbBar
+            }
+            Group {
+                if let note = currentNote, note.id == navPath.last {
+                    NoteDetailView(note: note, onNavigate: { push($0) })
+                        .id(note.id)
+                        .transition(cardTransition)
+                } else if navPath.isEmpty {
+                    emptyState
+                } else {
+                    Color.clear  // brief gap while the next card loads
+                }
+            }
+            .animation(DesignTokens.Motion.resolve(DesignTokens.Motion.gentle, reduceMotion: reduceMotion),
+                       value: currentNote?.id)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var cardTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .move(edge: goingBack ? .leading : .trailing).combined(with: .opacity),
+            removal:   .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity)
+        )
+    }
+
+    // MARK: - Navigation
+
+    private func push(_ noteId: String) {
+        guard noteId != navPath.last else { return }
+        goingBack = false
+        navPath.append(noteId)
+    }
+
+    private func pop() {
+        guard navPath.count > 1 else { return }
+        goingBack = true
+        navPath.removeLast()
+    }
+
+    private func popTo(index: Int) {
+        guard index < navPath.count - 1 else { return }
+        goingBack = true
+        navPath = Array(navPath.prefix(index + 1))
+    }
+
+    private var breadcrumbBar: some View {
+        HStack(spacing: 4) {
+            Button(action: pop) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Back")
+            .accessibilityLabel("Back")
+
+            ForEach(Array(navPath.enumerated()), id: \.offset) { idx, id in
+                if idx > 0 {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                Button { popTo(index: idx) } label: {
+                    Text(titlesById[id] ?? "Note")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .foregroundStyle(idx == navPath.count - 1 ? .primary : .secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(idx == navPath.count - 1)
+                .accessibilityLabel("Go to \(titlesById[id] ?? "note")")
+            }
+            Spacer()
+        }
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: "note.text")
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(.quaternary)
+            Text("No Note Selected")
+                .font(DesignTokens.Typography.section)
+                .foregroundStyle(.secondary)
+            Text("Choose a note from the list.")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
