@@ -521,4 +521,53 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertNotNil(progress[withSubs.id])
         XCTAssertNil(progress[without.id], "tasks with no subtasks are omitted from the map")
     }
+
+    // MARK: - Cancel / pin (v15)
+
+    func testCancelHidesFromActiveAndShowsInCompleted() throws {
+        let task = try store.createTask(title: "Maybe later")
+        try store.cancelTask(id: task.id)
+
+        XCTAssertFalse(try store.fetchTasks(filter: .all).contains { $0.id == task.id },
+                       "cancelled tasks are excluded from active lists")
+        XCTAssertFalse(try store.fetchTasks(filter: .inbox).contains { $0.id == task.id })
+        let completed = try store.fetchTasks(filter: .completed)
+        let found = try XCTUnwrap(completed.first { $0.id == task.id })
+        XCTAssertTrue(found.isCancelled)
+        XCTAssertNil(found.completedAt, "cancel must not also mark complete")
+
+        try store.uncancelTask(id: task.id)
+        XCTAssertTrue(try store.fetchTasks(filter: .all).contains { $0.id == task.id },
+                      "uncancel restores to active")
+    }
+
+    func testPinnedTaskFloatsToTopOfActiveList() throws {
+        _ = try store.createTask(title: "First")
+        _ = try store.createTask(title: "Second")
+        let third = try store.createTask(title: "Third")
+        try store.setPinned(true, for: third.id)
+
+        let all = try store.fetchTasks(filter: .all)
+        XCTAssertEqual(all.first?.id, third.id, "pinned task floats to the top")
+    }
+
+    func testBatchCompleteDeleteMoveReschedule() throws {
+        let project = try store.createProject(name: "Work")
+        let a = try store.createTask(title: "A")
+        let b = try store.createTask(title: "B")
+        let c = try store.createTask(title: "C")
+
+        XCTAssertEqual(try store.completeTasks(ids: [a.id, b.id]), 2)
+        XCTAssertNotNil(try store.fetchTask(id: a.id)?.completedAt)
+
+        try store.moveTasks(ids: [c.id], toProject: project.id)
+        XCTAssertEqual(try store.fetchTask(id: c.id)?.projectId, project.id)
+
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        try store.rescheduleTasks(ids: [c.id], to: due)
+        XCTAssertEqual(try store.fetchTask(id: c.id)?.dueAt, due)
+
+        XCTAssertEqual(try store.deleteTasks(ids: [a.id, b.id, c.id]), 3)
+        XCTAssertNil(try store.fetchTask(id: c.id))
+    }
 }

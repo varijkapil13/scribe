@@ -32,6 +32,12 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
     var sourceSessionId: String?
     /// Optional link back to the summary action item that produced this task.
     var sourceActionItemId: String?
+    /// Non-nil when the task is cancelled ("Won't do"): excluded from active
+    /// lists, shown struck + muted under Completed. Mutually exclusive with
+    /// completion (setting one clears the other).
+    var cancelledAt: Date?
+    /// Floats the task to the top of its bucket.
+    var isPinned: Bool
 
     init(
         id: String = UUID().uuidString,
@@ -47,7 +53,9 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
         updatedAt: Date = Date(),
         sortOrder: Int = 0,
         sourceSessionId: String? = nil,
-        sourceActionItemId: String? = nil
+        sourceActionItemId: String? = nil,
+        cancelledAt: Date? = nil,
+        isPinned: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -63,9 +71,12 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
         self.sortOrder = sortOrder
         self.sourceSessionId = sourceSessionId
         self.sourceActionItemId = sourceActionItemId
+        self.cancelledAt = cancelledAt
+        self.isPinned = isPinned
     }
 
     var isCompleted: Bool { completedAt != nil }
+    var isCancelled: Bool { cancelledAt != nil }
 }
 
 extension TodoTask: FetchableRecord, PersistableRecord {

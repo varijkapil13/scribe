@@ -322,7 +322,8 @@ final class TaskStore {
         case .all:
             request = request.filter(Column("completedAt") == nil)
         case .completed:
-            request = request.filter(Column("completedAt") != nil)
+            // Completed includes cancelled ("Won't do") tasks, shown muted.
+            request = request.filter(Column("completedAt") != nil || Column("cancelledAt") != nil)
         case .project(let id):
             request = request
                 .filter(Column("projectId") == id)
@@ -338,12 +339,19 @@ final class TaskStore {
                 .filter(Column("completedAt") == nil)
         }
 
-        // Incomplete tasks first (NULL `completedAt` ranked highest via the
-        // explicit `IS NULL DESC`), tie-broken by dueAt then sortOrder.
-        // Completed tasks fall to the bottom and are sorted newest-first.
+        // Cancelled ("Won't do") tasks are hidden from every active list and
+        // surface only under .completed.
+        if case .completed = filter {} else {
+            request = request.filter(Column("cancelledAt") == nil)
+        }
+
+        // Incomplete first (NULL `completedAt` ranked highest), pinned floated
+        // to the top within that, then dueAt / sortOrder. Done/cancelled fall
+        // to the bottom, newest-first.
         return try request
             .order(sql: """
                 completedAt IS NULL DESC,
+                isPinned DESC,
                 completedAt DESC,
                 dueAt ASC,
                 sortOrder ASC,
@@ -457,6 +465,122 @@ final class TaskStore {
         guard let ruleStr = rule else { return }
         if dueAt == nil { throw TaskStoreError.recurringTaskRequiresDueDate }
         _ = try RecurrenceRule.parse(ruleStr)
+    }
+
+    // MARK: - Cancel ("Won't do") + pin (TickTick parity)
+
+    /// Marks a task cancelled ("Won't do"). Non-destructive; clears any pending
+    /// completion so a task is never both at once.
+    func cancelTask(id: String, at date: Date = Date()) throws {
+        try db.write { database in
+            guard var task = try TodoTask.fetchOne(database, key: id) else { return }
+            task.cancelledAt = date
+            task.completedAt = nil
+            task.updatedAt = date
+            try task.update(database)
+        }
+    }
+
+    /// Reverses a cancellation, returning the task to its active list.
+    func uncancelTask(id: String) throws {
+        try db.write { database in
+            guard var task = try TodoTask.fetchOne(database, key: id) else { return }
+            task.cancelledAt = nil
+            task.updatedAt = Date()
+            try task.update(database)
+        }
+    }
+
+    /// Sets the pin flag that floats a task to the top of its bucket.
+    func setPinned(_ pinned: Bool, for id: String) throws {
+        try db.write { database in
+            guard var task = try TodoTask.fetchOne(database, key: id) else { return }
+            task.isPinned = pinned
+            task.updatedAt = Date()
+            try task.update(database)
+        }
+    }
+
+    // MARK: - Batch operations (multi-select)
+
+    /// Completes a set of tasks in one transaction (recurring tasks advance).
+    /// Returns the number transitioned.
+    @discardableResult
+    func completeTasks(ids: [String], at date: Date = Date()) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        return try db.write { database in
+            var changed = 0
+            for id in ids {
+                guard var task = try TodoTask.fetchOne(database, key: id) else { continue }
+                try TaskCompletion(taskId: id, completedAt: date).insert(database)
+                if let ruleStr = task.recurrenceRule, let due = task.dueAt {
+                    let rule = try RecurrenceRule.parse(ruleStr)
+                    task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule)
+                    task.completedAt = nil
+                } else {
+                    task.completedAt = date
+                    task.cancelledAt = nil
+                }
+                task.updatedAt = date
+                try task.update(database)
+                changed += 1
+            }
+            return changed
+        }
+    }
+
+    /// Deletes a set of tasks in one transaction. Returns the number deleted.
+    @discardableResult
+    func deleteTasks(ids: [String]) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        return try db.write { database in
+            try TodoTask.deleteAll(database, keys: ids)
+        }
+    }
+
+    /// Moves a set of tasks to a project (or Inbox), each appended at the
+    /// bottom of the destination in input order.
+    func moveTasks(ids: [String], toProject projectId: String?) throws {
+        guard !ids.isEmpty else { return }
+        try db.write { database in
+            var nextOrder = (try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
+                arguments: [projectId])) ?? 0
+            for id in ids {
+                guard var task = try TodoTask.fetchOne(database, key: id) else { continue }
+                task.projectId = projectId
+                task.sortOrder = nextOrder
+                task.updatedAt = Date()
+                try task.update(database)
+                nextOrder += 1
+            }
+        }
+    }
+
+    /// Reschedules a set of tasks to `date` (or clears the due date when nil).
+    func rescheduleTasks(ids: [String], to date: Date?) throws {
+        guard !ids.isEmpty else { return }
+        try db.write { database in
+            for id in ids {
+                guard var task = try TodoTask.fetchOne(database, key: id) else { continue }
+                task.dueAt = date
+                task.updatedAt = Date()
+                try task.update(database)
+            }
+        }
+    }
+
+    /// Sets the priority on a set of tasks.
+    func setPriority(_ priority: TodoTask.Priority?, forTasks ids: [String]) throws {
+        guard !ids.isEmpty else { return }
+        try db.write { database in
+            for id in ids {
+                guard var task = try TodoTask.fetchOne(database, key: id) else { continue }
+                task.priority = priority
+                task.updatedAt = Date()
+                try task.update(database)
+            }
+        }
     }
 
     // MARK: - Subtasks / checklist (TickTick parity)

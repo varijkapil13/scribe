@@ -555,6 +555,19 @@ final class DatabaseManager: @unchecked Sendable {
                           columns: ["taskId"])
         }
 
+        // Tasks parity (TickTick): non-destructive "Won't do" / cancelled state
+        // + a pin-to-top flag. Additive ALTERs; existing rows get NULL
+        // cancelledAt (= active) and isPinned = 0.
+        migrator.registerMigration("v15_task_cancelled_pinned") { db in
+            try db.alter(table: "tasks") { t in
+                t.add(column: "cancelledAt", .datetime)
+                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(index: "tasks_cancelledAt_idx",
+                          on: "tasks",
+                          columns: ["cancelledAt"])
+        }
+
         return migrator
     }
 
