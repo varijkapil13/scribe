@@ -87,69 +87,6 @@ struct TranscriptDetailView: View {
         }) { task in
             TaskEditorView(task: task)
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    Task { await viewModel.generateSummary() }
-                } label: {
-                    Label("Summarize", systemImage: "sparkles")
-                }
-                .disabled(viewModel.isGeneratingSummary
-                          || viewModel.segments.isEmpty
-                          || !viewModel.intelligenceAvailability.isAvailable)
-                .help(viewModel.intelligenceAvailability.isAvailable
-                      ? "Generate an AI summary with Apple Intelligence"
-                      : "Apple Intelligence is unavailable on this Mac")
-
-                Button {
-                    viewModel.runAnalysis()
-                } label: {
-                    Label("Analyze", systemImage: "chart.bar.xaxis")
-                }
-                .disabled(viewModel.isAnalyzing || viewModel.segments.isEmpty)
-                .help("Extract entities, topics, and sentiment")
-
-                Button {
-                    showExportSheet = true
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .help("Export transcript to Markdown, plain text, or JSON")
-            }
-
-            ToolbarItemGroup(placement: .secondaryAction) {
-                if viewModel.isSelecting {
-                    Text("\(viewModel.selectedSegmentIds.count) selected")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-
-                    Button {
-                        viewModel.loadMoveTargets()
-                        showMoveSheet = true
-                    } label: {
-                        Label("Move To…", systemImage: "arrow.right.doc.on.clipboard")
-                    }
-                    .disabled(viewModel.selectedSegmentIds.isEmpty)
-                    .help("Move selected segments into another transcript")
-
-                    Button {
-                        viewModel.toggleSelectMode()
-                    } label: {
-                        Label("Done", systemImage: "xmark.circle")
-                    }
-                    .help("Exit selection mode")
-                } else {
-                    Button {
-                        viewModel.toggleSelectMode()
-                    } label: {
-                        Label("Select", systemImage: "checklist")
-                    }
-                    .disabled(viewModel.segments.isEmpty)
-                    .help("Select segments to move into another transcript")
-                }
-            }
-        }
         .onAppear {
             viewModel.loadSegments()
             viewModel.loadSummary()
@@ -245,8 +182,66 @@ struct TranscriptDetailView: View {
                         }
                     }
                 }
+
+                transcriptActionBar
             }
         }
+    }
+
+    /// In-body action bar (Summarize / Analyze / Export / Select). Lives in the
+    /// header rather than `.toolbar` so it renders in EVERY presentation
+    /// context — the "Open transcript" sheet AND the detail-pane `.session(id)`
+    /// route, where toolbar items get dropped competing with the window's own
+    /// toolbar.
+    @ViewBuilder
+    private var transcriptActionBar: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            if viewModel.isSelecting {
+                Text("\(viewModel.selectedSegmentIds.count) selected")
+                    .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                Button {
+                    viewModel.loadMoveTargets()
+                    showMoveSheet = true
+                } label: { Label("Move To…", systemImage: "arrow.right.doc.on.clipboard") }
+                    .disabled(viewModel.selectedSegmentIds.isEmpty)
+                Button { viewModel.toggleSelectMode() } label: {
+                    Label("Done", systemImage: "xmark.circle")
+                }
+                Spacer()
+            } else {
+                Button { Task { await viewModel.generateSummary() } } label: {
+                    Label("Summarize", systemImage: "sparkles")
+                }
+                .disabled(viewModel.isGeneratingSummary
+                          || viewModel.segments.isEmpty
+                          || !viewModel.intelligenceAvailability.isAvailable)
+                .help(viewModel.intelligenceAvailability.isAvailable
+                      ? "Generate an AI summary with Apple Intelligence"
+                      : "Apple Intelligence is unavailable on this Mac")
+
+                Button { viewModel.runAnalysis() } label: {
+                    Label("Analyze", systemImage: "chart.bar.xaxis")
+                }
+                .disabled(viewModel.isAnalyzing || viewModel.segments.isEmpty)
+                .help("Extract entities, topics, and sentiment")
+
+                Spacer()
+
+                Button { viewModel.toggleSelectMode() } label: {
+                    Label("Select", systemImage: "checklist")
+                }
+                .disabled(viewModel.segments.isEmpty)
+                .help("Select segments to move into another transcript")
+
+                Button { showExportSheet = true } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .help("Export transcript to Markdown, plain text, or JSON")
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .padding(.top, DesignTokens.Spacing.xs)
     }
 
     private var formattedDate: String {
