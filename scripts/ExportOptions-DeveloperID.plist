@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Distribution OUTSIDE the Mac App Store (direct download / DMG). -->
+	<key>method</key>
+	<string>developer-id</string>
+
+	<!-- Hardened Runtime is required for notarization (also set in project.yml). -->
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<!-- Team that owns the signing certs. Matches project.yml DEVELOPMENT_TEAM. -->
+	<key>teamID</key>
+	<string>U8A3QH6Y84</string>
+
+	<!-- Strip bitcode (irrelevant for macOS) and keep symbols out of the app. -->
+	<key>stripSwiftSymbols</key>
+	<true/>
+</dict>
+</plist>
