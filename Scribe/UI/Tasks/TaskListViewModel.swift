@@ -327,6 +327,23 @@ final class TaskListViewModel: ObservableObject {
         }
     }
 
+    /// Cancels ("Won't do") or restores a task.
+    func cancelTask(_ task: TodoTask) {
+        do { try store.cancelTask(id: task.id) }
+        catch { Log.ui.error("TaskListViewModel.cancelTask failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    func uncancelTask(_ task: TodoTask) {
+        do { try store.uncancelTask(id: task.id) }
+        catch { Log.ui.error("TaskListViewModel.uncancelTask failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    /// Toggles the pin that floats a task to the top of its bucket.
+    func togglePin(_ task: TodoTask) {
+        do { try store.setPinned(!task.isPinned, for: task.id) }
+        catch { Log.ui.error("TaskListViewModel.togglePin failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
     private func commitInline(_ task: TodoTask) {
         do {
             try store.updateTask(task)

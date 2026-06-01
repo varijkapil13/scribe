@@ -597,6 +597,20 @@ struct TaskListView: View {
             Label("Move to Project", systemImage: "folder")
         }
 
+        Button {
+            viewModel.togglePin(task)
+        } label: {
+            Label(task.isPinned ? "Unpin" : "Pin to top",
+                  systemImage: task.isPinned ? "pin.slash" : "pin")
+        }
+
+        Button {
+            if task.isCancelled { viewModel.uncancelTask(task) } else { viewModel.cancelTask(task) }
+        } label: {
+            Label(task.isCancelled ? "Mark active" : "Won't do",
+                  systemImage: task.isCancelled ? "arrow.uturn.backward" : "xmark.circle")
+        }
+
         Divider()
 
         Button(role: .destructive) {
@@ -849,7 +863,7 @@ struct TaskRowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
-    private var struck: Bool { task.isCompleted || isSettling }
+    private var struck: Bool { task.isCompleted || task.isCancelled || isSettling }
     private var affordancesVisible: Bool { isHovered || isKeyboardFocused }
 
     var body: some View {
@@ -917,6 +931,13 @@ struct TaskRowView: View {
     @ViewBuilder
     private var rowContent: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            if task.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Pinned")
+            }
+
             priorityControl
 
             if isEditingTitle {
