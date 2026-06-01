@@ -31,7 +31,8 @@ struct MainWindowView: View {
     @EnvironmentObject var appDelegate: AppDelegate
     @StateObject private var projectsViewModel = ProjectsViewModel()
     @State private var searchText: String = ""
-    @State private var selection: MainSelection?
+    @State private var nav = NavigationCoordinator()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var projectEditorMode: ProjectEditorMode?
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
@@ -47,6 +48,13 @@ struct MainWindowView: View {
     @State private var detailNote: Note? = nil
     @State private var tagReloadTask: Task<Void, Never>? = nil
 
+    /// Bridges `List(selection:)` and child views (which traffic in
+    /// `MainSelection?`) to the history-backed coordinator. A nil set
+    /// (clicking empty space) is ignored so the detail pane never blanks.
+    private var selectionBinding: Binding<MainSelection?> {
+        Binding(get: { nav.current }, set: { nav.select($0) })
+    }
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -61,7 +69,7 @@ struct MainWindowView: View {
                 RecordingStatusPill(audioManager: appState.audioManager, appState: appState)
                     .onTapGesture {
                         if appState.isTranscribing {
-                            selection = .live
+                            nav.navigate(to: .live)
                         }
                     }
             }
@@ -72,14 +80,12 @@ struct MainWindowView: View {
         .onAppear {
             projectsViewModel.start()
             reloadTags()
-            if selection == nil {
-                if appState.isTranscribing {
-                    selection = .live
-                } else {
-                    selection = .today
-                }
+            // The coordinator defaults to .today; only the active-recording
+            // case overrides the initial destination (no history entry).
+            if appState.isTranscribing {
+                nav.replaceCurrent(.live)
             }
-            appState.currentSelection = selection
+            appState.currentSelection = nav.current
         }
         .onDisappear { projectsViewModel.stop() }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { notes in
@@ -110,7 +116,7 @@ struct MainWindowView: View {
                         .ignoresSafeArea()
                         .onTapGesture { showUniversalSearch = false }
                     UniversalSearchView(isPresented: $showUniversalSearch) { dest in
-                        selection = dest
+                        nav.navigate(to: dest)
                     }
                     .padding(.top, 60)
                     .frame(maxHeight: .infinity, alignment: .top)
@@ -124,28 +130,27 @@ struct MainWindowView: View {
         )
         .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
             let pane = (note.object as? SettingsPane) ?? .general
-            selection = .settings(pane)
+            nav.navigate(to: .settings(pane))
         }
         .onReceive(NotificationCenter.default.publisher(for: .scribeRequestNavigateToNote)) { note in
             if let id = note.userInfo?["noteId"] as? String {
-                selection = .note(id)
+                nav.navigate(to: .note(id))
             }
         }
         .onChange(of: appState.isTranscribing) { _, isRecording in
-            // Session started → flip to the inline live view so the user
-            // immediately sees the streaming transcript. Skip the flip when
-            // the user is already viewing a Note — the note's own live pane
-            // handles in-place streaming, and AppDelegate may also be about
-            // to post .scribeRequestNavigateToNote (auto-create path). Both
-            // cases produce a brief flash to .live without this guard.
-            if isRecording {
-                if case .note = selection { return }
-                withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
-                    selection = .live
+            // Session started → flip to the inline live view via the tested
+            // RecordingNavigationPolicy: it returns .live unless the user is
+            // already on a Note (whose inline pane handles streaming) or the
+            // auto-create path already navigated to a note. Stop returns nil.
+            if let dest = RecordingNavigationPolicy.destination(
+                currentSelection: nav.current, isRecording: isRecording
+            ) {
+                withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                    nav.navigate(to: dest)
                 }
             }
         }
-        .onChange(of: selection) { _, newValue in
+        .onChange(of: nav.current) { _, newValue in
             appState.currentSelection = newValue
         }
     }
@@ -186,7 +191,7 @@ struct MainWindowView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        List(selection: $selection) {
+        List(selection: selectionBinding) {
             if searchText.isEmpty {
                 if appState.isTranscribing {
                     Section {
@@ -234,8 +239,8 @@ struct MainWindowView: View {
                                 }
                                 Button(role: .destructive) {
                                     projectsViewModel.delete(id: project.id)
-                                    if case .tasks(.project(let id)) = selection, id == project.id {
-                                        selection = .tasks(.inbox)
+                                    if case .tasks(.project(let id)) = nav.current, id == project.id {
+                                        nav.navigate(to: .tasks(.inbox))
                                     }
                                 } label: {
                                     Label("Delete project", systemImage: "trash")
@@ -280,7 +285,7 @@ struct MainWindowView: View {
                         Spacer()
                         Button {
                             let note = try? NoteStore.shared.createNote(title: "", body: "")
-                            if let note { selection = .note(note.id) }
+                            if let note { nav.navigate(to: .note(note.id)) }
                         } label: {
                             Image(systemName: "square.and.pencil")
                                 .frame(width: 22, height: 22)
@@ -298,7 +303,7 @@ struct MainWindowView: View {
                             parentId: nil,
                             notebooks: notebooks,
                             notes: allNotes,
-                            selection: $selection
+                            selection: selectionBinding
                         )
 
                         if isCreatingTopNotebook {
@@ -390,18 +395,18 @@ struct MainWindowView: View {
         HStack(spacing: 0) {
             footerIcon(systemImage: "calendar",
                        help: "Task calendar",
-                       isActive: selection == .taskCalendar) {
-                selection = .taskCalendar
+                       isActive: nav.current == .taskCalendar) {
+                nav.navigate(to: .taskCalendar)
             }
             footerIcon(systemImage: "checkmark.circle",
                        help: "Completed tasks",
-                       isActive: selection == .tasks(.completed)) {
-                selection = .tasks(.completed)
+                       isActive: nav.current == .tasks(.completed)) {
+                nav.navigate(to: .tasks(.completed))
             }
             footerIcon(systemImage: "circle.hexagongrid",
                        help: "Notes graph",
-                       isActive: selection == .notes(.graph)) {
-                selection = .notes(.graph)
+                       isActive: nav.current == .notes(.graph)) {
+                nav.navigate(to: .notes(.graph))
             }
             Spacer()
             footerIcon(systemImage: "gearshape",
@@ -465,11 +470,11 @@ struct MainWindowView: View {
     private func notesDetailView(filter: NotesFilter) -> some View {
         switch filter {
         case .today, .daily:
-            StandaloneDailyNoteView(onNavigate: { selection = .note($0) })
+            StandaloneDailyNoteView(onNavigate: { nav.navigate(to: .note($0)) })
         case .graph:
-            GraphView(onNavigate: { selection = .note($0) })
+            GraphView(onNavigate: { nav.navigate(to: .note($0)) })
         case .tag(let tag):
-            TaggedContentView(tag: tag, onNavigate: { selection = .note($0) })
+            TaggedContentView(tag: tag, onNavigate: { nav.navigate(to: .note($0)) })
         case .inbox:
             NotesBrowserView(scope: .inbox)
                 .id(NotesFilter.inbox)
@@ -486,23 +491,23 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private var detail: some View {
-        switch selection {
+        switch nav.current {
         case .live:
             LiveSessionView()
         case .today:
-            TodayView(onNavigate: { selection = .note($0) })
+            TodayView(onNavigate: { nav.navigate(to: .note($0)) })
         case .tasks(let filter):
             TaskListView(filter: filter)
                 .id(filter)
         case .taskCalendar:
             TaskCalendarView(onNavigateToNote: { noteId in
-                selection = .note(noteId)
+                nav.navigate(to: .note(noteId))
             })
         case .note(let id):
             Group {
                 if let note = detailNote, note.id == id {
                     NoteDetailView(note: note, onNavigate: { noteId in
-                        selection = .note(noteId)
+                        nav.navigate(to: .note(noteId))
                     })
                     .id(id)
                 } else {
@@ -520,11 +525,6 @@ struct MainWindowView: View {
             notesDetailView(filter: filter)
         case .settings(let pane):
             SettingsPaneView(pane: pane, audioManager: appState.audioManager)
-        case .none:
-            WelcomeView(
-                isRecording: appState.isTranscribing,
-                onRecord: { Task { await appDelegate.toggleRecording() } }
-            )
         }
     }
 }
