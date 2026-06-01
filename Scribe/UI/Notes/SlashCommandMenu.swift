@@ -172,7 +172,7 @@ struct SlashCommandMenu: View {
     }
 
     private var borderColor: Color {
-        contrast == .increased ? Color.primary.opacity(0.30) : DesignTokens.Palette.cardBorder
+        DesignTokens.Palette.cardBorder(contrast)
     }
 
     private var highlightFill: Color {

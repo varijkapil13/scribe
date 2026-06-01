@@ -54,81 +54,60 @@ enum AppleIntelligenceAvailability: Equatable, Sendable {
 // MARK: - Non-color speaker cue
 
 /// SF Symbol that distinguishes a speaker *without relying on color*, for users
-/// running Differentiate Without Color. Mirrors the speaker strings produced by
-/// `SpeechRecognizerEngine` ("you", "remote").
+/// running Differentiate Without Color. Thin alias over the canonical Phase-0
+/// `Color.speakerSymbol(for:)` so the glyph stays consistent app-wide.
 enum SpeakerGlyph {
     static func symbol(for speaker: String) -> String {
-        switch speaker.lowercased() {
-        case "you":    return "person.fill"
-        case "remote": return "person.wave.2.fill"
-        default:       return "person"
-        }
+        Color.speakerSymbol(for: speaker)
     }
 }
 
 // MARK: - Reduce-motion / reduce-transparency gated styling
 
-/// Local design helpers for the transcript reader.
-///
-/// The shared Phase-0 substrate (motion springs, `scribeGlass`, contrast-aware
-/// borders) is not present on this branch, so these mirror the same
-/// accessibility contracts locally: every animation degrades to *instant*
-/// under Reduce Motion, every material degrades to a *solid* fill under Reduce
-/// Transparency / Increase Contrast, and hairline borders strengthen under
-/// Increase Contrast. Scoped to the transcript viewer to avoid touching
-/// spine-owned tokens.
+/// Transcript-reader styling aliases. Thin wrappers over the shared Phase-0
+/// substrate (spring motion, `scribeGlass`, contrast-aware borders) so the
+/// reader's chrome matches the rest of the redesign while keeping these
+/// call-site-friendly names. The a11y contracts (instant under Reduce Motion,
+/// solid under Reduce Transparency / Increase Contrast, stronger hairlines
+/// under Increase Contrast) all come from the canonical tokens.
 enum ReaderStyle {
 
-    /// Crisp, high-damping spring used for tab-underline + reveal moments.
-    /// Resolved to `nil` under Reduce Motion so callers can skip the animation
-    /// entirely (an instant change).
+    /// Crisp, high-damping spring for tab-underline + reveal moments; `nil`
+    /// (instant) under Reduce Motion via the canonical gate. Fully qualified so
+    /// it binds to our tuned token, not SwiftUI's built-in `Animation.snappy`.
     static func spring(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.82)
+        DesignTokens.Motion.resolve(DesignTokens.Motion.snappy, reduceMotion: reduceMotion)
     }
 
-    /// A gentle fade used to reveal freshly generated AI content. `nil` (no
-    /// animation) under Reduce Motion.
+    /// Gentle reveal for freshly generated AI content; `nil` under Reduce Motion.
     static func reveal(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .easeOut(duration: DesignTokens.Motion.standard)
-    }
-
-    /// Contrast-aware hairline border opacity. Matches the Phase-0 contract:
-    /// ~0.06 normally, strengthening toward ~0.22 under Increase Contrast.
-    static func borderOpacity(_ contrast: ColorSchemeContrast) -> Double {
-        contrast == .increased ? 0.22 : 0.06
+        DesignTokens.Motion.resolve(DesignTokens.Motion.gentle, reduceMotion: reduceMotion)
     }
 }
 
 extension View {
 
-    /// Animate `value` changes with a reader spring, automatically gated on
-    /// Reduce Motion. Pass the environment's `accessibilityReduceMotion`.
+    /// Animate `value` changes with the reader spring, gated on Reduce Motion.
     func readerAnimation<V: Equatable>(_ value: V, reduceMotion: Bool) -> some View {
         animation(ReaderStyle.spring(reduceMotion: reduceMotion), value: value)
     }
 
-    /// Backs a transient surface (sheet, popover, HUD) with glass that collapses
-    /// to a solid elevated fill under Reduce Transparency / Increase Contrast.
-    /// Never use behind editable text or primary content panes.
-    @ViewBuilder
+    /// Glass backing for a transient reader surface — routes to the canonical
+    /// `scribeGlass(.hud)`, which collapses to a solid fill under Reduce
+    /// Transparency / Increase Contrast. (Params kept for call-site
+    /// compatibility; the canonical helper reads the environment itself.)
     func readerGlassBackground(reduceTransparency: Bool,
                                contrast: ColorSchemeContrast,
                                cornerRadius: CGFloat = DesignTokens.Radius.lg) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        if reduceTransparency || contrast == .increased {
-            background(DesignTokens.Palette.surfaceElevated, in: shape)
-        } else {
-            background(.ultraThinMaterial, in: shape)
-        }
+        scribeGlass(.hud, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
-    /// A contrast-aware hairline border for cards/surfaces, strengthening under
-    /// Increase Contrast so the edge stays legible.
+    /// Contrast-aware hairline border via the canonical `Palette.cardBorder`.
     func readerCardBorder(_ contrast: ColorSchemeContrast,
                           cornerRadius: CGFloat = DesignTokens.Radius.md) -> some View {
         overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(ReaderStyle.borderOpacity(contrast)), lineWidth: 1)
+                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
         )
     }
 }
