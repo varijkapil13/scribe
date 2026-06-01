@@ -4,6 +4,11 @@ options:
   bundleIdPrefix: com.varij
   deploymentTarget:
     macOS: "26.0"
+    # iOS has no transcription (recording is macOS-only), so the iOS-26 /
+    # SpeechAnalyzer floor does not apply. 18.0 maximizes device reach and
+    # runs on the locally-installed 18.5 simulator. Shared code (@Observable,
+    # Swift 6 concurrency, TextKit 2 editor) is all supported on 18.0.
+    iOS: "18.0"
 
 targets:
   Scribe:
@@ -61,6 +66,27 @@ targets:
         DEVELOPMENT_TEAM: U8A3QH6Y84
         CODE_SIGN_STYLE: Automatic
         TEST_TARGET_NAME: Scribe
+  # iOS / iPadOS app target (Milestone 0 foundation). A standalone SwiftUI
+  # stub for now — the real notes+tasks UI arrives in Milestone 1. NO audio /
+  # ScreenCaptureKit / KeyboardShortcuts is part of this target by design;
+  # recording is a macOS-only feature. Shared logic will be linked from the
+  # ScribeCore package once extracted (see docs/IOS-MIGRATION-PLAN.md).
+  ScribeiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: ScribeiOS/
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
+        PRODUCT_NAME: Scribe
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
 
 schemes:
   Scribe:
@@ -74,6 +100,14 @@ schemes:
       config: Debug
       targets:
         - ScribeUITests
+    archive:
+      config: Release
+  ScribeiOS:
+    build:
+      targets:
+        ScribeiOS: all
+    run:
+      config: Debug
     archive:
       config: Release
 
