@@ -26,6 +26,44 @@ struct MarkdownEditorView: NSViewRepresentable {
     var onWikiLinkNavigate: ((String) -> Void)? = nil
     var noteId: String? = nil   // NEW
 
+    /// Reading measure for the body column. When the view is wider than
+    /// `measure + 2·gutter`, the text container insets grow symmetrically so
+    /// prose stays centred at a comfortable line length. `nil` keeps the old
+    /// full-bleed behaviour (used by the compact task-notes editor).
+    var pageMeasure: CGFloat? = nil
+
+    /// Slash `/` command menu: called with the query typed after a line-start
+    /// `/` (empty string clears / dismisses) plus the caret rect in the editor's
+    /// visible (viewport) coordinate space, origin top-left. Mirrors
+    /// `onWikiLinkTyped`.
+    var onSlashTyped: ((String, CGRect) -> Void)? = nil
+
+    /// Selection-anchored format bubble: called with the on-screen rect of the
+    /// current non-empty selection (in the editor's visible viewport coordinate
+    /// space, origin top-left) or `nil` when the selection collapses. Mirrors
+    /// the hover-overlay geometry conversion.
+    var onSelectionChanged: ((CGRect?) -> Void)? = nil
+
+    /// Whether a slash command menu is currently open. While true, the text
+    /// view intercepts up/down/Return/Esc and routes them to the menu so the
+    /// user can navigate without losing first responder (typing keeps filtering).
+    var slashMenuActive: Bool = false
+    /// Move the slash menu highlight by ±1 (true = down). Return value ignored.
+    var onSlashMove: ((Bool) -> Void)? = nil
+    /// Commit the highlighted slash command. Returns true if it consumed Return.
+    var onSlashCommit: (() -> Bool)? = nil
+    /// Dismiss the slash menu (Esc). Returns true if it consumed Escape.
+    var onSlashDismiss: (() -> Bool)? = nil
+
+    /// Focus mode: when true the renderer dims every block except the one the
+    /// caret is in, leaving the active paragraph at full strength.
+    var focusModeEnabled: Bool = false
+
+    /// Raised dim floor for focus mode under Increase Contrast, so dimmed text
+    /// still clears 4.5:1. The owning view reads the environment and passes it
+    /// down (default keeps the calm ~0.35 dim).
+    var focusDimAlpha: CGFloat = 0.35
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -56,6 +94,8 @@ struct MarkdownEditorView: NSViewRepresentable {
         tv.autoresizingMask = [.width]
 
         tv.noteId = noteId
+        tv.pageMeasure = pageMeasure
+        tv.slashMenuActive = slashMenuActive
         tv.registerForDraggedTypes([.fileURL, .png, .tiff])
 
         scrollView.documentView = tv
@@ -80,6 +120,10 @@ struct MarkdownEditorView: NSViewRepresentable {
             actions.checklist     = { [weak coord] in coord?.toggleChecklistOnSelection() }
             actions.insertTable   = { [weak coord] in coord?.insertTableTemplate() }
             actions.setHeading    = { [weak coord] level in coord?.setHeading(level) }
+            actions.insertCodeBlock        = { [weak coord] in coord?.insertCodeBlockTemplate() }
+            actions.insertDivider          = { [weak coord] in coord?.insertDivider() }
+            actions.insertImagePlaceholder = { [weak coord] in coord?.insertImagePlaceholder() }
+            actions.clearSlashToken        = { [weak coord] in coord?.clearSlashToken() }
         }
 
         return scrollView
@@ -94,6 +138,19 @@ struct MarkdownEditorView: NSViewRepresentable {
             context.coordinator.resetUndoHistory()
         }
         tv.noteId = noteId
+        tv.slashMenuActive = slashMenuActive
+
+        // Apply the per-note typeface / page measure. A font or measure change
+        // needs a reflow so the new metrics and centring take effect, even when
+        // the source text is unchanged.
+        let fontChanged = tv.font != font
+        let measureChanged = tv.pageMeasure != pageMeasure
+        if fontChanged { tv.font = font }
+        if measureChanged { tv.pageMeasure = pageMeasure }
+        if measureChanged { tv.applyPageMeasureInset() }
+        if (fontChanged || measureChanged), tv.window?.firstResponder !== tv {
+            context.coordinator.applyFormatting(to: tv)
+        }
         let liveSource: String
         if let storage = tv.textStorage {
             liveSource = FoldRegistry.decompose(storage).source
@@ -155,6 +212,7 @@ struct MarkdownEditorView: NSViewRepresentable {
                 applyFormatting(to: mtv)
             }
             detectWikiLinkTyping(in: tv)
+            detectSlashTyping(in: tv)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -163,6 +221,10 @@ struct MarkdownEditorView: NSViewRepresentable {
             // Selection changed — fold/unfold decision depends on cursor position, so reformat.
             // The work is bounded by note size and image renders are cached.
             applyFormatting(to: tv)
+            // A moved caret can leave a stale slash query open; re-evaluate.
+            detectSlashTyping(in: tv)
+            // Feed the selection-anchored format bubble.
+            notifySelectionGeometry(in: tv)
         }
 
         func applyMarker(_ marker: String) {
@@ -278,6 +340,44 @@ struct MarkdownEditorView: NSViewRepresentable {
             }
         }
 
+        /// Inserts an empty fenced code block and places the caret inside it.
+        func insertCodeBlockTemplate() {
+            let template = "```\n\n```\n"
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let new = nsSource.replacingCharacters(in: sel, with: template)
+                // Caret on the empty middle line (after the opening fence + newline).
+                let caret = sel.location + ("```\n" as NSString).length
+                return (new, NSRange(location: caret, length: 0))
+            }
+        }
+
+        /// Inserts a thematic-break divider on its own line.
+        func insertDivider() {
+            let template = "\n---\n"
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let new = nsSource.replacingCharacters(in: sel, with: template)
+                let len = (template as NSString).length
+                return (new, NSRange(location: sel.location + len, length: 0))
+            }
+        }
+
+        /// Inserts an image-markdown placeholder with the caret on the path so
+        /// the user can paste or type a relative path immediately.
+        func insertImagePlaceholder() {
+            let prefix = "!["
+            let template = "![](path)"
+            editSource { source, sel in
+                let nsSource = source as NSString
+                let new = nsSource.replacingCharacters(in: sel, with: template)
+                // Select the "path" placeholder: it sits after "![]("
+                let pathStart = sel.location + ("![](" as NSString).length
+                _ = prefix
+                return (new, NSRange(location: pathStart, length: ("path" as NSString).length))
+            }
+        }
+
         func setHeading(_ level: Int) {
             editSource { source, sel in
                 let nsSource = source as NSString
@@ -382,6 +482,88 @@ struct MarkdownEditorView: NSViewRepresentable {
             parent.onWikiLinkTyped?("")
         }
 
+        // MARK: - Slash command detection
+
+        /// Detects a line-start `/` (allowing leading whitespace) with a
+        /// space-free query up to the caret. Mirrors `detectWikiLinkTyping`'s
+        /// prefix-scan. Reports the query (without the `/`) + caret rect to the
+        /// host, or an empty string to dismiss. Only fires for a collapsed
+        /// selection.
+        func detectSlashTyping(in tv: NSTextView) {
+            guard let onSlashTyped = parent.onSlashTyped,
+                  let mtv = tv as? MarkdownNSTextView else { return }
+            let sel = tv.selectedRange()
+            guard sel.length == 0 else { onSlashTyped("", .zero); return }
+            let ns = tv.string as NSString
+            let cursor = min(sel.location, ns.length)
+            let lineRange = ns.lineRange(for: NSRange(location: cursor, length: 0))
+            // Text on the current line up to the caret.
+            let toCursor = ns.substring(with: NSRange(location: lineRange.location,
+                                                       length: cursor - lineRange.location))
+            // Allow only leading whitespace before the slash.
+            let stripped = toCursor.drop(while: { $0 == " " || $0 == "\t" })
+            guard stripped.first == "/" else { onSlashTyped("", .zero); return }
+            let query = String(stripped.dropFirst())
+            // A space ends the slash command (it's regular text now).
+            guard !query.contains(" ") else { onSlashTyped("", .zero); return }
+            onSlashTyped(query, mtv.caretRectInViewport(at: cursor))
+        }
+
+        /// Replaces the active `/query` token with the result of `command` and
+        /// places the caret per the command. Used to commit a slash menu pick:
+        /// the typed token is deleted first, then the host invokes an
+        /// `EditorActions` verb (heading / list / quote / etc.) on the now-clean
+        /// line. Returns true when a slash token was found and removed.
+        @discardableResult
+        func clearSlashToken() -> Bool {
+            guard textView != nil else { return false }
+            var removed = false
+            editSource { source, sel in
+                // Work entirely in source coords (sel is already source-mapped),
+                // so any folds above the caret don't skew the offsets.
+                guard sel.length == 0 else { return (source, sel) }
+                let nsSource = source as NSString
+                let cursor = min(sel.location, nsSource.length)
+                let lineRange = nsSource.lineRange(for: NSRange(location: cursor, length: 0))
+                let toCursor = nsSource.substring(
+                    with: NSRange(location: lineRange.location, length: cursor - lineRange.location)
+                )
+                let leading = toCursor.prefix(while: { $0 == " " || $0 == "\t" })
+                let afterLeading = toCursor.dropFirst(leading.count)
+                guard afterLeading.first == "/" else { return (source, sel) }
+                let slashStart = lineRange.location + (leading as NSString).length
+                let deleteRange = NSRange(location: slashStart, length: cursor - slashStart)
+                let safe = deleteRange.intersection(NSRange(location: 0, length: nsSource.length)) ?? deleteRange
+                removed = true
+                let new = nsSource.replacingCharacters(in: safe, with: "")
+                return (new, NSRange(location: safe.location, length: 0))
+            }
+            return removed
+        }
+
+        // MARK: - Selection geometry (format bubble)
+
+        /// Reports the on-screen rect of a non-empty selection (origin
+        /// top-left, editor viewport coords) or `nil` when collapsed. Uses the
+        /// same layout-manager bounding-rect → view-coords conversion as the
+        /// hover overlay, then shifts into viewport space so the bubble anchors
+        /// over the selection regardless of scroll.
+        func notifySelectionGeometry(in tv: MarkdownNSTextView) {
+            guard let onSelectionChanged = parent.onSelectionChanged else { return }
+            let sel = tv.selectedRange()
+            guard sel.length > 0,
+                  let lm = tv.layoutManager,
+                  let tc = tv.textContainer else {
+                onSelectionChanged(nil)
+                return
+            }
+            let glyphRange = lm.glyphRange(forCharacterRange: sel, actualCharacterRange: nil)
+            var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            let origin = tv.textContainerOrigin
+            rect = rect.offsetBy(dx: origin.x, dy: origin.y)
+            onSelectionChanged(tv.toViewport(rect))
+        }
+
         /// Reformat the editor.
         ///
         /// When `sourceOverride` is provided, the source is taken verbatim and the storage is
@@ -448,7 +630,8 @@ struct MarkdownEditorView: NSViewRepresentable {
             let formatted = MarkdownRenderer.attributed(
                 currentSource,
                 font: font,
-                cursorOffset: cursorForReveal
+                cursorOffset: cursorForReveal,
+                focusDimAlpha: parent.focusModeEnabled ? parent.focusDimAlpha : nil
             )
             let mutable = NSMutableAttributedString(attributedString: formatted)
             parent.extraHighlighter?(mutable)
@@ -693,6 +876,21 @@ final class MarkdownNSTextView: NSTextView {
     var onLinkClick: ((String) -> Void)? = nil
     var noteId: String?
 
+    /// Target reading measure (see `MarkdownEditorView.pageMeasure`). `nil`
+    /// keeps the old fixed 20pt side insets (full-bleed).
+    var pageMeasure: CGFloat?
+
+    /// True while a slash command menu is open — see `doCommandBySelector`.
+    var slashMenuActive: Bool = false
+
+    /// Minimum side gutter when the column is centred. Floor matches the
+    /// full-bleed inset so a narrow window never crowds the text.
+    private let minGutter: CGFloat = 20
+    /// Document-feel top inset once a measure is in effect.
+    private let measuredTopInset: CGFloat = 28
+    /// Top inset for the legacy full-bleed mode.
+    private let plainTopInset: CGFloat = 16
+
     private var foldTrackingArea: NSTrackingArea?
     private(set) var hoveredFoldId: UUID?
 
@@ -719,7 +917,7 @@ final class MarkdownNSTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        let newInset = NSSize(width: 20, height: 16)
+        let newInset = measureInset(forWidth: newSize.width)
         if newInset != textContainerInset {
             textContainerInset = newInset
         }
@@ -727,6 +925,36 @@ final class MarkdownNSTextView: NSTextView {
         if abs(contentWidth - lastContentWidth) > 0.5 {
             lastContentWidth = contentWidth
             scheduleResizeReformat()
+        }
+    }
+
+    /// Symmetric inset that clamps the text column to `pageMeasure`. When the
+    /// view is wider than `measure + 2·minGutter`, the side inset grows so the
+    /// column sits centred at `measure`; otherwise it tracks the view width
+    /// with the floor gutter. drawBackground decorations key off
+    /// `textContainerOrigin`, so they re-inset for free.
+    private func measureInset(forWidth width: CGFloat) -> NSSize {
+        guard let measure = pageMeasure else {
+            return NSSize(width: minGutter, height: plainTopInset)
+        }
+        let available = width - minGutter * 2
+        let sideInset: CGFloat
+        if available > measure {
+            // Grow the gutter symmetrically to centre the measure column.
+            sideInset = max(minGutter, (width - measure) / 2)
+        } else {
+            sideInset = minGutter
+        }
+        return NSSize(width: sideInset, height: measuredTopInset)
+    }
+
+    /// Recomputes and applies the measure inset for the current bounds. Called
+    /// when the page-width preference changes without a frame change.
+    func applyPageMeasureInset() {
+        let newInset = measureInset(forWidth: bounds.width)
+        if newInset != textContainerInset {
+            textContainerInset = newInset
+            needsDisplay = true
         }
     }
 
@@ -798,6 +1026,34 @@ final class MarkdownNSTextView: NSTextView {
     private func hideEditButton() {
         editButton.isHidden = true
         hoveredFoldId = nil
+    }
+
+    // MARK: - Viewport geometry (slash menu / format bubble)
+
+    /// Converts a rect from this (document) view's coordinate space into the
+    /// enclosing scroll view's visible viewport space by subtracting the clip
+    /// view's scroll offset. SwiftUI overlays drawn over the scroll view share
+    /// this top-left-origin viewport space, so the result anchors correctly
+    /// regardless of scroll position.
+    func toViewport(_ rect: NSRect) -> CGRect {
+        guard let clip = enclosingScrollView?.contentView else { return rect }
+        let offset = clip.bounds.origin
+        return rect.offsetBy(dx: -offset.x, dy: -offset.y)
+    }
+
+    /// The caret rect (insertion-point sized) at `charIndex`, in viewport space.
+    /// Always returns a positive-height rect (falls back to the font line
+    /// height) so callers can use a zero rect as an unambiguous "no caret" flag.
+    func caretRectInViewport(at charIndex: Int) -> CGRect {
+        guard let lm = layoutManager, let tc = textContainer else { return .zero }
+        let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 0),
+                                       actualCharacterRange: nil)
+        var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+        if rect.width < 1 { rect.size.width = 2 }
+        if rect.height < 1 { rect.size.height = (font?.boundingRectForFont.height ?? 18) }
+        let origin = textContainerOrigin
+        rect = rect.offsetBy(dx: origin.x, dy: origin.y)
+        return toViewport(rect)
     }
 
     @objc private func editButtonTapped(_ sender: Any?) {
@@ -1058,6 +1314,35 @@ final class MarkdownNSTextView: NSTextView {
                 i = NSMaxRange(effectiveRange)
             }
         }
+    }
+
+    // MARK: - Slash-menu key interception
+
+    /// While a slash menu is open, route navigation keys to the menu instead of
+    /// the text view so the user can navigate without losing first responder.
+    /// The text view keeps focus, so ordinary typing still filters the menu.
+    /// Keys not claimed by the menu fall through to normal text handling.
+    override func keyDown(with event: NSEvent) {
+        if slashMenuActive, let coord = delegate as? MarkdownEditorView.Coordinator {
+            let key = event.keyCode
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // Only plain (unmodified) navigation keys drive the menu.
+            if mods.isEmpty || mods == [] {
+                switch key {
+                case 125: // down arrow
+                    coord.parent.onSlashMove?(true); return
+                case 126: // up arrow
+                    coord.parent.onSlashMove?(false); return
+                case 36, 76, 48: // Return, keypad Enter, Tab
+                    if coord.parent.onSlashCommit?() == true { return }
+                case 53: // Escape
+                    if coord.parent.onSlashDismiss?() == true { return }
+                default:
+                    break
+                }
+            }
+        }
+        super.keyDown(with: event)
     }
 
     // MARK: - Smart Enter, Tab, Backtab

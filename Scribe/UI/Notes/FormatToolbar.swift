@@ -14,6 +14,13 @@ final class EditorActions {
     var checklist: (() -> Void)?
     var insertTable: (() -> Void)?
     var setHeading: ((Int) -> Void)?  // 0 = paragraph, 1–3 = H1–H3
+    // Slash-menu block inserts. Additive — existing callers ignore them.
+    var insertCodeBlock: (() -> Void)?
+    var insertDivider: (() -> Void)?
+    var insertImagePlaceholder: (() -> Void)?
+    /// Removes the active `/query` token at the caret (used before a slash-menu
+    /// command runs so the typed text doesn't linger).
+    var clearSlashToken: (() -> Void)?
 }
 
 struct FormatToolbar: View {

@@ -69,18 +69,48 @@ struct MarkdownTheme {
         .monospacedSystemFont(ofSize: baseFont.pointSize - 0.5, weight: .regular)
     }
 
+    /// The design (serif / monospaced / default) of the base font, detected by
+    /// comparing the base family against each known system-design family. Lets
+    /// headings inherit the note's typeface family (a Serif body → New York
+    /// headings) without threading an extra parameter through every call.
+    private var baseDesign: NSFontDescriptor.SystemDesign {
+        let baseFamily = baseFont.familyName ?? ""
+        let probe = NSFont.systemFont(ofSize: baseFont.pointSize)
+        for design in [NSFontDescriptor.SystemDesign.serif, .monospaced] {
+            if let d = probe.fontDescriptor.withDesign(design),
+               let f = NSFont(descriptor: d, size: probe.pointSize),
+               f.familyName == baseFamily {
+                return design
+            }
+        }
+        return .default
+    }
+
     /// Heading scale (H1→H6). The jump from H2→H1 is intentionally large —
     /// document titles need to dominate. H5/H6 stay close to body so they
     /// read as subsection labels, not new sections.
+    ///
+    /// The family is derived from `baseFont` via `baseDesign` so a per-note
+    /// typeface (System / Serif / Mono) carries into headings.
     func headingFont(level: Int) -> NSFont {
+        let size: CGFloat
+        let weight: NSFont.Weight
         switch level {
-        case 1: return .systemFont(ofSize: 30, weight: .bold)
-        case 2: return .systemFont(ofSize: 24, weight: .semibold)
-        case 3: return .systemFont(ofSize: 20, weight: .semibold)
-        case 4: return .systemFont(ofSize: 17, weight: .semibold)
-        case 5: return .systemFont(ofSize: baseFont.pointSize + 1, weight: .semibold)
-        default: return .systemFont(ofSize: baseFont.pointSize, weight: .semibold)
+        case 1: size = 30; weight = .bold
+        case 2: size = 24; weight = .semibold
+        case 3: size = 20; weight = .semibold
+        case 4: size = 17; weight = .semibold
+        case 5: size = baseFont.pointSize + 1; weight = .semibold
+        default: size = baseFont.pointSize; weight = .semibold
         }
+        let weighted = NSFont.systemFont(ofSize: size, weight: weight)
+        let design = baseDesign
+        guard design != .default,
+              let designed = weighted.fontDescriptor.withDesign(design),
+              let font = NSFont(descriptor: designed, size: size) else {
+            return weighted
+        }
+        return font
     }
 
     /// Negative tracking for display sizes — the larger a glyph, the looser its
@@ -211,13 +241,18 @@ enum MarkdownRenderer {
     static func attributed(
         _ source: String,
         font: NSFont,
-        cursorOffset: Int? = nil
+        cursorOffset: Int? = nil,
+        focusDimAlpha: CGFloat? = nil
     ) -> NSAttributedString {
         guard !source.isEmpty else { return NSAttributedString() }
         // Cache lookup. cursorOffset=nil is treated as a sentinel (-1) so that
-        // "no reveal" results don't collide with cursor-at-0 results.
+        // "no reveal" results don't collide with cursor-at-0 results. The focus
+        // dim alpha (or a sentinel) is folded into the font-size key so focus
+        // on / off / contrast-floor variants don't collide.
+        let dimKey = focusDimAlpha ?? -1
         let cacheKey = cursorOffset ?? -1
-        if let hit = cache.lookup(source: source, cursor: cacheKey, fontSize: font.pointSize) {
+        if let hit = cache.lookup(source: source, cursor: cacheKey,
+                                  fontSize: font.pointSize + dimKey * 0.001) {
             return hit
         }
         let theme = MarkdownTheme(baseFont: font)
@@ -256,11 +291,18 @@ enum MarkdownRenderer {
             applyMarkerReveal(to: out, revealedBlockId: revealedBlockId, theme: theme)
         }
 
+        // Focus mode: dim every block except the cursor's. Runs after the
+        // marker reveal so the active block keeps its full-strength styling.
+        if let dim = focusDimAlpha {
+            applyFocusDim(to: out, revealedBlockId: revealedBlockId, dimAlpha: dim)
+        }
+
         // Snapshot to an immutable NSAttributedString before caching so a
         // caller that (incorrectly) downcasts the return value to mutable
         // can't poison subsequent cache hits.
         let immutable = NSAttributedString(attributedString: out)
-        cache.store(source: source, cursor: cacheKey, fontSize: font.pointSize, value: immutable)
+        cache.store(source: source, cursor: cacheKey,
+                    fontSize: font.pointSize + dimKey * 0.001, value: immutable)
         return immutable
     }
 
@@ -918,6 +960,33 @@ enum MarkdownRenderer {
             // Hide: set foreground to clear. Glyphs still take space (preserves
             // selection / undo positions); they just don't render visibly.
             out.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
+        }
+    }
+
+    // MARK: - Focus mode dim
+
+    /// Dims every block whose `.scribeBlockId` differs from the cursor's block
+    /// by multiplying its visible foreground alpha down to `dimAlpha`. The
+    /// active block is left untouched (full strength). Clear (hidden) glyphs —
+    /// e.g. off-block syntax markers — stay clear; we never re-show them.
+    private static func applyFocusDim(
+        to out: NSMutableAttributedString,
+        revealedBlockId: UUID?,
+        dimAlpha: CGFloat
+    ) {
+        let full = NSRange(location: 0, length: out.length)
+        out.enumerateAttribute(.scribeBlockId, in: full, options: []) { value, range, _ in
+            let owner = value as? UUID
+            // Active block (or unattributed gaps adjacent to it) stay full.
+            if owner == revealedBlockId { return }
+            // Walk foreground-color runs inside this block and fade each one.
+            out.enumerateAttribute(.foregroundColor, in: range, options: []) { colorValue, sub, _ in
+                let base = (colorValue as? NSColor) ?? NSColor.labelColor
+                // Don't touch already-hidden (clear) glyphs.
+                if base.alphaComponent <= 0.001 { return }
+                let dimmed = base.withAlphaComponent(base.alphaComponent * dimAlpha)
+                out.addAttribute(.foregroundColor, value: dimmed, range: sub)
+            }
         }
     }
 

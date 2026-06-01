@@ -13,6 +13,11 @@ struct NoteDetailView: View {
     @State private var openedTaskFromAction: TodoTask?
     @State private var openedTranscriptSession: Session?
     @FocusState private var titleFocused: Bool
+    /// Focus mode: hides the sessions strip, backlinks, and document metadata,
+    /// dims non-active blocks in the body, leaving just title + body. Persisted
+    /// so it survives note switches and relaunches.
+    @AppStorage("noteEditor.focusMode") private var focusMode: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -44,57 +49,61 @@ struct NoteDetailView: View {
                         .animation(.easeOut(duration: DesignTokens.Motion.fast), value: titleFocused)
                 )
 
-                HStack(spacing: DesignTokens.Spacing.md) {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        Image(systemName: "clock")
-                            .imageScale(.small)
-                        Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
-                    }
-                    .font(DesignTokens.Typography.eyebrow)
-                    .foregroundStyle(.tertiary)
-                    .tracking(0.5)
+                if !focusMode {
+                    HStack(spacing: DesignTokens.Spacing.md) {
+                        HStack(spacing: DesignTokens.Spacing.sm) {
+                            Image(systemName: "clock")
+                                .imageScale(.small)
+                            Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
+                        }
+                        .font(DesignTokens.Typography.eyebrow)
+                        .foregroundStyle(.tertiary)
+                        .tracking(0.5)
 
-                    if !vm.note.isDailyNote {
-                        NotebookPicker(selectedNotebookId: Binding(
-                            get: { vm.note.notebookId },
-                            set: { newId in
-                                vm.note.notebookId = newId
-                                vm.markDirty()
-                            }
-                        ))
-                    }
+                        if !vm.note.isDailyNote {
+                            NotebookPicker(selectedNotebookId: Binding(
+                                get: { vm.note.notebookId },
+                                set: { newId in
+                                    vm.note.notebookId = newId
+                                    vm.markDirty()
+                                }
+                            ))
+                        }
 
-                    Spacer()
+                        Spacer()
+                    }
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xl)
             .padding(.top, DesignTokens.Spacing.sm)
             .padding(.bottom, DesignTokens.Spacing.xs)
 
-            Divider()
+            if !focusMode {
+                Divider()
 
-            NoteSessionsStrip(
-                sessions: vm.sessions,
-                selectedSessionId: $selectedSessionId,
-                onStartRecording: { vm.startRecording(appDelegate: appDelegate) }
-            )
-            if isRecordingForThisNote {
-                NoteLiveRecordingPane()
-            }
-            if let selectedId = selectedSessionId,
-               let session = vm.sessions.first(where: { $0.id == selectedId }) {
-                ScrollView {
-                    NoteSessionAutoSection(
-                        viewModel: vm.transcriptDetailViewModel(for: session),
-                        onOpenSession: { sess in openedTranscriptSession = sess },
-                        onConvertActionItem: { _, task in
-                            openedTaskFromAction = task
-                        }
-                    )
+                NoteSessionsStrip(
+                    sessions: vm.sessions,
+                    selectedSessionId: $selectedSessionId,
+                    onStartRecording: { vm.startRecording(appDelegate: appDelegate) }
+                )
+                if isRecordingForThisNote {
+                    NoteLiveRecordingPane()
                 }
-                .frame(maxHeight: 280)
+                if let selectedId = selectedSessionId,
+                   let session = vm.sessions.first(where: { $0.id == selectedId }) {
+                    ScrollView {
+                        NoteSessionAutoSection(
+                            viewModel: vm.transcriptDetailViewModel(for: session),
+                            onOpenSession: { sess in openedTranscriptSession = sess },
+                            onConvertActionItem: { _, task in
+                                openedTaskFromAction = task
+                            }
+                        )
+                    }
+                    .frame(maxHeight: 280)
+                }
+                Divider()
             }
-            Divider()
 
             // ── Body editor (full width) ───────────────────────────────────
             NoteEditorView(
@@ -104,12 +113,13 @@ struct NoteDetailView: View {
                 ),
                 noteStore: .shared,
                 noteId: vm.note.id,
-                onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) }
+                onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) },
+                focusModeEnabled: focusMode
             )
             .padding(.vertical, DesignTokens.Spacing.xs)
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
-            if !vm.backlinks.isEmpty {
+            if !vm.backlinks.isEmpty && !focusMode {
                 Divider()
                 BacklinksBar(
                     backlinks: vm.backlinks,
@@ -159,11 +169,32 @@ struct NoteDetailView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    toggleFocusMode()
+                } label: {
+                    Label(focusMode ? "Exit Focus Mode" : "Focus Mode",
+                          systemImage: focusMode ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+                }
+                .help(focusMode ? "Exit focus mode (⌃⌘F)" : "Focus mode: hide chrome and dim other blocks (⌃⌘F)")
+                .keyboardShortcut("f", modifiers: [.control, .command])
+                .accessibilityLabel(focusMode ? "Exit focus mode" : "Enter focus mode")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
                     exportMarkdown()
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .help("Export this note as Markdown")
+            }
+        }
+    }
+
+    private func toggleFocusMode() {
+        if reduceMotion {
+            focusMode.toggle()
+        } else {
+            withAnimation(.easeInOut(duration: DesignTokens.Motion.standard)) {
+                focusMode.toggle()
             }
         }
     }
