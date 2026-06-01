@@ -47,6 +47,9 @@ struct MainWindowView: View {
     @State private var topNotebookDraftName: String = ""
     @State private var detailNote: Note? = nil
     @State private var tagReloadTask: Task<Void, Never>? = nil
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showOnboarding = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     /// Bridges `List(selection:)` and child views (which traffic in
     /// `MainSelection?`) to the history-backed coordinator. A nil set
@@ -56,14 +59,32 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             detail
                 .errorBanner(appState)
+                .overlay {
+                    // IINA-style floating controller; self-gates on
+                    // isTranscribing and positions itself by its placement
+                    // setting, so it's inert when not recording.
+                    LiveControllerOverlay(
+                        audioManager: appState.audioManager,
+                        appState: appState,
+                        onPauseToggle: {
+                            if appState.audioManager.isPaused {
+                                Task { await appDelegate.resumeRecording() }
+                            } else {
+                                appDelegate.pauseRecording()
+                            }
+                        },
+                        onStop: { Task { await appDelegate.stopRecording() } },
+                        onExpand: { nav.navigate(to: .live) }
+                    )
+                }
         }
-        .frame(minWidth: 920, minHeight: 620)
+        .frame(minWidth: columnVisibility == .detailOnly ? 720 : 920, minHeight: 620)
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button {
@@ -96,8 +117,12 @@ struct MainWindowView: View {
                 nav.replaceCurrent(.live)
             }
             appState.currentSelection = nav.current
+            if !hasCompletedOnboarding { showOnboarding = true }
         }
         .onDisappear { projectsViewModel.stop() }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView(isPresented: $showOnboarding, audioManager: appState.audioManager)
+        }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { notes in
             allNotes = notes
             scheduleTagReload()
@@ -148,6 +173,15 @@ struct MainWindowView: View {
                 Button("") { nav.goForward() }
                     .keyboardShortcut("]", modifiers: [.command])
                     .disabled(!nav.canGoForward)
+                // Arc-style collapse-to-focus: hide the sidebar for full-width
+                // reading/writing. ⌃⌘S avoids ⌘S (no save semantic) and the
+                // system ⌃⌘F fullscreen.
+                Button("") {
+                    withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                    }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .control])
             }
             .hidden()
         )
