@@ -40,18 +40,50 @@ targets:
         # Disable JIT / executable memory pages by default; nothing in Scribe
         # needs them, and removing them shrinks the attack surface.
         OTHER_CODE_SIGN_FLAGS: "--options=runtime"
-    scheme:
-      run:
-        config: Debug
-      test:
-        config: Debug
-      archive:
-        config: Release
+  # XCUITest target. Drives the built Scribe app through the accessibility
+  # tree. The app is launched with `--uitesting` (see AppLaunchEnvironment) so
+  # it boots without the audio / ScreenCaptureKit capture stack.
+  ScribeUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: ScribeUITests/
+    dependencies:
+      - target: Scribe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=macosx*]: x86_64
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
+        TEST_TARGET_NAME: Scribe
 
-# NOTE: Unit tests live in `ScribeTests/` and are run via `swift test` against
-# the SwiftPM package (see Package.swift). Hosting them inside Xcode's test
-# scheme proved fragile because the host app boots audio/recording services
-# during launch; SwiftPM's logic-only test bundle avoids the issue.
+schemes:
+  Scribe:
+    build:
+      targets:
+        Scribe: all
+        ScribeUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - ScribeUITests
+    archive:
+      config: Release
+
+# NOTE: Logic-only unit tests live in `ScribeTests/` and are run via
+# `swift test` against the SwiftPM package (see Package.swift). Hosting them
+# inside Xcode's test scheme proved fragile because the host app boots
+# audio/recording services during launch; SwiftPM's logic-only test bundle
+# avoids the issue. The `ScribeUITests/` XCUITest target above launches the
+# app out-of-process with `--uitesting`, which gates that boot — so it can
+# live in the Xcode test scheme without the same crash.
 
 packages:
   GRDB.swift:

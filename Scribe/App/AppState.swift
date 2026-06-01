@@ -76,6 +76,12 @@ final class AppState: ObservableObject {
     ///   the shared on-disk store backing the running app.
     init(transcriptStore: TranscriptStore = TranscriptStore()) {
         self.transcriptStore = transcriptStore
+        // Under `--uitesting`, skip everything that touches audio hardware,
+        // CoreAudio device enumeration, or ScreenCaptureKit so XCUITest can
+        // launch the app without booting the capture stack (which crashes a
+        // headless test host). Production behavior is unchanged when the flag
+        // is absent.
+        guard !AppLaunchEnvironment.isUITesting else { return }
         wireAudioPipeline()
         wireTranscriptionResults()
         observeLanguagePreference()

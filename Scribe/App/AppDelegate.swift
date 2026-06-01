@@ -96,9 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // prompt on every launch even when System Settings shows access as
         // granted. We defer the request to the moment the user actually hits
         // Record, at which point a single prompt is unavoidable and expected.
-        Task { @MainActor in
-            _ = await Permissions.checkMicrophonePermission()
-            _ = await SpeechRecognizerEngine.checkAuthorization()
+        //
+        // Skipped under `--uitesting`: an XCUITest host has no way to satisfy a
+        // TCC permission prompt and the request can crash a headless host.
+        if !AppLaunchEnvironment.isUITesting {
+            Task { @MainActor in
+                _ = await Permissions.checkMicrophonePermission()
+                _ = await SpeechRecognizerEngine.checkAuthorization()
+            }
         }
     }
 
