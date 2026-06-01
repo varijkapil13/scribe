@@ -121,6 +121,7 @@ struct MarkdownEditorView: NSViewRepresentable {
             coordinator.parent.onWikiLinkNavigate?(anchor)
         }
         context.coordinator.textView = tv
+        context.coordinator.observeScrollRequests()
         context.coordinator.parent = self
 
         if let actions = actions {
@@ -198,6 +199,29 @@ struct MarkdownEditorView: NSViewRepresentable {
 
         var parent: MarkdownEditorView
         weak var textView: MarkdownNSTextView?
+
+        /// Observes document-outline scroll requests (post `.scribeScrollToOffset`
+        /// with userInfo["offset"]). Selector-based so deinit can clean up
+        /// without touching a non-Sendable token (Swift 6).
+        func observeScrollRequests() {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(handleScrollRequest(_:)),
+                name: .scribeScrollToOffset, object: nil)
+        }
+
+        @objc private func handleScrollRequest(_ note: Notification) {
+            guard let tv = textView,
+                  let offset = note.userInfo?["offset"] as? Int,
+                  offset >= 0, offset <= (tv.string as NSString).length else { return }
+            let range = NSRange(location: offset, length: 0)
+            tv.setSelectedRange(range)
+            tv.scrollRangeToVisible(range)
+            tv.window?.makeFirstResponder(tv)
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
 
         /// Most recent registry produced by applyFormatting. Used by hover overlay and Edit button (Task 6).
         var foldRegistry: [FoldEntry] = []

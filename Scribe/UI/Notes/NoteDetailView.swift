@@ -71,6 +71,28 @@ struct NoteDetailView: View {
                         }
 
                         Spacer()
+
+                        let headings = Self.headings(in: vm.note.body)
+                        if !headings.isEmpty {
+                            Menu {
+                                ForEach(headings) { heading in
+                                    Button {
+                                        NotificationCenter.default.post(
+                                            name: .scribeScrollToOffset, object: nil,
+                                            userInfo: ["offset": heading.offset])
+                                    } label: {
+                                        Text(String(repeating: "    ", count: max(0, heading.level - 1)) + heading.title)
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "list.bullet.indent")
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .help("Outline — jump to a heading")
+                            .accessibilityLabel("Document outline")
+                        }
                     }
                 }
             }
@@ -336,5 +358,42 @@ private struct NotebookPicker: View {
     private var currentName: String {
         guard let id = selectedNotebookId else { return "Inbox" }
         return notebooks.first(where: { $0.id == id })?.name ?? "Notebook"
+    }
+}
+
+// MARK: - Document outline
+
+extension NoteDetailView {
+    struct Heading: Identifiable {
+        let id = UUID()
+        let level: Int
+        let title: String
+        /// UTF-16 offset of the heading line in the body — drives the editor
+        /// scroll (NSRange/NSTextView use UTF-16 indices).
+        let offset: Int
+    }
+
+    private static let headingRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return try! NSRegularExpression(pattern: #"^(#{1,6})[ \t]+(.+?)[ \t]*$"#)
+    }()
+
+    /// ATX headings (`# …`) parsed from the body with their UTF-16 offsets, for
+    /// the outline menu. (Code-block fences aren't excluded — a rare edge.)
+    static func headings(in body: String) -> [Heading] {
+        let ns = body as NSString
+        var out: [Heading] = []
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length),
+                               options: [.byLines]) { sub, lineRange, _, _ in
+            guard let line = sub else { return }
+            let lineNS = line as NSString
+            guard let m = headingRegex.firstMatch(in: line, range: NSRange(location: 0, length: lineNS.length)),
+                  let hashes = Range(m.range(at: 1), in: line),
+                  let titleR = Range(m.range(at: 2), in: line) else { return }
+            out.append(Heading(level: line[hashes].count,
+                               title: String(line[titleR]),
+                               offset: lineRange.location))
+        }
+        return out
     }
 }

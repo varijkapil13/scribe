@@ -871,6 +871,7 @@ extension Notification.Name {
     static let scribeNewNote = Notification.Name("scribe.newNote")
     static let scribeNewDailyNote = Notification.Name("scribe.newDailyNote")
     static let scribeNavigate = Notification.Name("scribe.navigate")  // userInfo["selection"]
+    static let scribeScrollToOffset = Notification.Name("scribe.scrollToOffset")  // userInfo["offset"]
 }
 
 // MARK: - Collapsible section header
