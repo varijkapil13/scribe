@@ -89,31 +89,91 @@ struct TaskListView: View {
     }
 
     private var listControlsBar: some View {
-        HStack {
-            Spacer()
-            Menu {
-                ForEach(TaskListViewModel.TaskSort.allCases) { sort in
-                    Button { setSort(sort) } label: {
-                        Label(sort.rawValue,
-                              systemImage: sortMode == sort ? "checkmark" : sort.systemImage)
-                    }
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            if viewModel.isSelecting {
+                batchControls
+            } else {
+                Spacer()
+                Button { viewModel.enterSelectMode() } label: {
+                    Label("Select", systemImage: "checkmark.circle").font(.caption)
                 }
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up.arrow.down")
-                    Text(sortMode == .smart ? "Sort" : sortMode.rawValue)
-                }
-                .font(.caption)
+                .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
+                .help("Select multiple tasks")
+                sortMenu
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Sort tasks")
-            .accessibilityLabel("Sort: \(sortMode.rawValue)")
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
         .padding(.vertical, 3)
+        .animation(DesignTokens.Motion.resolve(DesignTokens.Motion.snappy, reduceMotion: reduceMotion),
+                   value: viewModel.isSelecting)
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(TaskListViewModel.TaskSort.allCases) { sort in
+                Button { setSort(sort) } label: {
+                    Label(sort.rawValue, systemImage: sortMode == sort ? "checkmark" : sort.systemImage)
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.up.arrow.down")
+                Text(sortMode == .smart ? "Sort" : sortMode.rawValue)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Sort tasks")
+        .accessibilityLabel("Sort: \(sortMode.rawValue)")
+    }
+
+    /// Batch action bar shown in multi-select mode.
+    private var batchControls: some View {
+        let empty = viewModel.selection.isEmpty
+        return HStack(spacing: DesignTokens.Spacing.sm) {
+            Text("\(viewModel.selection.count) selected")
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            Spacer()
+            Button { viewModel.batchComplete() } label: { Image(systemName: "checkmark.circle") }
+                .help("Complete selected").disabled(empty)
+            Menu {
+                let cal = Calendar.current
+                let today = cal.startOfDay(for: Date())
+                Button("Today") { viewModel.batchReschedule(to: today) }
+                Button("Tomorrow") { viewModel.batchReschedule(to: cal.date(byAdding: .day, value: 1, to: today)) }
+                Button("Next week") { viewModel.batchReschedule(to: cal.date(byAdding: .day, value: 7, to: today)) }
+                Divider()
+                Button("No date") { viewModel.batchReschedule(to: nil) }
+            } label: { Image(systemName: "calendar") }
+                .help("Reschedule selected").disabled(empty)
+            Menu {
+                Button { viewModel.batchPriority(.high) } label: { Label("High", systemImage: DesignTokens.Palette.prioritySymbolHigh) }
+                Button { viewModel.batchPriority(.medium) } label: { Label("Medium", systemImage: DesignTokens.Palette.prioritySymbolMedium) }
+                Button { viewModel.batchPriority(.low) } label: { Label("Low", systemImage: DesignTokens.Palette.prioritySymbolLow) }
+                Divider()
+                Button("None") { viewModel.batchPriority(nil) }
+            } label: { Image(systemName: "flag") }
+                .help("Set priority").disabled(empty)
+            Menu {
+                Button("Inbox") { viewModel.batchMove(toProject: nil) }
+                Divider()
+                ForEach(viewModel.availableProjects) { project in
+                    Button(project.name) { viewModel.batchMove(toProject: project.id) }
+                }
+            } label: { Image(systemName: "folder") }
+                .help("Move to project").disabled(empty)
+            Button(role: .destructive) { viewModel.batchDelete() } label: { Image(systemName: "trash") }
+                .help("Delete selected").disabled(empty)
+            Button("Done") { viewModel.exitSelectMode() }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(.borderless)
+        .font(.callout)
     }
 
     var body: some View {
@@ -581,9 +641,16 @@ struct TaskListView: View {
             onSetPriority: { viewModel.setPriority($0, for: task) },
             onMoveProject: { viewModel.moveToProject($0, for: task) },
             onRename: { viewModel.setTitle($0, for: task) },
-            subtaskProgress: viewModel.subtaskProgress[task.id]
+            subtaskProgress: viewModel.subtaskProgress[task.id],
+            isSelecting: viewModel.isSelecting,
+            isMultiSelected: viewModel.selection.contains(task.id),
+            onToggleSelect: { viewModel.toggleSelected(task.id) }
         )
         .onTapGesture {
+            if viewModel.isSelecting {
+                viewModel.toggleSelected(task.id)
+                return
+            }
             viewModel.focusedTaskId = task.id
             withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
                 selectedTask = (selectedTask?.id == task.id) ? nil : task
@@ -899,6 +966,11 @@ struct TaskRowView: View {
     let onRename: (String) -> Void
     /// Checklist progress for the row "n/m" chip (nil when the task has none).
     var subtaskProgress: SubtaskProgress? = nil
+    /// Multi-select mode: the checkbox becomes a selection toggle and the row
+    /// tap selects rather than opens the inspector.
+    var isSelecting: Bool = false
+    var isMultiSelected: Bool = false
+    var onToggleSelect: () -> Void = {}
 
     @State private var isHovered: Bool = false
     @State private var showDuePopover = false
@@ -952,23 +1024,37 @@ struct TaskRowView: View {
 
     private var checkbox: some View {
         Button {
-            if !reduceMotion { bounceTrigger += 1 }
-            onToggle()
+            if isSelecting {
+                onToggleSelect()
+            } else {
+                if !reduceMotion { bounceTrigger += 1 }
+                onToggle()
+            }
         } label: {
-            Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(task.isCompleted ? accent : .secondary)
-                .font(.system(size: 15, weight: .regular))
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: bounceTrigger)
+            if isSelecting {
+                Image(systemName: isMultiSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isMultiSelected ? accent : .secondary)
+                    .font(.system(size: 15))
+            } else {
+                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(task.isCompleted ? accent : .secondary)
+                    .font(.system(size: 15, weight: .regular))
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: bounceTrigger)
+            }
         }
         .buttonStyle(.plain)
         .sensoryFeedback(.success, trigger: task.isCompleted)
-        .accessibilityLabel(task.isCompleted ? "Mark incomplete" : "Mark complete")
+        .accessibilityLabel(isSelecting
+                            ? (isMultiSelected ? "Deselect" : "Select")
+                            : (task.isCompleted ? "Mark incomplete" : "Mark complete"))
     }
 
     @ViewBuilder
     private var rowBackground: some View {
-        if isSelected {
+        if isMultiSelected {
+            DesignTokens.Palette.accentFill(.selected, accent: accent, contrast: contrast)
+        } else if isSelected {
             DesignTokens.Palette.accentFill(.selected, accent: accent, contrast: contrast)
         } else if affordancesVisible {
             DesignTokens.Palette.fill(.hover, contrast: contrast)

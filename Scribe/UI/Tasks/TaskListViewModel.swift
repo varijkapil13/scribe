@@ -39,6 +39,10 @@ final class TaskListViewModel: ObservableObject {
     @Published private(set) var groups: [(bucket: Bucket, tasks: [TodoTask])] = []
     /// Subtask "n/m" progress per visible task id, for the list-row chip.
     @Published private(set) var subtaskProgress: [String: SubtaskProgress] = [:]
+    /// Multi-select mode + the set of selected task ids (TickTick batch ops).
+    @Published var isSelecting = false
+    @Published var selection: Set<String> = []
+
     /// Active within-bucket sort (pinned always float first). `.smart` keeps the
     /// SQL order. Set by the view from its persisted per-filter preference.
     @Published var sortMode: TaskSort = .smart {
@@ -404,6 +408,33 @@ final class TaskListViewModel: ObservableObject {
         do { try store.setPinned(!task.isPinned, for: task.id) }
         catch { Log.ui.error("TaskListViewModel.togglePin failed: \(error.localizedDescription, privacy: .public)") }
     }
+
+    // MARK: - Multi-select batch (TickTick parity)
+
+    func enterSelectMode() { isSelecting = true }
+    func exitSelectMode() { isSelecting = false; selection.removeAll() }
+
+    func toggleSelected(_ id: String) {
+        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+    }
+
+    private func runBatch(_ work: ([String]) throws -> Void) {
+        let ids = Array(selection)
+        guard !ids.isEmpty else { return }
+        do {
+            try work(ids)
+            AccessibilityNotification.Announcement("\(ids.count) tasks updated").post()
+        } catch {
+            Log.ui.error("TaskListViewModel batch op failed: \(error.localizedDescription, privacy: .public)")
+        }
+        exitSelectMode()
+    }
+
+    func batchComplete()                          { runBatch { _ = try store.completeTasks(ids: $0) } }
+    func batchDelete()                            { runBatch { _ = try store.deleteTasks(ids: $0) } }
+    func batchMove(toProject id: String?)         { runBatch { try store.moveTasks(ids: $0, toProject: id) } }
+    func batchReschedule(to date: Date?)          { runBatch { try store.rescheduleTasks(ids: $0, to: date) } }
+    func batchPriority(_ p: TodoTask.Priority?)   { runBatch { try store.setPriority(p, forTasks: $0) } }
 
     private func commitInline(_ task: TodoTask) {
         do {
