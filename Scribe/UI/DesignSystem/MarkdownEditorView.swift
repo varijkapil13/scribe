@@ -469,6 +469,28 @@ struct MarkdownEditorView: NSViewRepresentable {
             applyFormatting(to: tv, sourceOverride: newSource)
         }
 
+        /// Moves the line/block containing the selection up or down one slot,
+        /// splicing the markdown SOURCE through `editSource` (so the fold
+        /// registry + source-level undo stay correct — never a raw text-storage
+        /// mutation). Bound to ⌃⌘↑ / ⌃⌘↓.
+        func moveBlock(up: Bool) {
+            editSource { source, sel in
+                var lines = source.components(separatedBy: "\n")
+                guard lines.count > 1 else { return (source, sel) }
+                let ns = source as NSString
+                let loc = min(max(0, sel.location), ns.length)
+                let idx = ns.substring(to: loc).components(separatedBy: "\n").count - 1
+                let target = up ? idx - 1 : idx + 1
+                guard lines.indices.contains(idx), lines.indices.contains(target) else {
+                    return (source, sel)
+                }
+                lines.swapAt(idx, target)
+                let newSource = lines.joined(separator: "\n")
+                let newStart = lines[..<target].reduce(0) { $0 + ($1 as NSString).length + 1 }
+                return (newSource, NSRange(location: newStart, length: 0))
+            }
+        }
+
         // MARK: - Source-level undo / redo
 
         /// Clears the undo / redo stacks. Called when the editor switches
@@ -1532,6 +1554,13 @@ final class MarkdownNSTextView: NSTextView {
             case "7":       coord?.applyOrderedList();      return true
             case "u", "U":  coord?.toggleChecklistOnSelection(); return true
             case "z", "Z":  coord?.performSourceRedo();    return true
+            default: break
+            }
+        }
+        if mods == [.command, .control] {
+            switch event.keyCode {
+            case 126: coord?.moveBlock(up: true);  return true   // ⌃⌘↑
+            case 125: coord?.moveBlock(up: false); return true   // ⌃⌘↓
             default: break
             }
         }
