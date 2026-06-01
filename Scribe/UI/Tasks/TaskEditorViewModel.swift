@@ -16,13 +16,25 @@ final class TaskEditorViewModel: ObservableObject {
     @Published var priority: TodoTask.Priority?
     @Published var dueAt: Date?
     @Published var remindAt: Date?
+    /// Legacy comma-separated tag entry, still used by the modal
+    /// `TaskEditorView`. The inline `TaskDetailPanel` uses the structured
+    /// `tags` array (token field) instead; `parsedTags` reconciles both.
     @Published var tagsInput: String
+    /// Structured tag tokens edited via the inspector's chip/token field.
+    /// Kept in sync with `tagsInput` so either entry path round-trips.
+    @Published var tags: [String]
     @Published private(set) var availableProjects: [Project] = []
     @Published private(set) var saveError: String?
     /// Title of the meeting session this task originated from, when the task
     /// has a `sourceSessionId`. Surfaced as a "From: <title>" link in the
     /// editor sheet.
     @Published private(set) var sourceSessionTitle: String?
+    /// Bumps on every successful (debounced or flushed) save so the inspector
+    /// can flash a brief "Saved" confirmation. Driven by `save()`.
+    @Published private(set) var lastSavedAt: Date?
+    /// All known tags across the store — feeds the token field's prefix
+    /// autocomplete. Loaded once at init.
+    @Published private(set) var allTags: [String] = []
 
     let originalTask: TodoTask
 
@@ -50,8 +62,10 @@ final class TaskEditorViewModel: ObservableObject {
         self.dueAt = task.dueAt
         self.remindAt = task.remindAt
         self.tagsInput = ""
+        self.tags = []
         loadProjects()
         loadTags()
+        loadAllTags()
         loadSourceSessionTitle()
         setupAutoSave()
     }
@@ -65,11 +79,20 @@ final class TaskEditorViewModel: ObservableObject {
             $priority.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $dueAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $remindAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
-            $tagsInput.dropFirst().map { _ in () }.eraseToAnyPublisher()
+            $tagsInput.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $tags.dropFirst().map { _ in () }.eraseToAnyPublisher()
         ])
         autoSaveCancellable = changes
             .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { [weak self] in _ = self?.save() }
+    }
+
+    /// Forces an immediate save, bypassing the 500ms debounce. Call this on
+    /// inspector dismiss / Close so an in-flight edit is never lost (the old
+    /// Escape-discard data-loss trap). Returns the result of `save()`.
+    @discardableResult
+    func flush() -> Bool {
+        save()
     }
 
     // MARK: - Loading
@@ -84,11 +107,45 @@ final class TaskEditorViewModel: ObservableObject {
 
     private func loadTags() {
         do {
-            let tags = try store.tags(for: originalTask.id)
-            tagsInput = tags.joined(separator: ", ")
+            let loaded = try store.tags(for: originalTask.id)
+            tags = loaded
+            tagsInput = loaded.joined(separator: ", ")
         } catch {
             Log.ui.error("TaskEditorViewModel.loadTags failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func loadAllTags() {
+        do {
+            allTags = try store.allTags()
+        } catch {
+            Log.ui.error("TaskEditorViewModel.loadAllTags failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Tag mutation (token field)
+
+    /// Adds a normalised tag token (used by the inspector's token field). No-op
+    /// on blank input or duplicates; keeps `tagsInput` in sync for the modal.
+    func addTag(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty, !tags.contains(trimmed) else { return }
+        tags.append(trimmed)
+        tagsInput = tags.joined(separator: ", ")
+    }
+
+    /// Removes a tag token by value.
+    func removeTag(_ tag: String) {
+        tags.removeAll { $0 == tag }
+        tagsInput = tags.joined(separator: ", ")
+    }
+
+    /// Tags in `allTags` matching the given prefix that aren't already applied.
+    /// Drives the token field's autocomplete suggestions.
+    func tagSuggestions(matching prefix: String) -> [String] {
+        let needle = prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return [] }
+        return allTags.filter { $0.hasPrefix(needle) && !tags.contains($0) }
     }
 
     private func loadSourceSessionTitle() {
@@ -120,6 +177,7 @@ final class TaskEditorViewModel: ObservableObject {
             // task is a candidate (no-op on past / cleared remindAt).
             Task { await reminderScheduler.schedule(updated) }
             saveError = nil
+            lastSavedAt = Date()
             return true
         } catch {
             saveError = error.localizedDescription
@@ -165,11 +223,18 @@ final class TaskEditorViewModel: ObservableObject {
 
     // MARK: - Tag parsing
 
-    /// Splits the freeform tag input into normalised tokens. Comma-separated;
-    /// trim, lowercase, drop empties. The store re-normalises on insert so
-    /// this is mostly cosmetic.
+    /// Resolves the effective tag set for persistence. The token field keeps
+    /// `tags` and `tagsInput` in sync, so they normally agree. When they diverge
+    /// the legacy comma-separated `tagsInput` (modal `TaskEditorView`) was edited
+    /// directly — honour it. The store re-normalises on insert so this is mostly
+    /// cosmetic.
     var parsedTags: [String] {
-        Self.parseTags(tagsInput)
+        let fromInput = Self.parseTags(tagsInput)
+        if fromInput == tags { return tags }
+        // The text field and the token array disagree: the modal editor edited
+        // `tagsInput` independently. Prefer whichever was actually mutated by
+        // taking `tagsInput` (the token field always mirrors into it).
+        return fromInput
     }
 
     nonisolated static func parseTags(_ input: String) -> [String] {

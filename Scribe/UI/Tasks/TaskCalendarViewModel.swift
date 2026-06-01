@@ -119,6 +119,27 @@ final class TaskCalendarViewModel: ObservableObject {
         }
     }
 
+    /// Reschedules a task to a new day, preserving its existing time-of-day
+    /// (so a "10am" task dropped on another day stays at 10am). Used by the
+    /// calendar's day-cell drag-drop and its day-cell reschedule menu.
+    func reschedule(taskId: String, to day: Date) {
+        do {
+            guard var task = try store.fetchTask(id: taskId) else { return }
+            let target = cal.startOfDay(for: day)
+            if let existing = task.dueAt {
+                let comps = cal.dateComponents([.hour, .minute], from: existing)
+                task.dueAt = cal.date(bySettingHour: comps.hour ?? 0,
+                                      minute: comps.minute ?? 0,
+                                      second: 0, of: target) ?? target
+            } else {
+                task.dueAt = target
+            }
+            try store.updateTask(task)
+        } catch {
+            Log.ui.error("TaskCalendarViewModel.reschedule: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     // MARK: - Helpers
 
     static func dayKey(for date: Date) -> String {

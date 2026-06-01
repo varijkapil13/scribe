@@ -84,4 +84,48 @@ final class TaskListViewModelTests: XCTestCase {
         )
         XCTAssertEqual(groups.map(\.bucket), [.later])
     }
+
+    // MARK: - Keyboard focus navigation
+
+    @MainActor
+    func testMoveFocusSeedsFirstRowWhenUnset() {
+        let manager = try! DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: manager)
+        let vm = TaskListViewModel(filter: .all, store: store, reminderScheduler: NoOpTaskReminderScheduler())
+        let ids = ["a", "b", "c"]
+
+        vm.focusedTaskId = nil
+        vm.moveFocus(by: 1, in: ids)
+        XCTAssertEqual(vm.focusedTaskId, "a")
+
+        vm.focusedTaskId = nil
+        vm.moveFocus(by: -1, in: ids)
+        XCTAssertEqual(vm.focusedTaskId, "c")
+    }
+
+    @MainActor
+    func testMoveFocusWrapsAtEnds() {
+        let manager = try! DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: manager)
+        let vm = TaskListViewModel(filter: .all, store: store, reminderScheduler: NoOpTaskReminderScheduler())
+        let ids = ["a", "b", "c"]
+
+        vm.focusedTaskId = "c"
+        vm.moveFocus(by: 1, in: ids)
+        XCTAssertEqual(vm.focusedTaskId, "a")
+
+        vm.focusedTaskId = "a"
+        vm.moveFocus(by: -1, in: ids)
+        XCTAssertEqual(vm.focusedTaskId, "c")
+    }
+
+    @MainActor
+    func testMoveFocusClearsWhenNoRows() {
+        let manager = try! DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: manager)
+        let vm = TaskListViewModel(filter: .all, store: store, reminderScheduler: NoOpTaskReminderScheduler())
+        vm.focusedTaskId = "stale"
+        vm.moveFocus(by: 1, in: [])
+        XCTAssertNil(vm.focusedTaskId)
+    }
 }

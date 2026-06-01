@@ -10,7 +10,7 @@ struct ProjectEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var selectedColor: String?
-    @State private var icon: String
+    @State private var icon: String?
 
     /// Curated swatch palette — keeps the editor opinionated. Free-form hex
     /// can come later if it ever matters.
@@ -26,11 +26,11 @@ struct ProjectEditorView: View {
         case .create:
             _name = State(initialValue: "")
             _selectedColor = State(initialValue: nil)
-            _icon = State(initialValue: "")
+            _icon = State(initialValue: nil)
         case .edit(let project):
             _name = State(initialValue: project.name)
             _selectedColor = State(initialValue: project.color)
-            _icon = State(initialValue: project.icon ?? "")
+            _icon = State(initialValue: project.icon)
         }
     }
 
@@ -53,9 +53,8 @@ struct ProjectEditorView: View {
                     }
                     .padding(.vertical, 4)
                 }
-                Section("Icon (SF Symbol)") {
-                    TextField("e.g. briefcase, house, tag", text: $icon)
-                        .textFieldStyle(.plain)
+                Section("Icon") {
+                    SymbolPickerGrid(selection: $icon)
                 }
             }
             .formStyle(.grouped)
@@ -68,8 +67,7 @@ struct ProjectEditorView: View {
                     Button("Save") {
                         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return }
-                        let trimmedIcon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
-                        onCommit(trimmed, selectedColor, trimmedIcon.isEmpty ? nil : trimmedIcon)
+                        onCommit(trimmed, selectedColor, icon)
                         dismiss()
                     }
                     .keyboardShortcut(.defaultAction)

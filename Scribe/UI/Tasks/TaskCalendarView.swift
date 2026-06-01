@@ -6,13 +6,41 @@ struct TaskCalendarView: View {
 
     @StateObject private var viewModel = TaskCalendarViewModel()
     @State private var editingTask: TodoTask?
+    @State private var mode: Mode = .month
+    @State private var dropTargetKey: String?
     var onNavigateToNote: ((String) -> Void)?
 
-    private let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.scribeAccent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Display mode toggle: a full month grid, or a scrollable agenda (week-
+    /// at-a-glance) list anchored at the selected day.
+    private enum Mode: String, CaseIterable, Identifiable {
+        case month, agenda
+        var id: String { rawValue }
+        var label: String { self == .month ? "Month" : "Week" }
+        var symbol: String { self == .month ? "calendar" : "list.bullet" }
+    }
+
+    /// Short localized weekday symbols rotated to honour `Calendar.firstWeekday`.
+    private var dayNames: [String] {
+        let symbols = viewModel.cal.shortWeekdaySymbols
+        let shift = viewModel.cal.firstWeekday - 1
+        guard shift > 0, shift < symbols.count else { return symbols }
+        return Array(symbols[shift...] + symbols[..<shift])
+    }
+
+    private var dayNamesAccessible: [String] {
+        let symbols = viewModel.cal.weekdaySymbols
+        let shift = viewModel.cal.firstWeekday - 1
+        guard shift > 0, shift < symbols.count else { return symbols }
+        return Array(symbols[shift...] + symbols[..<shift])
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            // ── Calendar grid ───────────────────────────────────────────────
+            // ── Calendar grid / agenda ──────────────────────────────────────
             VStack(spacing: 0) {
                 calendarHeader
                     .padding(.horizontal, DesignTokens.Spacing.lg)
@@ -20,13 +48,17 @@ struct TaskCalendarView: View {
 
                 Divider()
 
-                dayNamesRow
-                    .padding(.horizontal, DesignTokens.Spacing.lg)
-                    .padding(.vertical, DesignTokens.Spacing.sm)
+                if mode == .month {
+                    dayNamesRow
+                        .padding(.horizontal, DesignTokens.Spacing.lg)
+                        .padding(.vertical, DesignTokens.Spacing.sm)
 
-                Divider()
+                    Divider()
 
-                calendarGrid
+                    calendarGrid
+                } else {
+                    agendaList
+                }
             }
 
             // ── Day detail panel ────────────────────────────────────────────
@@ -37,8 +69,7 @@ struct TaskCalendarView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.easeOut(duration: DesignTokens.Motion.standard),
-                   value: viewModel.selectedDay.map(TaskCalendarViewModel.dayKey))
+        .scribeAnimation(.snappy, value: viewModel.selectedDay.map(TaskCalendarViewModel.dayKey))
         .background(DesignTokens.Palette.surface)
         .navigationTitle("Calendar")
         .onAppear { viewModel.start() }
@@ -51,7 +82,7 @@ struct TaskCalendarView: View {
     // MARK: - Calendar Header
 
     private var calendarHeader: some View {
-        HStack {
+        HStack(spacing: DesignTokens.Spacing.sm) {
             Button { viewModel.navigateMonth(by: -1) } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 13, weight: .semibold))
@@ -59,6 +90,20 @@ struct TaskCalendarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Previous month")
+
+            Button(action: jumpToToday) {
+                Text("Today")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, DesignTokens.Spacing.sm)
+                    .frame(height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                            .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Jump to today")
 
             Spacer()
 
@@ -75,6 +120,16 @@ struct TaskCalendarView: View {
 
             Spacer()
 
+            Picker("View", selection: $mode) {
+                ForEach(Mode.allCases) { m in
+                    Label(m.label, systemImage: m.symbol).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityLabel("Calendar view mode")
+
             Button { viewModel.navigateMonth(by: 1) } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
@@ -82,6 +137,15 @@ struct TaskCalendarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Next month")
+        }
+    }
+
+    private func jumpToToday() {
+        let today = viewModel.cal.startOfDay(for: Date())
+        withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+            viewModel.displayMonth = viewModel.cal.startOfMonth(for: today)
+            viewModel.selectedDay = today
         }
     }
 
@@ -89,12 +153,92 @@ struct TaskCalendarView: View {
 
     private var dayNamesRow: some View {
         HStack(spacing: 0) {
-            ForEach(dayNames, id: \.self) { name in
+            ForEach(Array(dayNames.enumerated()), id: \.offset) { index, name in
                 Text(name)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
+                    .accessibilityLabel(dayNamesAccessible[safe: index] ?? name)
             }
+        }
+    }
+
+    // MARK: - Agenda (week) list
+
+    /// Week-at-a-glance list anchored on the selected day's week. Each day shows
+    /// its tasks; empty days collapse to a single line. Same reschedule menu as
+    /// the month grid.
+    private var agendaList: some View {
+        let anchor = viewModel.selectedDay ?? viewModel.cal.startOfDay(for: Date())
+        let days = weekDays(containing: anchor)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                ForEach(days, id: \.self) { day in
+                    agendaDaySection(day)
+                }
+            }
+            .padding(DesignTokens.Spacing.lg)
+        }
+    }
+
+    private func weekDays(containing date: Date) -> [Date] {
+        let cal = viewModel.cal
+        let start = cal.startOfDay(for: date)
+        let weekday = cal.component(.weekday, from: start)
+        let offset = (weekday - cal.firstWeekday + 7) % 7
+        guard let weekStart = cal.date(byAdding: .day, value: -offset, to: start) else { return [start] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: weekStart) }
+    }
+
+    @ViewBuilder
+    private func agendaDaySection(_ day: Date) -> some View {
+        let tasks = viewModel.tasks(for: day)
+        let isToday = viewModel.cal.isDateInToday(day)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Text(day, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                    .font(.system(size: 12, weight: isToday ? .bold : .semibold))
+                    .foregroundStyle(isToday ? accent : .primary)
+                if isToday {
+                    Text("Today").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(tasks.count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            if tasks.isEmpty {
+                Text("No tasks")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(tasks) { task in dayPanelRow(task) }
+            }
+        }
+        .padding(DesignTokens.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(viewModel.cal.isDate(day, inSameDayAs: viewModel.selectedDay ?? .distantPast)
+                      ? DesignTokens.Palette.accentFill(.hover, accent: accent, contrast: contrast)
+                      : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .strokeBorder(dropTargetKey == TaskCalendarViewModel.dayKey(for: day) ? accent : .clear, lineWidth: 2)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                viewModel.selectedDay = day
+            }
+        }
+        .dropDestination(for: TaskDragPayload.self) { payloads, _ in
+            guard let first = payloads.first else { return false }
+            reschedule(taskId: first.id, to: day)
+            return true
+        } isTargeted: { targeted in
+            dropTargetKey = targeted ? TaskCalendarViewModel.dayKey(for: day) : (dropTargetKey == TaskCalendarViewModel.dayKey(for: day) ? nil : dropTargetKey)
         }
     }
 
@@ -203,17 +347,89 @@ struct TaskCalendarView: View {
             }
         }
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
-        .background(isSelected ? Color.accentColor.opacity(0.08) : .clear)
+        .background(isSelected ? DesignTokens.Palette.accentFill(.hover, accent: accent, contrast: contrast) : .clear)
+        .overlay(dropHighlight(for: date))
         .contentShape(Rectangle())
         .onTapGesture {
             guard let date else { return }
-            withAnimation(.easeOut(duration: DesignTokens.Motion.standard)) {
+            withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
                 if isSelected {
                     viewModel.selectedDay = nil
                 } else {
                     viewModel.selectedDay = date
                 }
             }
+        }
+        .modifier(CalendarCellDropModifier(
+            date: date,
+            isTargeted: { targeted in
+                guard let date else { return }
+                let key = TaskCalendarViewModel.dayKey(for: date)
+                dropTargetKey = targeted ? key : (dropTargetKey == key ? nil : dropTargetKey)
+            },
+            onDrop: { payload in
+                guard let date else { return }
+                reschedule(taskId: payload.id, to: date)
+            }
+        ))
+        .contextMenu {
+            if let date { calendarDayMenu(for: date) }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(dayCellAccessibilityLabel(date: date, isToday: isToday))
+        .accessibilityValue(dayCellAccessibilityValue(tasks: tasks, noteExists: noteExists))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    @ViewBuilder
+    private func dropHighlight(for date: Date?) -> some View {
+        if let date, dropTargetKey == TaskCalendarViewModel.dayKey(for: date) {
+            Rectangle().strokeBorder(accent, lineWidth: 2)
+        }
+    }
+
+    private func dayCellAccessibilityLabel(date: Date?, isToday: Bool) -> String {
+        guard let date else { return "" }
+        return date.formatted(date: .complete, time: .omitted) + (isToday ? ", today" : "")
+    }
+
+    private func dayCellAccessibilityValue(tasks: [TodoTask], noteExists: Bool) -> String {
+        var parts: [String] = []
+        if tasks.isEmpty { parts.append("no tasks") }
+        else { parts.append("\(tasks.count) task\(tasks.count == 1 ? "" : "s")") }
+        if noteExists { parts.append("has daily note") }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Keyboard-equivalent reschedule menu for a calendar day. Lists the day's
+    /// tasks; choosing one reschedules it to that day. (Drag is the pointer
+    /// path; this is the menu path required for keyboard/VoiceOver users.)
+    @ViewBuilder
+    private func calendarDayMenu(for date: Date) -> some View {
+        Button {
+            withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                viewModel.selectedDay = date
+            }
+        } label: {
+            Label("Open day", systemImage: "calendar")
+        }
+        let movable = viewModel.tasksByDay.values.flatMap { $0 }
+            .filter { !viewModel.cal.isDate($0.dueAt ?? .distantPast, inSameDayAs: date) }
+        if !movable.isEmpty {
+            Menu {
+                ForEach(movable.prefix(20)) { task in
+                    Button(task.title) { reschedule(taskId: task.id, to: date) }
+                }
+            } label: {
+                Label("Reschedule task here", systemImage: "arrow.uturn.right")
+            }
+        }
+    }
+
+    private func reschedule(taskId: String, to day: Date) {
+        dropTargetKey = nil
+        withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+            viewModel.reschedule(taskId: taskId, to: day)
         }
     }
 
@@ -245,6 +461,7 @@ struct TaskCalendarView: View {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(priorityColor(task.priority).opacity(0.10))
         )
+        .draggable(TaskDragPayload(id: task.id))
     }
 
     // MARK: - Day Panel
@@ -417,8 +634,9 @@ struct TaskCalendarView: View {
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
         )
+        .draggable(TaskDragPayload(id: task.id))
     }
 
     // MARK: - Helpers
@@ -436,5 +654,35 @@ struct TaskCalendarView: View {
         if tasks.contains(where: { $0.priority == .high })   { return DesignTokens.Palette.priorityHigh }
         if tasks.contains(where: { $0.priority == .medium }) { return DesignTokens.Palette.priorityMedium }
         return Color.accentColor
+    }
+}
+
+// MARK: - Calendar-cell drop modifier
+
+/// Adds a `dropDestination` for `TaskDragPayload` on a calendar day cell,
+/// gated on the cell having a real date (padding cells are inert).
+private struct CalendarCellDropModifier: ViewModifier {
+    let date: Date?
+    let isTargeted: (Bool) -> Void
+    let onDrop: (TaskDragPayload) -> Void
+
+    func body(content: Content) -> some View {
+        if date != nil {
+            content.dropDestination(for: TaskDragPayload.self) { payloads, _ in
+                guard let first = payloads.first else { return false }
+                onDrop(first)
+                return true
+            } isTargeted: { isTargeted($0) }
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - Safe-index helper
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

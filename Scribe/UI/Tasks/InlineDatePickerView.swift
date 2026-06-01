@@ -43,17 +43,17 @@ struct InlineDatePickerView: View {
             }
             .padding(12)
         }
-        .frame(width: 272)
+        .frame(width: 300)
     }
 
     // MARK: - Shortcuts
 
     private var shortcutsRow: some View {
         HStack(spacing: 6) {
-            shortcutChip(systemImage: "sun.max.fill",        help: "Today",     date: cal.startOfDay(for: Date()))
-            shortcutChip(systemImage: "sunrise.fill",        help: "Tomorrow",  date: dayOffset(1))
-            shortcutChip(systemImage: "forward.end.fill",    help: "This Weekend", date: thisWeekend)
-            shortcutChip(systemImage: "calendar.badge.plus", help: "Next Week", date: nextMonday)
+            shortcutChip(systemImage: "sun.max.fill",        label: "Today",       date: cal.startOfDay(for: Date()))
+            shortcutChip(systemImage: "sunrise.fill",        label: "Tomorrow",    date: dayOffset(1))
+            shortcutChip(systemImage: "forward.end.fill",    label: "Weekend",     date: thisWeekend)
+            shortcutChip(systemImage: "calendar.badge.plus", label: "Next week",   date: nextMonday)
             Spacer()
             Button { selectedDate = nil } label: {
                 Image(systemName: "xmark.circle.fill")
@@ -63,24 +63,33 @@ struct InlineDatePickerView: View {
             }
             .buttonStyle(.plain)
             .help("Clear date")
+            .accessibilityLabel("Clear date")
         }
     }
 
     @ViewBuilder
-    private func shortcutChip(systemImage: String, help: String, date: Date) -> some View {
+    private func shortcutChip(systemImage: String, label: String, date: Date) -> some View {
         let isActive = selectedDate.map { cal.isDate($0, inSameDayAs: date) } ?? false
         Button { applyDate(date) } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 32, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.10))
-                )
-                .foregroundStyle(isActive ? .white : .secondary)
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .medium))
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 7)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.10))
+            )
+            .foregroundStyle(isActive ? .white : .secondary)
         }
         .buttonStyle(.plain)
-        .help(help)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
     }
 
     // MARK: - Month header
@@ -114,15 +123,31 @@ struct InlineDatePickerView: View {
 
     // MARK: - Day grid
 
-    private let dayNames = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+    /// Localized two-letter weekday symbols, rotated so the column order honours
+    /// `Calendar.firstWeekday` (Sunday in en_US, Monday in most of Europe).
+    private var dayNames: [String] {
+        let symbols = cal.veryShortWeekdaySymbols
+        let shift = cal.firstWeekday - 1
+        guard shift > 0, shift < symbols.count else { return symbols }
+        return Array(symbols[shift...] + symbols[..<shift])
+    }
+
+    /// Full localized weekday names for VoiceOver column headers.
+    private var dayNamesAccessible: [String] {
+        let symbols = cal.weekdaySymbols
+        let shift = cal.firstWeekday - 1
+        guard shift > 0, shift < symbols.count else { return symbols }
+        return Array(symbols[shift...] + symbols[..<shift])
+    }
 
     private var dayNamesRow: some View {
         HStack(spacing: 0) {
-            ForEach(dayNames, id: \.self) { name in
+            ForEach(Array(dayNames.enumerated()), id: \.offset) { index, name in
                 Text(name)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
+                    .accessibilityLabel(dayNamesAccessible[safe: index] ?? name)
             }
         }
     }
@@ -161,8 +186,17 @@ struct InlineDatePickerView: View {
                                              Color.clear
                             )
                     )
+                    .overlay(
+                        // Non-color cue for "today" — a small ring — so it's
+                        // distinguishable from the selected day without hue.
+                        Circle()
+                            .strokeBorder(isToday && !isSelected ? Color.accentColor : .clear, lineWidth: 1)
+                            .frame(width: 26, height: 26)
+                    )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(date.formatted(date: .complete, time: .omitted) + (isToday ? ", today" : ""))
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         } else {
             Color.clear
                 .frame(width: 30, height: 28)
@@ -213,19 +247,18 @@ struct InlineDatePickerView: View {
         return cal.date(byAdding: .day, value: daysToSat == 0 ? 7 : daysToSat, to: today) ?? today
     }
 
-    // Returns Date? for each grid cell: nil = leading/trailing empty.
+    // Returns Date? for each grid cell: nil = leading/trailing empty. Locale-
+    // aware leading blanks via the shared `CalendarMonthGrid`.
     private func buildDays() -> [Date?] {
-        let firstDay     = displayMonth
-        let leadingNulls = cal.component(.weekday, from: firstDay) - 1 // weekday is 1-based
-        let range        = cal.range(of: .day, in: .month, for: firstDay)!
+        CalendarMonthGrid.cells(forMonth: displayMonth, calendar: cal, padTrailing: true)
+    }
+}
 
-        var cells: [Date?] = Array(repeating: nil, count: leadingNulls)
-        for dayNum in range {
-            let date = cal.date(byAdding: .day, value: dayNum - 1, to: firstDay)!
-            cells.append(date)
-        }
-        while cells.count % 7 != 0 { cells.append(nil) }
-        return cells
+// MARK: - Safe-index helper
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

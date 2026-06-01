@@ -49,9 +49,15 @@ final class TaskListViewModel: ObservableObject {
     }
     @Published private(set) var searchResults: [TodoTask] = []
     /// Currently focused row id; drives keyboard-shortcut targets (Space to
-    /// toggle, Cmd-Backspace to delete).
+    /// toggle, Cmd-Backspace to delete) and the keyboard-focus ring.
     @Published var focusedTaskId: String?
+    /// Recurring tasks recently completed — kept struck-through in place ~1.5s
+    /// before re-bucketing (their due date also advances).
     @Published private(set) var recentlyCompletedRecurring: Set<String> = []
+    /// Any task (recurring or one-off) freshly toggled complete that should
+    /// linger in its current bucket ~0.4s so the completion animation reads
+    /// before the row jumps to "Completed".
+    @Published private(set) var settlingTasks: Set<String> = []
 
     // MARK: - Properties
 
@@ -60,6 +66,14 @@ final class TaskListViewModel: ObservableObject {
     private var cancellable: AnyCancellable?
     private(set) var filter: TaskStore.Filter
     private var recurringClearTasks: [String: Task<Void, Never>] = [:]
+    private var settleClearTasks: [String: Task<Void, Never>] = [:]
+    /// The most recent task list received from the store, retained so the
+    /// settle-hold can suppress re-bucketing without re-querying.
+    private var latestTasks: [TodoTask] = []
+    /// Pre-toggle snapshots for settling tasks. While a task settles we render
+    /// its snapshot (so it stays in its original bucket) instead of the freshly
+    /// completed/rescheduled row the store now reports.
+    private var settlingSnapshots: [String: TodoTask] = [:]
 
     // MARK: - Initializer
 
@@ -74,15 +88,39 @@ final class TaskListViewModel: ObservableObject {
     // MARK: - Subscription lifecycle
 
     func start() {
+        loadProjects()
         cancellable = store.observeTasks(filter: filter)
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { [weak self] tasks in
                     guard let self else { return }
-                    self.groups = Self.bucket(tasks: tasks, calendar: .current, now: Date())
+                    self.latestTasks = tasks
                     self.taskTags = (try? self.store.fetchTagsForTasks(tasks.map(\.id))) ?? [:]
+                    self.regroup()
                 }
             )
+    }
+
+    /// Recomputes `groups` from `latestTasks`, substituting pre-toggle
+    /// snapshots for any settling task so it lingers in its original bucket
+    /// until the settle-hold elapses.
+    private func regroup() {
+        var effective = latestTasks
+        if !settlingSnapshots.isEmpty {
+            for (index, task) in effective.enumerated() {
+                if let snapshot = settlingSnapshots[task.id] {
+                    effective[index] = snapshot
+                }
+            }
+            // A settling task that left the current filter's result set (e.g.
+            // moved out of "Today") still needs to render — re-insert its
+            // snapshot so it doesn't vanish mid-animation.
+            let present = Set(effective.map(\.id))
+            for (id, snapshot) in settlingSnapshots where !present.contains(id) {
+                effective.append(snapshot)
+            }
+        }
+        groups = Self.bucket(tasks: effective, calendar: .current, now: Date())
     }
 
     func stop() {
@@ -92,6 +130,14 @@ final class TaskListViewModel: ObservableObject {
 
     func switchFilter(to newFilter: TaskStore.Filter) {
         guard newFilter != filter else { return }
+        // Drop any in-flight settle-holds so they don't bleed into the new filter.
+        settleClearTasks.values.forEach { $0.cancel() }
+        settleClearTasks.removeAll()
+        recurringClearTasks.values.forEach { $0.cancel() }
+        recurringClearTasks.removeAll()
+        settlingSnapshots.removeAll()
+        settlingTasks.removeAll()
+        recentlyCompletedRecurring.removeAll()
         filter = newFilter
         stop()
         start()
@@ -157,6 +203,8 @@ final class TaskListViewModel: ObservableObject {
     func toggleCompleted(_ task: TodoTask) {
         do {
             if task.isCompleted {
+                // Cancel any in-flight settle for this row before un-completing.
+                clearSettle(task.id)
                 try store.uncompleteTask(id: task.id)
                 // Re-schedule any reminder the user already set on the task
                 // (the helper short-circuits when remindAt is nil/past).
@@ -164,17 +212,28 @@ final class TaskListViewModel: ObservableObject {
                     Task { await reminderScheduler.schedule(refreshed) }
                 }
             } else {
-                try store.completeTask(id: task.id)
+                // Snapshot the pre-completion row so it lingers in its current
+                // bucket (struck-through) for the settle-hold before jumping to
+                // "Completed" / re-scheduling. Generalised from the old
+                // recurring-only hold to every task.
+                settlingSnapshots[task.id] = task
+                settlingTasks.insert(task.id)
                 if task.recurrenceRule != nil {
                     recentlyCompletedRecurring.insert(task.id)
-                    recurringClearTasks[task.id]?.cancel()
-                    recurringClearTasks[task.id] = Task { @MainActor [weak self] in
-                        try? await Task.sleep(for: .seconds(1.5))
-                        guard !Task.isCancelled else { return }
-                        self?.recentlyCompletedRecurring.remove(task.id)
-                        self?.recurringClearTasks.removeValue(forKey: task.id)
-                    }
                 }
+
+                try store.completeTask(id: task.id)
+
+                // One-off tasks settle quickly (~0.4s); recurring tasks linger
+                // longer (1.5s) since their due date also advances.
+                let holdSeconds = task.recurrenceRule != nil ? 1.5 : 0.4
+                settleClearTasks[task.id]?.cancel()
+                settleClearTasks[task.id] = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(holdSeconds))
+                    guard !Task.isCancelled else { return }
+                    self?.clearSettle(task.id)
+                }
+
                 // Recurring tasks now have a fresh `dueAt` — re-arm the
                 // reminder against the next occurrence; one-off tasks just
                 // get their pending reminder cleared.
@@ -191,6 +250,17 @@ final class TaskListViewModel: ObservableObject {
         }
     }
 
+    /// Ends the settle-hold for a task and re-buckets it into its final
+    /// position. Idempotent.
+    private func clearSettle(_ id: String) {
+        settleClearTasks[id]?.cancel()
+        settleClearTasks.removeValue(forKey: id)
+        let hadSnapshot = settlingSnapshots.removeValue(forKey: id) != nil
+        let wasSettling = settlingTasks.remove(id) != nil
+        recentlyCompletedRecurring.remove(id)
+        if hadSnapshot || wasSettling { regroup() }
+    }
+
     func delete(_ task: TodoTask) {
         do {
             try store.deleteTask(id: task.id)
@@ -198,6 +268,129 @@ final class TaskListViewModel: ObservableObject {
         } catch {
             Log.ui.error("TaskListViewModel.delete failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    // MARK: - Inline edits
+
+    /// Inline due-date reschedule. Used by the in-row date popover, the
+    /// "Reschedule to >" context menu, and drag-to-bucket drops.
+    func setDueDate(_ date: Date?, for task: TodoTask) {
+        var updated = task
+        updated.dueAt = date
+        commitInline(updated)
+    }
+
+    /// Cycles priority None → High → Medium → Low → None (click-to-cycle on the
+    /// priority dot). Also reachable as discrete "Priority >" menu items.
+    func cyclePriority(for task: TodoTask) {
+        let next: TodoTask.Priority?
+        switch task.priority {
+        case .none:   next = .high
+        case .high:   next = .medium
+        case .medium: next = .low
+        case .low:    next = nil
+        }
+        setPriority(next, for: task)
+    }
+
+    func setPriority(_ priority: TodoTask.Priority?, for task: TodoTask) {
+        var updated = task
+        updated.priority = priority
+        commitInline(updated)
+    }
+
+    /// Inline title rename (double-click to edit in place).
+    func setTitle(_ title: String, for task: TodoTask) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != task.title else { return }
+        var updated = task
+        updated.title = trimmed
+        commitInline(updated)
+    }
+
+    /// Moves a task to a project (or Inbox when nil) via the chip menu / drag.
+    func moveToProject(_ projectId: String?, for task: TodoTask) {
+        do {
+            try store.moveTask(id: task.id, toProject: projectId)
+        } catch {
+            Log.ui.error("TaskListViewModel.moveToProject failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func commitInline(_ task: TodoTask) {
+        do {
+            try store.updateTask(task)
+            if let refreshed = try store.fetchTask(id: task.id) {
+                Task { await reminderScheduler.schedule(refreshed) }
+            }
+        } catch {
+            Log.ui.error("TaskListViewModel.commitInline failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Persists an in-bucket reorder. The visible bucket the drag happened in is
+    /// reordered as one project scope; ids outside that scope are untouched.
+    func reorder(_ orderedIds: [String], inProject projectId: String?) {
+        do {
+            try store.reorderTasks(orderedIds, in: projectId)
+        } catch {
+            Log.ui.error("TaskListViewModel.reorder failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Resolves the project a project name belongs to (case-insensitive).
+    func projectId(named name: String) -> String? {
+        availableProjects.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id
+    }
+
+    // MARK: - Projects (for inline move + chip)
+
+    @Published private(set) var availableProjects: [Project] = []
+
+    func loadProjects() {
+        do {
+            availableProjects = try store.fetchProjects()
+        } catch {
+            Log.ui.error("TaskListViewModel.loadProjects failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func project(id: String?) -> Project? {
+        guard let id else { return nil }
+        return availableProjects.first { $0.id == id }
+    }
+
+    // MARK: - Keyboard navigation
+
+    /// All currently visible task ids in render order — the flat list the
+    /// keyboard focus (arrows / j-k) traverses. Mirrors the order the view
+    /// renders buckets, honouring search mode.
+    func flatVisibleTaskIds(visibleGroups: [(bucket: Bucket, tasks: [TodoTask])]) -> [String] {
+        if isSearching { return searchResults.map(\.id) }
+        return visibleGroups.flatMap { $0.tasks.map(\.id) }
+    }
+
+    /// Moves keyboard focus by `delta` rows through the flattened visible list.
+    /// Wraps at the ends and seeds focus on the first row when nothing is
+    /// focused yet.
+    func moveFocus(by delta: Int, in ids: [String]) {
+        guard !ids.isEmpty else { focusedTaskId = nil; return }
+        guard let current = focusedTaskId, let idx = ids.firstIndex(of: current) else {
+            focusedTaskId = delta >= 0 ? ids.first : ids.last
+            return
+        }
+        let next = (idx + delta + ids.count) % ids.count
+        focusedTaskId = ids[next]
+    }
+
+    /// Looks up a task by id across visible groups, search results, and the
+    /// retained latest set.
+    func task(id: String) -> TodoTask? {
+        for group in groups {
+            if let task = group.tasks.first(where: { $0.id == id }) { return task }
+        }
+        if let task = searchResults.first(where: { $0.id == id }) { return task }
+        return latestTasks.first(where: { $0.id == id })
     }
 
     // MARK: - Search

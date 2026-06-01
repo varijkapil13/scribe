@@ -3,6 +3,10 @@ import SwiftUI
 /// Inline side-panel for viewing and editing a single task. Shown to the right
 /// of the task list; replaces the old modal sheet within `TaskListView`.
 ///
+/// Autosaves on a 500ms debounce (see `TaskEditorViewModel.setupAutoSave`) and
+/// flushes any pending edit on dismiss / Close — so closing the panel (including
+/// Escape) never discards work. A brief "Saved" affordance confirms each write.
+///
 /// `TaskEditorView` (modal sheet) is kept for uses outside the task list
 /// (e.g. TranscriptDetailView action-item conversion).
 struct TaskDetailPanel: View {
@@ -16,6 +20,13 @@ struct TaskDetailPanel: View {
     @State private var showReminderPicker = false
     @State private var hasReminder: Bool
     @State private var lastRemindDate: Date?
+    /// Drives the fading "Saved" checkmark. Set when `viewModel.lastSavedAt`
+    /// changes, cleared after a short delay.
+    @State private var showSavedBadge = false
+    @State private var savedHideTask: Task<Void, Never>?
+
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(task: TodoTask, onDismiss: @escaping () -> Void) {
         self.task = task
@@ -23,6 +34,13 @@ struct TaskDetailPanel: View {
         _viewModel = StateObject(wrappedValue: TaskEditorViewModel(task: task))
         _hasReminder = State(initialValue: task.remindAt != nil)
         _lastRemindDate = State(initialValue: task.remindAt)
+    }
+
+    /// Flushes any pending autosave, then dismisses. The single exit path so
+    /// Close, Escape, and the X button all preserve in-flight edits.
+    private func dismissSavingChanges() {
+        viewModel.flush()
+        onDismiss()
     }
 
     var body: some View {
@@ -55,7 +73,18 @@ struct TaskDetailPanel: View {
             Divider()
             footer
         }
-        .background(DesignTokens.Palette.surface)
+        .scribeGlass(.hud, in: Rectangle())
+        .onChange(of: viewModel.lastSavedAt) { _, newValue in
+            guard newValue != nil else { return }
+            flashSaved()
+        }
+        .onDisappear {
+            savedHideTask?.cancel()
+            // Safety net: if the panel is torn down by an external selection
+            // swap (a different row tapped) rather than its own Close/Escape,
+            // flush any pending debounced edit so nothing is lost.
+            viewModel.flush()
+        }
         .confirmationDialog(
             "Delete \"\(viewModel.title)\"?",
             isPresented: $showDeleteConfirm,
@@ -71,6 +100,39 @@ struct TaskDetailPanel: View {
         }
     }
 
+    // MARK: - Saved affordance
+
+    private func flashSaved() {
+        savedHideTask?.cancel()
+        withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+            showSavedBadge = true
+        }
+        AccessibilityNotification.Announcement("Saved").post()
+        savedHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard !Task.isCancelled else { return }
+            withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                showSavedBadge = false
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var savedBadge: some View {
+        if showSavedBadge {
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.green)
+                Text("Saved")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .transition(.opacity)
+            .accessibilityHidden(true) // announced via AccessibilityNotification
+        }
+    }
+
     // MARK: - Header
 
     private var header: some View {
@@ -81,15 +143,18 @@ struct TaskDetailPanel: View {
                 .lineLimit(1...4)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(action: onDismiss) {
+            savedBadge
+
+            Button(action: dismissSavingChanges) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
                     .frame(width: 20, height: 20)
-                    .background(Circle().fill(Color.secondary.opacity(0.12)))
+                    .background(Circle().fill(DesignTokens.Palette.fill(.selected, contrast: contrast)))
             }
             .buttonStyle(.plain)
-            .help("Close (discard changes)")
+            .help("Close")
+            .accessibilityLabel("Close")
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(DesignTokens.Spacing.lg)
@@ -133,8 +198,11 @@ struct TaskDetailPanel: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .accessibilityLabel("Due date: \(dueDateLabel)")
                 .popover(isPresented: $showDueDatePicker, arrowEdge: .trailing) {
-                    InlineDatePickerView(selectedDate: $viewModel.dueAt).padding(4)
+                    InlineDatePickerView(selectedDate: $viewModel.dueAt)
+                        .padding(4)
+                        .scribeGlass(.hud, in: Rectangle())
                 }
             }
 
@@ -169,8 +237,11 @@ struct TaskDetailPanel: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .accessibilityLabel("Reminder: \(reminderLabel)")
                     .popover(isPresented: $showReminderPicker, arrowEdge: .trailing) {
-                        InlineDatePickerView(selectedDate: $viewModel.remindAt).padding(4)
+                        InlineDatePickerView(selectedDate: $viewModel.remindAt)
+                            .padding(4)
+                            .scribeGlass(.hud, in: Rectangle())
                     }
 
                     Button {
@@ -183,6 +254,7 @@ struct TaskDetailPanel: View {
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear reminder")
                 } else {
                     Button("Set") {
                         viewModel.remindAt = lastRemindDate ?? viewModel.dueAt ?? Calendar.current.startOfDay(for: Date())
@@ -210,6 +282,7 @@ struct TaskDetailPanel: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .frame(maxWidth: 120)
+                .accessibilityLabel("Priority")
             }
 
             Divider().padding(.leading, 40)
@@ -223,15 +296,18 @@ struct TaskDetailPanel: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .frame(maxWidth: 140)
+                .accessibilityLabel("Project")
             }
 
             Divider().padding(.leading, 40)
             panelRow(icon: "tag", label: "Tags") {
-                TextField("comma-separated", text: $viewModel.tagsInput)
-                    .textFieldStyle(.plain)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity)
+                TagTokenField(
+                    tags: viewModel.tags,
+                    suggestions: { viewModel.tagSuggestions(matching: $0) },
+                    onAdd: { viewModel.addTag($0) },
+                    onRemove: { viewModel.removeTag($0) }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
@@ -261,6 +337,7 @@ struct TaskDetailPanel: View {
             }
             .buttonStyle(.borderless)
             .help("Duplicate task")
+            .accessibilityLabel("Duplicate task")
 
             Button(role: .destructive) {
                 showDeleteConfirm = true
@@ -271,12 +348,12 @@ struct TaskDetailPanel: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.red)
             .help("Delete task")
+            .accessibilityLabel("Delete task")
 
             Spacer()
 
             Button("Close") {
-                _ = viewModel.save()
-                onDismiss()
+                dismissSavingChanges()
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
