@@ -75,7 +75,7 @@ struct TaskCalendarView: View {
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
         .sheet(item: $editingTask) { task in
-            TaskEditorView(task: task)
+            TaskInspectorSheet(task: task) { editingTask = nil }
         }
     }
 

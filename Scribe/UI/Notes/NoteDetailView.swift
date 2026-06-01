@@ -153,7 +153,7 @@ struct NoteDetailView: View {
             Text(vm.errorMessage ?? "")
         }
         .sheet(item: $openedTaskFromAction) { task in
-            TaskEditorView(task: task)
+            TaskInspectorSheet(task: task) { openedTaskFromAction = nil }
         }
         .sheet(item: $openedTranscriptSession) { session in
             NavigationStack {

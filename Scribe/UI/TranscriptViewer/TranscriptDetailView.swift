@@ -85,7 +85,7 @@ struct TranscriptDetailView: View {
             // duplicated (still converted, no change needed).
             viewModel.refreshConvertedActionItems()
         }) { task in
-            TaskEditorView(task: task)
+            TaskInspectorSheet(task: task) { openedTask = nil }
         }
         .onAppear {
             viewModel.loadSegments()

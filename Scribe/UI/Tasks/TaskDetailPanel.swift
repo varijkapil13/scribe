@@ -7,8 +7,10 @@ import SwiftUI
 /// flushes any pending edit on dismiss / Close — so closing the panel (including
 /// Escape) never discards work. A brief "Saved" affordance confirms each write.
 ///
-/// `TaskEditorView` (modal sheet) is kept for uses outside the task list
-/// (e.g. TranscriptDetailView action-item conversion).
+/// This is now the single task editor everywhere: the task list shows it as a
+/// side panel, and `TaskInspectorSheet` (below) hosts it as a modal sheet for
+/// the calendar, note action-item conversion, and transcript convert-to-task
+/// flows — replacing the old `TaskEditorView`.
 struct TaskDetailPanel: View {
 
     let task: TodoTask
@@ -404,5 +406,20 @@ struct TaskDetailPanel: View {
         if cal.isDateInToday(date)    { return "Today" }
         if cal.isDateInTomorrow(date) { return "Tomorrow" }
         return date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+/// Hosts the unified ``TaskDetailPanel`` as a modal sheet for editing a task
+/// outside the task-list side-panel context (calendar, note action-item
+/// conversion, transcript convert-to-task). The panel autosaves + flushes on
+/// dismiss, so the sheet needs no Save/Cancel of its own. Replaces the former
+/// `TaskEditorView`.
+struct TaskInspectorSheet: View {
+    let task: TodoTask
+    var onDismiss: () -> Void
+
+    var body: some View {
+        TaskDetailPanel(task: task, onDismiss: onDismiss)
+            .frame(width: 400, height: 580)
     }
 }
