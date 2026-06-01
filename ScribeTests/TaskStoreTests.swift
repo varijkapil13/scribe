@@ -473,4 +473,52 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertEqual(fetched.sourceSessionId, session.id)
         XCTAssertEqual(fetched.sourceActionItemId, actionItemId)
     }
+
+    // MARK: - Subtasks (v14)
+
+    func testSubtaskCRUDAndOrdering() throws {
+        let task = try store.createTask(title: "Plan trip")
+        let a = try store.addSubtask(to: task.id, title: "Book flights")
+        let b = try store.addSubtask(to: task.id, title: "Reserve hotel")
+        let c = try store.addSubtask(to: task.id, title: "Pack")
+
+        XCTAssertEqual(try store.subtasks(for: task.id).map(\.title),
+                       ["Book flights", "Reserve hotel", "Pack"])
+
+        try store.setSubtaskCompleted(id: a.id, isCompleted: true)
+        try store.renameSubtask(id: b.id, title: "Reserve a hotel")
+        let after = try store.subtasks(for: task.id)
+        XCTAssertTrue(try XCTUnwrap(after.first { $0.id == a.id }).isCompleted)
+        XCTAssertEqual(after.first { $0.id == b.id }?.title, "Reserve a hotel")
+
+        let progress = try XCTUnwrap(store.subtaskProgress(for: [task.id])[task.id])
+        XCTAssertEqual(progress, SubtaskProgress(completed: 1, total: 3))
+
+        try store.reorderSubtasks([c.id, a.id, b.id], in: task.id)
+        XCTAssertEqual(try store.subtasks(for: task.id).map(\.id), [c.id, a.id, b.id])
+
+        try store.deleteSubtask(id: c.id)
+        XCTAssertEqual(try store.subtasks(for: task.id).count, 2)
+    }
+
+    func testDeletingTaskCascadesSubtasks() throws {
+        let task = try store.createTask(title: "Throwaway")
+        _ = try store.addSubtask(to: task.id, title: "x")
+        _ = try store.addSubtask(to: task.id, title: "y")
+        XCTAssertEqual(try store.subtasks(for: task.id).count, 2)
+
+        try store.deleteTask(id: task.id)
+        XCTAssertTrue(try store.subtasks(for: task.id).isEmpty,
+                      "ON DELETE CASCADE should remove a task's subtasks")
+    }
+
+    func testSubtaskProgressOmitsTasksWithNoSubtasks() throws {
+        let withSubs = try store.createTask(title: "Has subs")
+        let without = try store.createTask(title: "Bare")
+        _ = try store.addSubtask(to: withSubs.id, title: "only")
+
+        let progress = try store.subtaskProgress(for: [withSubs.id, without.id])
+        XCTAssertNotNil(progress[withSubs.id])
+        XCTAssertNil(progress[without.id], "tasks with no subtasks are omitted from the map")
+    }
 }

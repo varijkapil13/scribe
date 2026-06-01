@@ -538,6 +538,23 @@ final class DatabaseManager: @unchecked Sendable {
             try db.execute(sql: "ALTER TABLE notes DROP COLUMN body")
         }
 
+        // Tasks parity (TickTick): per-task checklist / subtasks. Additive — a
+        // brand-new table + index; never touches the existing `tasks` table.
+        migrator.registerMigration("v14_task_subtasks") { db in
+            try db.create(table: "task_subtasks") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("taskId", .text).notNull()
+                    .references("tasks", onDelete: .cascade)
+                t.column("title", .text).notNull().defaults(to: "")
+                t.column("isCompleted", .boolean).notNull().defaults(to: false)
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(index: "task_subtasks_taskId_idx",
+                          on: "task_subtasks",
+                          columns: ["taskId"])
+        }
+
         return migrator
     }
 

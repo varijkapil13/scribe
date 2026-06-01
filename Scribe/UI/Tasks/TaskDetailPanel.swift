@@ -53,6 +53,8 @@ struct TaskDetailPanel: View {
                 VStack(alignment: .leading, spacing: 0) {
                     notesBlock
                     Divider().padding(.horizontal, DesignTokens.Spacing.lg)
+                    subtasksBlock
+                    Divider().padding(.horizontal, DesignTokens.Spacing.lg)
                     scheduleBlock
                     Divider().padding(.horizontal, DesignTokens.Spacing.lg)
                     organizationBlock
@@ -179,6 +181,18 @@ struct TaskDetailPanel: View {
             .frame(minHeight: 120)
             .background(DesignTokens.Palette.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+        }
+        .padding(DesignTokens.Spacing.lg)
+    }
+
+    // MARK: - Subtasks / checklist
+
+    private var subtasksBlock: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            Text("Checklist")
+                .font(.system(.caption, weight: .semibold))
+                .foregroundStyle(.secondary)
+            SubtaskChecklistView(taskId: task.id)
         }
         .padding(DesignTokens.Spacing.lg)
     }

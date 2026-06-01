@@ -458,5 +458,101 @@ final class TaskStore {
         if dueAt == nil { throw TaskStoreError.recurringTaskRequiresDueDate }
         _ = try RecurrenceRule.parse(ruleStr)
     }
+
+    // MARK: - Subtasks / checklist (TickTick parity)
+
+    /// Fetches a task's checklist ordered by `sortOrder` then `createdAt`.
+    func subtasks(for taskId: String) throws -> [TaskSubtask] {
+        try db.read { try Self.subtasks($0, for: taskId) }
+    }
+
+    fileprivate static func subtasks(_ database: Database, for taskId: String) throws -> [TaskSubtask] {
+        try TaskSubtask
+            .filter(Column("taskId") == taskId)
+            .order(Column("sortOrder").asc, Column("createdAt").asc)
+            .fetchAll(database)
+    }
+
+    /// Appends a checklist item to a task. The new item lands at the bottom.
+    @discardableResult
+    func addSubtask(to taskId: String, title: String) throws -> TaskSubtask {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try db.write { database in
+            let nextOrder = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM task_subtasks WHERE taskId = ?",
+                arguments: [taskId]) ?? 0
+            let subtask = TaskSubtask(taskId: taskId, title: trimmed, sortOrder: nextOrder)
+            try subtask.insert(database)
+            return subtask
+        }
+    }
+
+    /// Renames a checklist item.
+    func renameSubtask(id: String, title: String) throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE task_subtasks SET title = ? WHERE id = ?",
+                arguments: [trimmed, id])
+        }
+    }
+
+    /// Sets a checklist item's completed flag.
+    func setSubtaskCompleted(id: String, isCompleted: Bool) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE task_subtasks SET isCompleted = ? WHERE id = ?",
+                arguments: [isCompleted, id])
+        }
+    }
+
+    func deleteSubtask(id: String) throws {
+        try db.write { _ = try TaskSubtask.deleteOne($0, key: id) }
+    }
+
+    /// Persists a new manual ordering for a task's checklist. Ids not belonging
+    /// to `taskId` are skipped so scopes stay independent.
+    func reorderSubtasks(_ orderedIds: [String], in taskId: String) throws {
+        try db.write { database in
+            for (index, id) in orderedIds.enumerated() {
+                try database.execute(
+                    sql: "UPDATE task_subtasks SET sortOrder = ? WHERE id = ? AND taskId = ?",
+                    arguments: [index, id, taskId])
+            }
+        }
+    }
+
+    /// Emits a task's checklist whenever the `task_subtasks` table changes.
+    func observeSubtasks(taskId: String) -> DatabasePublishers.Value<[TaskSubtask]> {
+        let observation = ValueObservation.tracking { database -> [TaskSubtask] in
+            try Self.subtasks(database, for: taskId)
+        }
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
+    /// Batch progress chips for a set of tasks: keyed by task id, only includes
+    /// tasks that actually have subtasks. Single grouped query (no N+1).
+    func subtaskProgress(for ids: [String]) throws -> [String: SubtaskProgress] {
+        guard !ids.isEmpty else { return [:] }
+        return try db.read { database in
+            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT taskId,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN isCompleted THEN 1 ELSE 0 END) AS completed
+                FROM task_subtasks
+                WHERE taskId IN (\(placeholders))
+                GROUP BY taskId
+                """, arguments: StatementArguments(ids))
+            var out: [String: SubtaskProgress] = [:]
+            for row in rows {
+                let taskId: String = row["taskId"]
+                let total: Int = row["total"]
+                let completed: Int = row["completed"] ?? 0
+                out[taskId] = SubtaskProgress(completed: completed, total: total)
+            }
+            return out
+        }
+    }
 }
 

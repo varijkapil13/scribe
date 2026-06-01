@@ -104,3 +104,47 @@ extension TaskCompletion: FetchableRecord, PersistableRecord {
         id = inserted.rowID
     }
 }
+
+// MARK: - Subtasks / checklist (TickTick parity)
+
+/// A single checklist item belonging to a `TodoTask`. Persisted in the
+/// `task_subtasks` table (v14 migration) with an `ON DELETE CASCADE` FK so a
+/// task's subtasks vanish when the parent is deleted.
+struct TaskSubtask: Codable, Identifiable, Equatable, Hashable {
+    var id: String
+    var taskId: String
+    var title: String
+    var isCompleted: Bool
+    var sortOrder: Int
+    var createdAt: Date
+
+    init(
+        id: String = UUID().uuidString,
+        taskId: String,
+        title: String,
+        isCompleted: Bool = false,
+        sortOrder: Int = 0,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.taskId = taskId
+        self.title = title
+        self.isCompleted = isCompleted
+        self.sortOrder = sortOrder
+        self.createdAt = createdAt
+    }
+}
+
+extension TaskSubtask: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "task_subtasks"
+}
+
+/// Lightweight progress snapshot for a task's checklist — used by the list-row
+/// "n/m" chip without fetching the full subtask list.
+struct SubtaskProgress: Equatable, Hashable {
+    var completed: Int
+    var total: Int
+
+    var isComplete: Bool { total > 0 && completed == total }
+    var fraction: Double { total == 0 ? 0 : Double(completed) / Double(total) }
+}
