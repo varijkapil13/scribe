@@ -10,7 +10,6 @@ enum MainSelection: Hashable {
     case taskCalendar
     case note(String)           // noteId
     case notes(NotesFilter)
-    case settings(SettingsPane)
 }
 
 enum NotesFilter: Hashable {
@@ -33,6 +32,7 @@ struct MainWindowView: View {
     @State private var searchText: String = ""
     @State private var nav = NavigationCoordinator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openSettings) private var openSettings
     @State private var projectEditorMode: ProjectEditorMode?
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
@@ -158,36 +158,34 @@ struct MainWindowView: View {
                 }
             }
         }
-        .background(
-            Group {
-                // ⌘K is the conventional palette shortcut; ⌘⇧F kept one release
-                // as a muscle-memory alias.
-                Button("") { showUniversalSearch.toggle() }
-                    .keyboardShortcut("k", modifiers: [.command])
-                Button("") { showUniversalSearch.toggle() }
-                    .keyboardShortcut("f", modifiers: [.command, .shift])
-                // History traversal.
-                Button("") { nav.goBack() }
-                    .keyboardShortcut("[", modifiers: [.command])
-                    .disabled(!nav.canGoBack)
-                Button("") { nav.goForward() }
-                    .keyboardShortcut("]", modifiers: [.command])
-                    .disabled(!nav.canGoForward)
-                // Arc-style collapse-to-focus: hide the sidebar for full-width
-                // reading/writing. ⌃⌘S avoids ⌘S (no save semantic) and the
-                // system ⌃⌘F fullscreen.
-                Button("") {
-                    withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
-                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                    }
-                }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+        // Menu-bar commands (the shortcut owners) route here.
+        .onReceive(NotificationCenter.default.publisher(for: .scribeToggleCommandBar)) { _ in
+            showUniversalSearch.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeGoBack)) { _ in nav.goBack() }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeGoForward)) { _ in nav.goForward() }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeToggleSidebar)) { _ in
+            withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
             }
-            .hidden()
-        )
-        .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { note in
-            let pane = (note.object as? SettingsPane) ?? .general
-            nav.navigate(to: .settings(pane))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeNewNote)) { _ in
+            if let note = try? NoteStore.shared.createNote(title: "", body: "") {
+                nav.navigate(to: .note(note.id))
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeNewDailyNote)) { _ in
+            if let note = try? NoteStore.shared.dailyNote(for: Date()) {
+                nav.navigate(to: .note(note.id))
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeNavigate)) { note in
+            if let dest = note.object as? MainSelection { nav.navigate(to: dest) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openScribeSettings)) { _ in
+            // Settings is a native scene now — open the standard preferences
+            // window instead of clobbering the working note/task in-pane.
+            openSettings()
         }
         .onReceive(NotificationCenter.default.publisher(for: .scribeRequestNavigateToNote)) { note in
             if let id = note.userInfo?["noteId"] as? String {
@@ -350,7 +348,6 @@ struct MainWindowView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .help("New note (⌘N)")
-                        .keyboardShortcut("n", modifiers: .command)
                     }
                 }
 
@@ -580,8 +577,6 @@ struct MainWindowView: View {
             }
         case .notes(let filter):
             notesDetailView(filter: filter)
-        case .settings(let pane):
-            SettingsPaneView(pane: pane, audioManager: appState.audioManager)
         }
     }
 }
@@ -732,6 +727,15 @@ extension Notification.Name {
     static let openScribeSettings = Notification.Name("scribe.openSettings")
     static let scribeSessionUpdated = Notification.Name("scribe.sessionUpdated")
     static let scribeRequestNavigateToNote = Notification.Name("scribe.requestNavigateToNote")
+    // Menu-bar command tree → main window. The menu items are the canonical,
+    // VoiceOver-announced home of these shortcuts; MainWindowView observes them.
+    static let scribeToggleCommandBar = Notification.Name("scribe.toggleCommandBar")
+    static let scribeGoBack = Notification.Name("scribe.goBack")
+    static let scribeGoForward = Notification.Name("scribe.goForward")
+    static let scribeToggleSidebar = Notification.Name("scribe.toggleSidebar")
+    static let scribeNewNote = Notification.Name("scribe.newNote")
+    static let scribeNewDailyNote = Notification.Name("scribe.newDailyNote")
+    static let scribeNavigate = Notification.Name("scribe.navigate")  // userInfo["selection"]
 }
 
 // MARK: - Collapsible section header
