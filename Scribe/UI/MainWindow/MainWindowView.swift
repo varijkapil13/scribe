@@ -93,6 +93,7 @@ struct MainWindowView: View {
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
     @State private var allNotes: [Note] = []
+    @State private var taskCounts = SidebarTaskCounts()
     @State private var showUniversalSearch: Bool = false
     @State private var isCreatingTopNotebook: Bool = false
     @State private var topNotebookDraftName: String = ""
@@ -180,6 +181,9 @@ struct MainWindowView: View {
             scheduleTagReload()
         }
         .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
+        .onReceive(TaskStore.shared.observeTasks(filter: .all).replaceError(with: [])) { tasks in
+            taskCounts = SidebarTaskCounts(tasks: tasks)
+        }
         .sheet(item: $projectEditorMode) { mode in
             switch mode {
             case .create:
@@ -322,6 +326,7 @@ struct MainWindowView: View {
                     NavigationLink(value: MainSelection.today) {
                         Label("Today", systemImage: "sun.max")
                     }
+                    .badge(taskCounts.today)
                     NavigationLink(value: MainSelection.recordings) {
                         Label("Recordings", systemImage: "waveform")
                     }
@@ -336,6 +341,7 @@ struct MainWindowView: View {
                             NavigationLink(value: MainSelection.tasks(item.filter)) {
                                 Label(item.title, systemImage: item.systemImage)
                             }
+                            .badge(taskBadge(for: item.filter))
                         }
                     }
                 } header: {
@@ -594,6 +600,16 @@ struct MainWindowView: View {
         let noteTags = (try? NoteStore.shared.allNoteTags()) ?? []
         let taskTags = (try? TaskStore.shared.allTags()) ?? []
         unifiedTags = Array(Set(noteTags + taskTags)).sorted()
+    }
+
+    /// Sidebar count badge for a smart-filter row (0 is hidden by SwiftUI).
+    private func taskBadge(for filter: TaskStore.Filter) -> Int {
+        switch filter {
+        case .inbox:    return taskCounts.inbox
+        case .upcoming: return taskCounts.upcoming
+        case .today:    return taskCounts.today
+        default:        return 0
+        }
     }
 
     private func scheduleTagReload() {
@@ -882,6 +898,31 @@ private struct CollapsibleSectionHeader: View {
 }
 
 // MARK: - Task sidebar items
+
+/// At-a-glance sidebar counts derived from the active (incomplete,
+/// non-cancelled) task set — computed client-side from `observeTasks(.all)`.
+struct SidebarTaskCounts: Equatable {
+    var inbox = 0
+    var today = 0      // due today or overdue
+    var overdue = 0
+    var upcoming = 0   // next 7 days, excluding today
+
+    init() {}
+
+    init(tasks: [TodoTask], now: Date = Date(), calendar: Calendar = .current) {
+        let startToday = calendar.startOfDay(for: now)
+        let startTomorrow = calendar.date(byAdding: .day, value: 1, to: startToday)!
+        let endUpcoming = calendar.date(byAdding: .day, value: 7, to: startTomorrow)!
+        for task in tasks {
+            if task.projectId == nil { inbox += 1 }
+            if let due = task.dueAt {
+                if due < startTomorrow { today += 1 }
+                if due < startToday { overdue += 1 }
+                if due >= startTomorrow && due < endUpcoming { upcoming += 1 }
+            }
+        }
+    }
+}
 
 /// Smart filters shown under the "Tasks" sidebar header: Inbox, Today, Upcoming, All, Completed.
 struct TaskSidebarItem: Identifiable, Hashable {
