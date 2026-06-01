@@ -44,8 +44,10 @@ struct RecordingStatusPill: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .animation(.easeInOut(duration: DesignTokens.Motion.standard), value: appState.isTranscribing)
-        .animation(.easeInOut(duration: DesignTokens.Motion.standard), value: audioManager.isPaused)
+        // State changes ride the shared snappy spring, auto-gated to instant
+        // under Reduce Motion via `.scribeAnimation`.
+        .scribeAnimation(.snappy, value: appState.isTranscribing)
+        .scribeAnimation(.snappy, value: audioManager.isPaused)
         .onAppear { if !reduceMotion { startPulse() } }
     }
 

@@ -43,6 +43,14 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// Called on each captured audio buffer (already resampled to the requested format).
     var onAudioBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
+    /// Called on each captured *raw hardware* buffer with its linear peak
+    /// amplitude (0…1). Computed cheaply in the tap before conversion — the
+    /// same value previously only logged for diagnostics. ``AudioSessionManager``
+    /// forwards this onto the main actor to drive the live input-level meter.
+    /// Fired on AVAudioEngine's render thread, so consumers must hop to their
+    /// own actor before touching UI state.
+    var onLevel: ((Float) -> Void)?
+
     // MARK: - Device Enumeration
 
     /// Returns the list of available audio input devices via CoreAudio.
@@ -174,6 +182,11 @@ final class MicrophoneCapture: @unchecked Sendable {
             if rawTapCount % 100 == 0 {
                 Log.audio.debug("Mic raw hardware peak after \(rawTapCount) taps: \(String(format: "%.4f", rawPeak), privacy: .public)")
             }
+
+            // Forward the per-buffer peak so the session manager can drive a
+            // smoothed input-level meter. Cheap (a single Float copy) and
+            // already computed above — previously this value was only logged.
+            self.onLevel?(rawPeak)
 
             guard let convertedBuffer = AVAudioPCMBuffer(
                 pcmFormat: targetFormat,

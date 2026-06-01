@@ -38,6 +38,17 @@ final class AudioSessionManager: ObservableObject {
     @Published private(set) var recordingDuration: TimeInterval = 0
     @Published private(set) var currentSessionId: String?
 
+    /// Smoothed microphone input level in 0…1, suitable for driving a level
+    /// meter. Attack-fast / decay-slow so the meter snaps up on speech and
+    /// eases back down, and is reset to 0 on pause/stop. Updated on the main
+    /// actor at ~13 Hz from the raw per-buffer peak forwarded by
+    /// ``MicrophoneCapture/onLevel`` — no engine restart involved.
+    @Published private(set) var inputLevel: Float = 0
+
+    /// Smoothed system-audio (remote) level in 0…1, mirroring ``inputLevel``
+    /// for the second source. Stays at 0 when system-audio capture is off.
+    @Published private(set) var systemLevel: Float = 0
+
     // MARK: - Capture Engines
 
     let micCapture = MicrophoneCapture()
@@ -57,6 +68,19 @@ final class AudioSessionManager: ObservableObject {
     private var durationTimer: Timer?
     private var accumulatedDuration: TimeInterval = 0
     var shouldCaptureSystemAudio: Bool = true
+
+    // MARK: - Level metering
+
+    /// Latest raw peaks reported from the audio render thread(s). Written off
+    /// the main actor (engine render thread / sample-feed thread) and drained
+    /// on the main actor by ``levelTimer``, so it carries its own lock.
+    private let rawLevelBox = RawLevelBox()
+    /// Drives the attack/decay smoothing + publishing of `inputLevel` /
+    /// `systemLevel` at ~13 Hz. Independent of the engine — pausing or
+    /// stopping simply tears it down and zeroes the levels.
+    private var levelTimer: Timer?
+    private var smoothedInput: Float = 0
+    private var smoothedSystem: Float = 0
 
     // MARK: - Recording Control
 
@@ -82,6 +106,11 @@ final class AudioSessionManager: ObservableObject {
             self?.onMicBuffer?(buffer)
         }
 
+        // Forward the raw per-buffer peak (render thread) into the lock-boxed
+        // holder; the main-actor `levelTimer` drains + smooths it for the UI.
+        let levelBox = rawLevelBox
+        micCapture.onLevel = { peak in levelBox.recordMic(peak) }
+
         do {
             try micCapture.startCapture()
         } catch {
@@ -96,7 +125,8 @@ final class AudioSessionManager: ObservableObject {
                 throw AudioSessionError.systemAudioPermissionDenied
             }
 
-            systemCapture.onAudioBuffer = { [weak self] buffer, _ in
+            systemCapture.onAudioBuffer = { [weak self, levelBox] buffer, _ in
+                levelBox.recordSystem(Self.peak(of: buffer))
                 self?.onSystemBuffer?(buffer)
             }
 
@@ -114,6 +144,7 @@ final class AudioSessionManager: ObservableObject {
         isRecording = true
         isPaused = false
         startDurationTimer()
+        startLevelTimer()
     }
 
     /// Stops recording completely and tears down all capture resources.
@@ -124,6 +155,7 @@ final class AudioSessionManager: ObservableObject {
         await systemCapture.stopCapture()
 
         stopDurationTimer()
+        stopLevelTimer()
         isRecording = false
         isPaused = false
         currentSessionId = nil
@@ -148,6 +180,7 @@ final class AudioSessionManager: ObservableObject {
             accumulatedDuration += Date().timeIntervalSince(start)
         }
         stopDurationTimer()
+        stopLevelTimer()
         isPaused = true
     }
 
@@ -184,7 +217,9 @@ final class AudioSessionManager: ObservableObject {
 
         if enabled {
             if !systemCapture.isCapturing {
+                let levelBox = rawLevelBox
                 systemCapture.onAudioBuffer = { [weak self] buffer, _ in
+                    levelBox.recordSystem(Self.peak(of: buffer))
                     self?.onSystemBuffer?(buffer)
                 }
                 do {
@@ -197,6 +232,9 @@ final class AudioSessionManager: ObservableObject {
             if systemCapture.isCapturing {
                 await systemCapture.stopCapture()
             }
+            // No more remote audio — let the meter decay to silence.
+            smoothedSystem = 0
+            systemLevel = 0
         }
     }
 
@@ -222,6 +260,7 @@ final class AudioSessionManager: ObservableObject {
         recordingStartTime = Date()
         isPaused = false
         startDurationTimer()
+        startLevelTimer()
     }
 
     // MARK: - Device Enumeration
@@ -245,5 +284,113 @@ final class AudioSessionManager: ObservableObject {
     private func stopDurationTimer() {
         durationTimer?.invalidate()
         durationTimer = nil
+    }
+
+    // MARK: - Level Timer
+
+    /// Attack coefficient — how fast the meter rises toward a louder peak.
+    /// Higher = snappier. Chosen so speech onset reads as instant.
+    private static let levelAttack: Float = 0.6
+    /// Decay coefficient — how fast the meter eases back down once audio
+    /// quiets. Lower than attack so the meter "falls" rather than flickers.
+    private static let levelDecay: Float = 0.18
+
+    private func startLevelTimer() {
+        guard levelTimer == nil else { return }
+        // ~13 Hz: smooth to the eye without being a CPU hog. The render thread
+        // keeps the latest peak fresh in `rawLevelBox`; we only sample it here.
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 13.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.tickLevels()
+            }
+        }
+    }
+
+    private func stopLevelTimer() {
+        levelTimer?.invalidate()
+        levelTimer = nil
+        // Snap both meters to silence so a paused/stopped session never leaves
+        // a stale level frozen on screen.
+        smoothedInput = 0
+        smoothedSystem = 0
+        inputLevel = 0
+        systemLevel = 0
+        rawLevelBox.reset()
+    }
+
+    /// Drains the latest raw peaks and applies attack-fast / decay-slow
+    /// smoothing before publishing. Runs on the main actor at the timer cadence.
+    private func tickLevels() {
+        let (mic, sys) = rawLevelBox.drainPeaks()
+        smoothedInput = Self.smooth(current: smoothedInput, target: mic)
+        smoothedSystem = Self.smooth(current: smoothedSystem, target: sys)
+        // Avoid publishing imperceptible jitter (and redundant view updates).
+        if abs(smoothedInput - inputLevel) > 0.001 { inputLevel = smoothedInput }
+        if abs(smoothedSystem - systemLevel) > 0.001 { systemLevel = smoothedSystem }
+    }
+
+    private static func smooth(current: Float, target: Float) -> Float {
+        let coeff = target > current ? levelAttack : levelDecay
+        let next = current + (target - current) * coeff
+        return min(max(next, 0), 1)
+    }
+
+    /// Linear peak amplitude (0…1) of a PCM buffer's first channel.
+    nonisolated static func peak(of buffer: AVAudioPCMBuffer) -> Float {
+        var peak: Float = 0
+        let n = Int(buffer.frameLength)
+        if let ch = buffer.floatChannelData?[0] {
+            for i in 0..<n { let v = abs(ch[i]); if v > peak { peak = v } }
+        } else if let ch = buffer.int16ChannelData?[0] {
+            for i in 0..<n {
+                let v = abs(Float(ch[i]) / 32768.0)
+                if v > peak { peak = v }
+            }
+        }
+        return peak
+    }
+}
+
+// MARK: - RawLevelBox
+
+/// Thread-safe holder for the most recent raw audio peaks. The audio render
+/// thread (mic) and the system-capture feed write peaks; the main-actor level
+/// timer drains the running max each tick. Carries its own lock so it can be
+/// captured by the render-thread callbacks without crossing the actor boundary.
+private final class RawLevelBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var micPeak: Float = 0
+    private var systemPeak: Float = 0
+
+    /// Record a mic peak, keeping the loudest seen since the last drain so a
+    /// transient between ticks isn't lost.
+    func recordMic(_ peak: Float) {
+        lock.lock()
+        if peak > micPeak { micPeak = peak }
+        lock.unlock()
+    }
+
+    func recordSystem(_ peak: Float) {
+        lock.lock()
+        if peak > systemPeak { systemPeak = peak }
+        lock.unlock()
+    }
+
+    /// Returns the peaks since the last drain and resets the accumulators.
+    func drainPeaks() -> (mic: Float, system: Float) {
+        lock.lock()
+        defer {
+            micPeak = 0
+            systemPeak = 0
+            lock.unlock()
+        }
+        return (micPeak, systemPeak)
+    }
+
+    func reset() {
+        lock.lock()
+        micPeak = 0
+        systemPeak = 0
+        lock.unlock()
     }
 }

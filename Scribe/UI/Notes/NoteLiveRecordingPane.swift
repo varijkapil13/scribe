@@ -32,48 +32,16 @@ struct NoteLiveRecordingPane: View {
     }
 
     private var transcriptScroll: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    ForEach(appState.overlaySegments) { segment in
-                        liveLine(speaker: segment.speaker, text: segment.text)
-                            .id(segment.id)
-                    }
-                    if !appState.speechEngine.partialResult.isEmpty {
-                        liveLine(speaker: "…", text: appState.speechEngine.partialResult)
-                            .foregroundStyle(.secondary)
-                            .id("partial")
-                    }
-                }
-                .padding(.vertical, DesignTokens.Spacing.xs)
-            }
-            .frame(maxHeight: 160)
-            .onChange(of: appState.overlaySegments.count) {
-                if let last = appState.overlaySegments.last {
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                }
-            }
-            .onChange(of: appState.speechEngine.partialResult) {
-                if !appState.speechEngine.partialResult.isEmpty {
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
-                        proxy.scrollTo("partial", anchor: .bottom)
-                    }
-                }
-            }
-        }
-    }
-
-    private func liveLine(speaker: String, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.xs) {
-            Text(speaker)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 60, alignment: .trailing)
-            Text(text)
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LiveTranscriptFeed(
+            segments: appState.overlaySegments,
+            partial: appState.speechEngine.partialResult,
+            density: .compact,
+            isTranscribing: appState.isTranscribing,
+            isDownloadingModel: appState.speechEngine.isDownloadingModel,
+            // The pane already shows its own "Recording" header, so the
+            // listening/empty card would be redundant here.
+            showsListeningState: false,
+            maxHeight: 160
+        )
     }
 }

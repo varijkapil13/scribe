@@ -21,6 +21,13 @@ struct LiveSessionView: View {
     @AppStorage("selectedMicrophoneID") private var selectedMicrophoneID: String = ""
     @AppStorage("selectedLanguage") private var selectedLanguage: String = "auto"
 
+    /// Drives `.sensoryFeedback` so start/stop/pause confirm with a haptic.
+    @State private var feedbackTrigger: RecordingFeedback = .none
+
+    private enum RecordingFeedback: Equatable {
+        case none, started, stopped, paused, resumed
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             hero
@@ -33,8 +40,44 @@ struct LiveSessionView: View {
             transcriptFeed
         }
         .background(DesignTokens.Palette.surface)
+        // Transport shortcuts (Space = pause/resume, ⌘. = stop) live on the
+        // transport buttons via `.keyboardShortcut`, which scopes them to this
+        // view's responder subtree — so they never fire while the user is
+        // typing in a note editor elsewhere, and VoiceOver announces them. We
+        // deliberately avoid a container-level `.onKeyPress` here to prevent
+        // double-dispatch with those button shortcuts.
+        // Recording feedback: a single trigger value the system maps to a haptic.
+        .sensoryFeedback(trigger: feedbackTrigger) { _, new in
+            switch new {
+            case .started:  return .start
+            case .stopped:  return .stop
+            case .paused:   return .impact(weight: .light)
+            case .resumed:  return .impact(weight: .light)
+            case .none:     return nil
+            }
+        }
+        .onChange(of: appState.isTranscribing) { _, now in
+            feedbackTrigger = now ? .started : .stopped
+        }
+        .onChange(of: appState.audioManager.isPaused) { _, paused in
+            feedbackTrigger = paused ? .paused : .resumed
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Live recording")
+    }
+
+    // MARK: - Transport actions
+
+    private func togglePause() {
+        if appState.audioManager.isPaused {
+            Task { await appDelegate.resumeRecording() }
+        } else {
+            appDelegate.pauseRecording()
+        }
+    }
+
+    private func stop() {
+        Task { await appDelegate.stopRecording() }
     }
 
     // MARK: - Hero
@@ -63,7 +106,44 @@ struct LiveSessionView: View {
                 transportControls
             }
 
+            levelMeters
+
             audioSourceRow
+        }
+    }
+
+    /// Dual input-level meters (you + remote) so the user can *see* that audio
+    /// is being heard. Hidden when idle; the remote meter only appears when
+    /// system audio is being captured.
+    @ViewBuilder
+    private var levelMeters: some View {
+        if appState.isTranscribing && !appState.audioManager.isPaused {
+            HStack(spacing: DesignTokens.Spacing.lg) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.speakerYou)
+                        .accessibilityHidden(true)
+                    LevelMeterView(level: appState.audioManager.inputLevel,
+                                   tint: DesignTokens.Palette.speakerYou,
+                                   sourceLabel: "Your microphone")
+                }
+
+                if captureSystemAudio {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Palette.speakerRemote)
+                            .accessibilityHidden(true)
+                        LevelMeterView(level: appState.audioManager.systemLevel,
+                                       tint: DesignTokens.Palette.speakerRemote,
+                                       sourceLabel: "Remote audio")
+                    }
+                }
+                Spacer()
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
         }
     }
 
@@ -84,11 +164,7 @@ struct LiveSessionView: View {
     private var transportControls: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             Button {
-                if appState.audioManager.isPaused {
-                    Task { await appDelegate.resumeRecording() }
-                } else {
-                    appDelegate.pauseRecording()
-                }
+                togglePause()
             } label: {
                 Label(appState.audioManager.isPaused ? "Resume" : "Pause",
                       systemImage: appState.audioManager.isPaused ? "play.fill" : "pause.fill")
@@ -96,10 +172,13 @@ struct LiveSessionView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+            .keyboardShortcut(.space, modifiers: [])
             .disabled(!appState.isTranscribing)
+            .accessibilityLabel(appState.audioManager.isPaused ? "Resume recording" : "Pause recording")
+            .accessibilityHint("Space")
 
             Button {
-                Task { await appDelegate.stopRecording() }
+                stop()
             } label: {
                 Label("Stop", systemImage: "stop.fill")
                     .labelStyle(.titleAndIcon)
@@ -107,7 +186,10 @@ struct LiveSessionView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .tint(DesignTokens.Palette.recording)
+            .keyboardShortcut(".", modifiers: .command)
             .disabled(!appState.isTranscribing)
+            .accessibilityLabel("Stop recording")
+            .accessibilityHint("Command period")
         }
     }
 
@@ -241,146 +323,20 @@ struct LiveSessionView: View {
     // MARK: - Transcript feed
 
     private var transcriptFeed: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                    ForEach(segments) { segment in
-                        liveRow(for: segment)
-                            .id(segment.id)
-                    }
-
-                    if !appState.speechEngine.partialResult.isEmpty {
-                        partialRow(text: appState.speechEngine.partialResult)
-                            .id("partial")
-                    }
-
-                    if segments.isEmpty && appState.speechEngine.partialResult.isEmpty {
-                        listeningState
-                    }
-                }
-                .padding(DesignTokens.Spacing.xl)
-            }
-            .onChange(of: segments.count) {
-                if let last = segments.last {
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                }
-            }
-            .onChange(of: appState.speechEngine.partialResult) {
-                if !appState.speechEngine.partialResult.isEmpty {
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
-                        proxy.scrollTo("partial", anchor: .bottom)
-                    }
-                }
-            }
-        }
-    }
-
-    private var segments: [TranscriptionSegment] {
-        appState.overlaySegments
-    }
-
-    private func liveRow(for segment: TranscriptionSegment) -> some View {
-        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(Color.speakerTint(for: segment.speaker))
-                .frame(width: 3)
-
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    SpeakerChip(speaker: segment.speaker)
-                    Text(timestampString(for: segment))
-                        .font(DesignTokens.Typography.timestamp)
-                        .foregroundStyle(.tertiary)
-                }
-                Text(segment.text)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(segment.speaker) at \(timestampString(for: segment)): \(segment.text)")
-    }
-
-    private func partialRow(text: String) -> some View {
-        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(Color.secondary.opacity(0.35))
-                .frame(width: 3)
-
-            Text(text)
-                .font(.body)
-                .italic()
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .transition(.opacity)
-    }
-
-    private var listeningState: some View {
-        VStack(spacing: DesignTokens.Spacing.md) {
-            if appState.speechEngine.isDownloadingModel {
-                ProgressView()
-                    .controlSize(.large)
-            } else {
-                Image(systemName: appState.isTranscribing ? "waveform" : "mic.slash")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(.tertiary)
-                    .symbolRenderingMode(.hierarchical)
-                    .symbolEffect(.variableColor.iterative, isActive: appState.isTranscribing)
-            }
-
-            VStack(spacing: DesignTokens.Spacing.xs) {
-                Text(listeningHeadline)
-                    .font(DesignTokens.Typography.section)
-                    .foregroundStyle(.primary)
-                Text(listeningSubtitle)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 400)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, DesignTokens.Spacing.xxl)
-    }
-
-    private var listeningHeadline: String {
-        if appState.speechEngine.isDownloadingModel { return "Downloading speech model…" }
-        if appState.isTranscribing { return "Listening…" }
-        return "Ready to record"
-    }
-
-    private var listeningSubtitle: String {
-        if appState.speechEngine.isDownloadingModel {
-            return "First-time setup for this language. This usually takes under a minute."
-        }
-        if appState.isTranscribing {
-            return "Transcribed segments will appear here as you speak."
-        }
-        return "Start a session to see the live transcript."
+        LiveTranscriptFeed(
+            segments: appState.overlaySegments,
+            partial: appState.speechEngine.partialResult,
+            density: .comfortable,
+            isTranscribing: appState.isTranscribing,
+            isDownloadingModel: appState.speechEngine.isDownloadingModel,
+            showsListeningState: true
+        )
     }
 
     // MARK: - Helpers
 
     private var formattedDuration: String {
         let total = Int(appState.audioManager.recordingDuration)
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
-    }
-
-    private func timestampString(for segment: TranscriptionSegment) -> String {
-        let total = segment.sessionOffsetMs / 1000
         let hours = total / 3600
         let minutes = (total % 3600) / 60
         let seconds = total % 60

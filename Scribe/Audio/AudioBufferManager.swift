@@ -24,6 +24,13 @@ final class AudioBufferManager: @unchecked Sendable {
     /// and `"remote"` for system audio.
     var onChunkReady: ((_ samples: [Float], _ speaker: String) -> Void)?
 
+    /// Called on each appended batch of system-audio samples with their linear
+    /// peak amplitude (0…1). Mirrors ``MicrophoneCapture/onLevel`` for the
+    /// remote source so the live meter can visualize *you* vs *remote*.
+    /// Invoked on whatever thread feeds samples in, so consumers must hop to
+    /// their own actor before touching UI state.
+    var onSystemLevel: ((Float) -> Void)?
+
     // MARK: - Private Buffers
 
     private var micBuffer: [Float] = []
@@ -56,10 +63,24 @@ final class AudioBufferManager: @unchecked Sendable {
 
     /// Appends system audio samples (labeled as `"remote"`).
     func appendSystemSamples(_ samples: [Float]) {
+        let peak = Self.peak(of: samples)
         lock.lock()
         systemBuffer.append(contentsOf: samples)
         checkAndEmitChunk(buffer: &systemBuffer, speaker: "remote")
         lock.unlock()
+        // Report peak outside the lock so a slow consumer can't stall the
+        // audio feed.
+        if let onSystemLevel { onSystemLevel(peak) }
+    }
+
+    /// Linear peak amplitude (0…1) of a sample batch.
+    private static func peak(of samples: [Float]) -> Float {
+        var peak: Float = 0
+        for s in samples {
+            let v = abs(s)
+            if v > peak { peak = v }
+        }
+        return peak
     }
 
     /// Clears all accumulated samples.
