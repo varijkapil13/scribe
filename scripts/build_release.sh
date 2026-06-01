@@ -41,15 +41,15 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 log "Archiving ($CONFIG)…"
+PRETTY=cat
+command -v xcpretty >/dev/null && PRETTY=xcpretty
+set -o pipefail
 xcodebuild archive \
   -project Scribe.xcodeproj \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
   -destination 'generic/platform=macOS' \
-  -archivePath "$ARCHIVE" \
-  | xcpretty 2>/dev/null || xcodebuild archive \
-  -project Scribe.xcodeproj -scheme "$SCHEME" -configuration "$CONFIG" \
-  -destination 'generic/platform=macOS' -archivePath "$ARCHIVE"
+  -archivePath "$ARCHIVE" | "$PRETTY"
 
 [ -d "$ARCHIVE" ] || die "Archive failed — no $ARCHIVE"
 
@@ -88,23 +88,18 @@ elif [ -n "${NOTARY_PROFILE:-}" ]; then
   log "Skipping notarization — needs a Developer ID Application cert first."
 fi
 
-# DMG packaging (uses create-dmg if present, else a plain hdiutil image).
-DMG="$BUILD_DIR/Scribe-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist").dmg"
+# DMG packaging — a plain hdiutil UDZO image with an /Applications symlink
+# (reliable, no external deps; drag-to-install).
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+DMG="$BUILD_DIR/Scribe-$VERSION.dmg"
 log "Packaging DMG → $DMG"
-if command -v create-dmg >/dev/null; then
-  create-dmg --overwrite "$APP" "$BUILD_DIR" >/dev/null 2>&1 || true
-  # create-dmg names by app + version; normalize to $DMG if it produced something else.
-  PRODUCED="$(ls -t "$BUILD_DIR"/*.dmg 2>/dev/null | head -1 || true)"
-  [ -n "$PRODUCED" ] && [ "$PRODUCED" != "$DMG" ] && mv "$PRODUCED" "$DMG"
-else
-  STAGE="$BUILD_DIR/dmg-stage"
-  rm -rf "$STAGE"; mkdir -p "$STAGE"
-  cp -R "$APP" "$STAGE/"
-  ln -s /Applications "$STAGE/Applications"
-  rm -f "$DMG"
-  hdiutil create -volname "Scribe" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-  rm -rf "$STAGE"
-fi
+STAGE="$BUILD_DIR/dmg-stage"
+rm -rf "$STAGE"; mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+rm -f "$DMG"
+hdiutil create -volname "Scribe $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE"
 [ -f "$DMG" ] && log "DMG ready: $DMG" || die "DMG creation failed"
 
 log "Done. Artifacts in $BUILD_DIR/"
