@@ -22,6 +22,54 @@ enum NotesFilter: Hashable {
     case graph
 }
 
+/// Top-level product surface — the Arc-style grouping the sidebar filters by
+/// and ⌘1/2/3 jump between. Derived from the active `MainSelection` so the
+/// switcher highlight always follows navigation (no separate state to sync).
+enum Surface: Int, CaseIterable, Identifiable {
+    case capture = 1
+    case notes = 2
+    case tasks = 3
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .capture: return "Capture"
+        case .notes:   return "Notes"
+        case .tasks:   return "Tasks"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .capture: return "waveform"
+        case .notes:   return "doc.text"
+        case .tasks:   return "checklist"
+        }
+    }
+
+    /// The destination ⌘1/2/3 (and the switcher) jump to for this surface.
+    var defaultSelection: MainSelection {
+        switch self {
+        case .capture: return .today
+        case .notes:   return .notes(.all)
+        case .tasks:   return .tasks(.inbox)
+        }
+    }
+}
+
+extension MainSelection {
+    /// The product surface this destination belongs to — drives the sidebar
+    /// switcher highlight and section filtering.
+    var surface: Surface {
+        switch self {
+        case .live, .today:         return .capture
+        case .note, .notes:         return .notes
+        case .tasks, .taskCalendar: return .tasks
+        }
+    }
+}
+
 /// The main window — sidebar of past transcripts + settings panes, detail
 /// pane shows whichever is selected. Primary UI for the app.
 struct MainWindowView: View {
@@ -248,6 +296,10 @@ struct MainWindowView: View {
     private var sidebar: some View {
         List(selection: selectionBinding) {
             if searchText.isEmpty {
+                let surface = nav.current.surface
+
+                // MARK: Capture surface
+                if surface == .capture {
                 if appState.isTranscribing {
                     Section {
                         NavigationLink(value: MainSelection.live) {
@@ -267,7 +319,10 @@ struct MainWindowView: View {
                         Label("Today", systemImage: "sun.max")
                     }
                 }
+                }  // end Capture surface
 
+                // MARK: Tasks surface
+                if surface == .tasks {
                 Section {
                     if tasksExpanded {
                         ForEach(TaskSidebarItem.unifiedSidebarFilters) { item in
@@ -327,7 +382,10 @@ struct MainWindowView: View {
                         .help("New project")
                     }
                 }
+                }  // end Tasks surface
 
+                // MARK: Notes surface
+                if surface == .notes {
                 Section {
                     if notesExpanded {
                         NavigationLink(value: MainSelection.notes(.all)) {
@@ -407,6 +465,7 @@ struct MainWindowView: View {
                 } header: {
                     CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
                 }
+                }  // end Notes surface
             } else {
                 Section {
                     let results = sidebarSearchResults
@@ -437,9 +496,39 @@ struct MainWindowView: View {
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search…")
         .navigationTitle("Scribe")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            surfaceSwitcher
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             sidebarFooter
         }
+    }
+
+    /// Arc-style top-level surface switcher. Reflects the active selection's
+    /// surface and jumps to that surface's default destination (⌘1/2/3 mirror
+    /// this via the Go menu). Tapping the already-active surface is a no-op so
+    /// it doesn't reset an open note/task back to the default.
+    private var surfaceSwitcher: some View {
+        Picker("Surface", selection: Binding(
+            get: { nav.current.surface },
+            set: { newSurface in
+                if newSurface != nav.current.surface {
+                    nav.navigate(to: newSurface.defaultSelection)
+                }
+            }
+        )) {
+            ForEach(Surface.allCases) { surface in
+                Text(surface.title).tag(surface)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.top, DesignTokens.Spacing.sm)
+        .padding(.bottom, DesignTokens.Spacing.xs)
+        .background(.bar)
+        .accessibilityLabel("Surface")
+        .accessibilityHint("Switch between Capture, Notes and Tasks")
     }
 
     /// Footer icon strip for rarely-used destinations. Avoids dedicating
