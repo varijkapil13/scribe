@@ -48,6 +48,16 @@ final class AppState: ObservableObject {
     private var hasLoggedFirstMicBuffer = false
     private var hasLoggedFirstSystemBuffer = false
 
+    /// Fires shortly after a session starts; if system-audio capture was
+    /// requested but no buffer ever arrived, the Screen Recording grant is the
+    /// likely culprit and we warn the user instead of failing silently.
+    private var systemAudioWatchdog: Task<Void, Never>?
+
+    /// Grace period before the watchdog concludes remote audio is dead.
+    /// ScreenCaptureKit delivers buffers continuously (even during silence), so
+    /// a complete absence past this window means capture isn't running.
+    private static let systemAudioWatchdogDelay: Duration = .seconds(6)
+
     /// Accumulates consecutive same-speaker utterances into a single segment
     /// so the UI doesn't fill up with 1–3-word fragments every time SFSpeech
     /// detects an internal utterance boundary. Flushed when the speaker
@@ -203,7 +213,20 @@ final class AppState: ObservableObject {
             }
             self.speechEngine.appendAudioBuffer(buffer, speaker: "remote")
         }
+
+        audioManager.onSystemError = { [weak self] _ in
+            guard let self else { return }
+            self.lastError = Self.systemAudioRevokedMessage
+        }
     }
+
+    /// Shown when remote (system-audio) capture isn't producing audio — almost
+    /// always a Screen Recording permission that macOS silently dropped after a
+    /// rebuild. Mic capture is a separate grant and keeps working, which is why
+    /// only the remote side goes quiet.
+    static let systemAudioRevokedMessage =
+        "Not capturing remote audio. Grant Scribe access under System Settings → "
+        + "Privacy & Security → Screen Recording, then stop and restart recording."
 
     /// Connects transcription engine output to coalescing + storage + live view.
     ///
@@ -355,7 +378,25 @@ final class AppState: ObservableObject {
         try await audioManager.startRecording()
 
         isTranscribing = true
+        startSystemAudioWatchdog()
         Log.app.info("Session started — id: \(session.id, privacy: .public), language: \(self.speechEngine.currentLanguage ?? "system default", privacy: .public)")
+    }
+
+    /// Starts a one-shot timer that flags missing remote audio. If system-audio
+    /// capture was requested for this session but no buffer has arrived by the
+    /// time it fires, capture isn't actually running — surface the likely fix.
+    private func startSystemAudioWatchdog() {
+        systemAudioWatchdog?.cancel()
+        guard audioManager.shouldCaptureSystemAudio else { return }
+        systemAudioWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: Self.systemAudioWatchdogDelay)
+            guard !Task.isCancelled, let self else { return }
+            guard self.isTranscribing,
+                  self.audioManager.shouldCaptureSystemAudio,
+                  !self.hasLoggedFirstSystemBuffer else { return }
+            Log.audio.error("No system-audio buffers after \(String(describing: Self.systemAudioWatchdogDelay), privacy: .public) — Screen Recording permission likely revoked (rebuild?).")
+            self.lastError = Self.systemAudioRevokedMessage
+        }
     }
 
     /// Stops the current transcription session.
@@ -364,6 +405,8 @@ final class AppState: ObservableObject {
     /// record in the database. Triggers auto-analysis and auto-summarization if
     /// enabled in settings.
     func stopSession() async {
+        systemAudioWatchdog?.cancel()
+        systemAudioWatchdog = nil
         await audioManager.stopRecording()
         // Wait for SFSpeech to deliver its final result so the last utterance
         // becomes a persisted segment before we clear `currentSessionId` (the

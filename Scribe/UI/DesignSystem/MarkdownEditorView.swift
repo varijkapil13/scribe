@@ -258,13 +258,87 @@ struct MarkdownEditorView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isApplyingFormatting,
                   let tv = notification.object as? MarkdownNSTextView else { return }
-            // Selection changed — fold/unfold decision depends on cursor position, so reformat.
-            // The work is bounded by note size and image renders are cached.
+            // A caret move only changes the rendered output when it crosses into a
+            // different block (marker reveal / fold are block-scoped). When the
+            // source is unchanged and a collapsed caret stays within the same
+            // paragraph as the last render, the displayed attributed string is
+            // identical — so we skip the full re-parse + whole-storage rewrite,
+            // which costs tens of ms on a long note. The cheap selection-dependent
+            // updates still run. Anything uncertain falls through to a full
+            // reformat, so this can never display stale formatting.
+            if canSkipReformatForSelection(in: tv) {
+                detectSlashTyping(in: tv)
+                notifySelectionGeometry(in: tv)
+                return
+            }
+            // Caret crossed a block boundary — fold/unfold + marker reveal depend
+            // on cursor position, so reformat.
             applyFormatting(to: tv)
             // A moved caret can leave a stale slash query open; re-evaluate.
             detectSlashTyping(in: tv)
             // Feed the selection-anchored format bubble.
             notifySelectionGeometry(in: tv)
+        }
+
+        // MARK: - Reformat short-circuit (caret-only moves)
+
+        /// Inputs of the last full render. Used to skip redundant reformats when a
+        /// caret-only move provably can't change the output. `nil` source ⇒ never
+        /// rendered ⇒ never skip.
+        private var lastRenderedSource: String?
+        private var lastRenderedParagraph: NSRange?
+        private var lastRenderedSourceCaret: Int = -1
+        private var lastRenderedContentWidth: CGFloat = -1
+        private var lastRenderedFocusMode: Bool = false
+        private var lastRenderedFocusDimAlpha: CGFloat = -1
+
+        /// Compiled once — `applyFormatting` runs on every keystroke, so the fold
+        /// regexes must never be recompiled in the hot path.
+        private static let checklistFoldRegex = try? NSRegularExpression(
+            pattern: #"^(\s*- \[[ xX]\] )"#, options: [.anchorsMatchLines])
+        private static let imageFoldRegex = try? NSRegularExpression(
+            pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: [])
+
+        /// True only when a selection change provably cannot alter the rendered
+        /// output, so the full re-parse + whole-storage rewrite can be skipped.
+        ///
+        /// Correctness rests on the renderer's position-dependent decisions —
+        /// Bear-style marker reveal and focus dimming — being *block*-scoped, and
+        /// on the fact that a caret strictly interior to a single source line is
+        /// unambiguously inside exactly one block (it can't sit on the inter-block
+        /// boundary, where the reveal logic's inclusive endpoints reveal two
+        /// adjacent blocks). So we skip only when BOTH the new caret and the caret
+        /// the last render styled are strictly interior to the SAME line, with
+        /// width/focus/dim unchanged. Guards bail on marked text (IME), on any
+        /// caret-sensitive multi-line fold (a fenced ``` block), and on range
+        /// selections. Every uncertain case returns false → a full reformat runs,
+        /// so this can never display stale formatting.
+        private func canSkipReformatForSelection(in tv: MarkdownNSTextView) -> Bool {
+            guard let src = lastRenderedSource,
+                  let lastPara = lastRenderedParagraph else { return false }
+            // IME / marked-text composition fires selection changes mid-edit; the
+            // coordinate-consistent full path must run.
+            if tv.hasMarkedText() { return false }
+            let displaySel = tv.selectedRange()
+            // Range selections influence fold decisions across blocks — don't skip.
+            guard displaySel.length == 0 else { return false }
+            // Fenced ``` blocks drive caret-sensitive diagram folds; bail rather
+            // than track every fold boundary.
+            if src.contains("```") { return false }
+            // Map the display caret back to source coords through the live registry.
+            let srcLoc = FoldRegistry.sourceLocation(forDisplay: displaySel.location, registry: foldRegistry)
+            let ns = src as NSString
+            guard srcLoc >= 0, srcLoc <= ns.length else { return false }
+            let para = ns.paragraphRange(for: NSRange(location: srcLoc, length: 0))
+            guard para == lastPara else { return false }
+            // Strictly interior to the line (off both boundaries) for the new caret
+            // AND the caret the last render styled — so both sit inside one block.
+            func interior(_ loc: Int) -> Bool { loc > para.location && loc < NSMaxRange(para) }
+            guard interior(srcLoc), interior(lastRenderedSourceCaret) else { return false }
+            let width = max(120, tv.bounds.width - tv.textContainerInset.width * 2)
+            return width == lastRenderedContentWidth
+                && parent.focusModeEnabled == lastRenderedFocusMode
+                && parent.focusDimAlpha == lastRenderedFocusDimAlpha
         }
 
         func applyMarker(_ marker: String) {
@@ -678,6 +752,12 @@ struct MarkdownEditorView: NSViewRepresentable {
                 tv.undoManager?.enableUndoRegistration()
                 foldRegistry = []
                 recordChangeForUndo(source: currentSource, selection: sourceSel)
+                lastRenderedSource = currentSource
+                lastRenderedParagraph = NSRange(location: 0, length: 0)
+                lastRenderedSourceCaret = -1
+                lastRenderedContentWidth = -1
+                lastRenderedFocusMode = parent.focusModeEnabled
+                lastRenderedFocusDimAlpha = -1
                 return
             }
 
@@ -755,13 +835,10 @@ struct MarkdownEditorView: NSViewRepresentable {
             // exactly the marker including the trailing space, so e.g.
             // "- [ ] task" → fold the first 6 chars into an attachment, the
             // " task" remains as text.
-            let checklistRegex = try? NSRegularExpression(
-                pattern: #"^(\s*- \[[ xX]\] )"#,
-                options: [.anchorsMatchLines]
-            )
-            if let regex = checklistRegex {
-                let plain = mutable.string as NSString
-                let matches = regex.matches(in: mutable.string, options: [],
+            if let regex = Self.checklistFoldRegex {
+                let plainStr = mutable.string
+                let plain = plainStr as NSString
+                let matches = regex.matches(in: plainStr, options: [],
                                             range: NSRange(location: 0, length: plain.length))
                 // Apply in reverse so earlier ranges stay valid.
                 for match in matches.reversed() {
@@ -805,13 +882,10 @@ struct MarkdownEditorView: NSViewRepresentable {
 
             // Image folds — match `![alt](path)`. Skip matches inside a code
             // block (those should stay as raw markdown).
-            let imageRegex = try? NSRegularExpression(
-                pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#,
-                options: []
-            )
-            if let regex = imageRegex {
-                let plain = mutable.string as NSString
-                let matches = regex.matches(in: mutable.string, options: [],
+            if let regex = Self.imageFoldRegex {
+                let plainStr = mutable.string
+                let plain = plainStr as NSString
+                let matches = regex.matches(in: plainStr, options: [],
                                             range: NSRange(location: 0, length: plain.length))
                 for match in matches.reversed() {
                     let fullRange = match.range
@@ -859,6 +933,17 @@ struct MarkdownEditorView: NSViewRepresentable {
             (tv as? MarkdownNSTextView)?.needsDisplay = true
 
             recordChangeForUndo(source: currentSource, selection: sourceSel)
+
+            // Remember this render's inputs so a later caret-only move that stays
+            // strictly inside the same line can skip the rebuild (canSkipReformatForSelection).
+            lastRenderedSource = currentSource
+            let caretNS = currentSource as NSString
+            let caretLoc = min(max(0, sourceSel.location), caretNS.length)
+            lastRenderedParagraph = caretNS.paragraphRange(for: NSRange(location: caretLoc, length: 0))
+            lastRenderedSourceCaret = caretLoc
+            lastRenderedContentWidth = editorContentWidth
+            lastRenderedFocusMode = parent.focusModeEnabled
+            lastRenderedFocusDimAlpha = parent.focusDimAlpha
         }
 
         /// Place the cursor in the body of the fold's source range and trigger a reformat

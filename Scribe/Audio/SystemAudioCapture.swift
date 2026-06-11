@@ -47,6 +47,14 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unc
     /// Called on each captured audio buffer (16 kHz mono Float32).
     var onAudioBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
+    /// Called when the capture stream stops unexpectedly mid-session — most
+    /// commonly because the Screen Recording permission was revoked (which
+    /// macOS does silently whenever the app binary is rebuilt). Without this,
+    /// remote-audio transcription would simply go dead with no signal anywhere.
+    /// Invoked on an arbitrary background queue; hop to your actor before
+    /// touching UI state.
+    var onStreamError: ((Error) -> Void)?
+
     /// The audio format used for output delivery.
     private var outputFormat: AVAudioFormat?
 
@@ -139,6 +147,8 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unc
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         isCapturing = false
         self.stream = nil
+        Log.audio.error("System audio stream stopped unexpectedly: \(error.localizedDescription, privacy: .public)")
+        onStreamError?(error)
     }
 
     // MARK: - Sample Buffer Conversion

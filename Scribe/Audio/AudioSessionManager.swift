@@ -62,6 +62,10 @@ final class AudioSessionManager: ObservableObject {
     /// Called when a system audio buffer is captured.
     var onSystemBuffer: ((AVAudioPCMBuffer) -> Void)?
 
+    /// Called on the main actor when the system-audio capture stream stops
+    /// unexpectedly mid-session (typically a revoked Screen Recording grant).
+    var onSystemError: ((Error) -> Void)?
+
     // MARK: - Internal State
 
     private var recordingStartTime: Date?
@@ -96,6 +100,14 @@ final class AudioSessionManager: ObservableObject {
 
         let captureSystemAudio = captureSystemAudio ?? shouldCaptureSystemAudio
         shouldCaptureSystemAudio = captureSystemAudio
+
+        // Surface an unexpectedly-stopped system-audio stream (e.g. revoked
+        // Screen Recording grant) instead of letting remote capture die
+        // silently. `systemCapture` is a single long-lived instance, so wiring
+        // this once per session start also covers mid-session toggle/resume.
+        systemCapture.onStreamError = { [weak self] error in
+            Task { @MainActor [weak self] in self?.onSystemError?(error) }
+        }
 
         // Configure microphone capture.
         if let deviceID = micDeviceID {
