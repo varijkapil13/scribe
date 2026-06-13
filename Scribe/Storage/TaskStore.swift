@@ -197,7 +197,10 @@ final class TaskStore {
             if let ruleStr = task.recurrenceRule,
                let due = task.dueAt {
                 let rule = try RecurrenceRule.parse(ruleStr)
-                task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule)
+                // Advance in the user's local calendar: dueAt carries local
+                // wall-clock semantics, so weekday/month extraction and DST
+                // handling must use Calendar.current, not UTC.
+                task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule, calendar: .current)
                 task.completedAt = nil
             } else {
                 task.completedAt = date
@@ -515,7 +518,7 @@ final class TaskStore {
                 try TaskCompletion(taskId: id, completedAt: date).insert(database)
                 if let ruleStr = task.recurrenceRule, let due = task.dueAt {
                     let rule = try RecurrenceRule.parse(ruleStr)
-                    task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule)
+                    task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule, calendar: .current)
                     task.completedAt = nil
                 } else {
                     task.completedAt = date

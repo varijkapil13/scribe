@@ -21,11 +21,14 @@ final class FTSQueryTests: XCTestCase {
         XCTAssertEqual(FTSQuery.escape("budget review"), "\"budget\"* \"review\"*")
     }
 
-    func testPunctuationStrippedFromTokens() {
-        // Single-quotes, hyphens, periods are dropped from inside tokens,
-        // not used as token separators.
-        XCTAssertEqual(FTSQuery.escape("O'Reilly's"), "\"OReillys\"*")
-        XCTAssertEqual(FTSQuery.escape("co-founder"), "\"cofounder\"*")
+    func testPunctuationSplitsTokens() {
+        // Punctuation (single-quotes, hyphens, periods, underscores) acts as a
+        // token boundary — matching FTS5's unicode61 tokenizer — so a query
+        // matches the same way the content was indexed.
+        XCTAssertEqual(FTSQuery.escape("O'Reilly's"), "\"O\"* \"Reilly\"* \"s\"*")
+        XCTAssertEqual(FTSQuery.escape("co-founder"), "\"co\"* \"founder\"*")
+        XCTAssertEqual(FTSQuery.escape("to-do"), "\"to\"* \"do\"*")
+        XCTAssertEqual(FTSQuery.escape("snake_case"), "\"snake\"* \"case\"*")
     }
 
     func testPunctuationOnlyInputReturnsEmpty() {
