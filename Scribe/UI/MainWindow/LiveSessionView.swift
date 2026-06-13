@@ -24,6 +24,10 @@ struct LiveSessionView: View {
     /// Drives `.sensoryFeedback` so start/stop/pause confirm with a haptic.
     @State private var feedbackTrigger: RecordingFeedback = .none
 
+    /// True while an async resume is in flight, so the transport button is
+    /// disabled and rapid clicks can't queue multiple `resumeRecording()` calls.
+    @State private var isResuming = false
+
     private enum RecordingFeedback: Equatable {
         case none, started, stopped, paused, resumed
     }
@@ -70,7 +74,12 @@ struct LiveSessionView: View {
 
     private func togglePause() {
         if appState.audioManager.isPaused {
-            Task { await appDelegate.resumeRecording() }
+            guard !isResuming else { return }
+            isResuming = true
+            Task {
+                await appDelegate.resumeRecording()
+                isResuming = false
+            }
         } else {
             appDelegate.pauseRecording()
         }
@@ -173,7 +182,7 @@ struct LiveSessionView: View {
             .buttonStyle(.bordered)
             .controlSize(.large)
             .keyboardShortcut(.space, modifiers: [])
-            .disabled(!appState.isTranscribing)
+            .disabled(!appState.isTranscribing || isResuming)
             .accessibilityLabel(appState.audioManager.isPaused ? "Resume recording" : "Pause recording")
             .accessibilityHint("Space")
 
@@ -328,6 +337,7 @@ struct LiveSessionView: View {
             partial: appState.speechEngine.partialResult,
             density: .comfortable,
             isTranscribing: appState.isTranscribing,
+            isPaused: appState.audioManager.isPaused,
             isDownloadingModel: appState.speechEngine.isDownloadingModel,
             showsListeningState: true
         )

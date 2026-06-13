@@ -238,6 +238,10 @@ final class AudioSessionManager: ObservableObject {
                     try await systemCapture.startCapture()
                 } catch {
                     Log.audio.error("Failed to start system audio mid-session: \(error.localizedDescription, privacy: .private)")
+                    // Don't let the toggle silently lie: the switch flipped on
+                    // but capture never started. Surface it via onSystemError so
+                    // AppState raises the "not capturing remote audio" banner.
+                    onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
                 }
             }
         } else {
@@ -260,12 +264,17 @@ final class AudioSessionManager: ObservableObject {
             throw AudioSessionError.micCaptureFailure(underlying: error)
         }
 
+        // System audio is best-effort on resume: if it can't restart (e.g. the
+        // Screen Recording grant was revoked while paused), keep the mic running
+        // and surface the problem via the banner rather than tearing the whole
+        // session back down — otherwise the user is stuck unable to resume at
+        // all. Mirrors the mic-only fallback elsewhere in the pipeline.
         if shouldCaptureSystemAudio {
             do {
                 try await systemCapture.startCapture()
             } catch {
-                micCapture.stopCapture()
-                throw AudioSessionError.systemCaptureFailure(underlying: error)
+                Log.audio.error("Failed to restart system audio on resume: \(error.localizedDescription, privacy: .private)")
+                onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
             }
         }
 

@@ -396,6 +396,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         do {
             try await appState.resumeSession()
         } catch {
+            // Surface to the banner — otherwise the user clicks Resume, nothing
+            // visibly happens, and the session sits paused with no explanation.
+            appState.lastError = "Couldn't resume recording: \(error.localizedDescription)"
             Log.app.error("Failed to resume recording: \(error.localizedDescription, privacy: .private)")
         }
     }
