@@ -175,9 +175,12 @@ final class TaskListViewModel: ObservableObject {
                 let ra = Self.priorityRank(a.priority), rb = Self.priorityRank(b.priority)
                 return ra != rb ? ra < rb : a.sortOrder < b.sortOrder
             case .title:
-                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+                // Tiebreak equal titles by sortOrder so rows don't shuffle
+                // unpredictably across re-sorts (the sort isn't stable).
+                let cmp = a.title.localizedCaseInsensitiveCompare(b.title)
+                return cmp == .orderedSame ? a.sortOrder < b.sortOrder : cmp == .orderedAscending
             case .created:
-                return a.createdAt < b.createdAt
+                return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.sortOrder < b.sortOrder
             }
         }
     }
