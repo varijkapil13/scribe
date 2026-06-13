@@ -65,7 +65,16 @@ struct ExportManager {
         do {
             try content.write(to: url, atomically: true, encoding: .utf8)
         } catch {
+            // Don't let a failed write look like a successful export. Tell the
+            // user why (disk full / permission denied / read-only volume) so the
+            // sheet closing isn't mistaken for "saved".
             NSLog("ExportManager: failed to write file – \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "Export Failed"
+            alert.informativeText = "Scribe couldn't save the file to \(url.lastPathComponent).\n\n\(error.localizedDescription)"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
         }
     }
 }

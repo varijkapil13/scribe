@@ -81,6 +81,15 @@ final class NoteDetailViewModel: ObservableObject {
 
     func markDirty() { isDirty = true }
 
+    /// Flushes a pending autosave immediately. The autosave runs on a 1.5s
+    /// debounce; when the note view goes away (switching notes, closing the
+    /// window) the debounce timer is cancelled with the view model, so edits
+    /// made inside that window would be lost. Call this on `.onDisappear` to
+    /// commit them synchronously first.
+    func flushPendingSave() {
+        if isDirty { save() }
+    }
+
     private static let transcriptVMCacheCap = 5
     private var transcriptVMCacheOrder: [String] = []
 

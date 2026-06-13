@@ -151,6 +151,11 @@ struct NoteDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .onDisappear {
+            // Commit any edit still inside the autosave debounce window before
+            // this view (and its view model) is torn down on a note switch.
+            vm.flushPendingSave()
+        }
         .onChange(of: selectedSessionId) { _, newValue in
             if let updated = SessionSelectionReducer.userCollapsedFromTransition(
                 newSelection: newValue,

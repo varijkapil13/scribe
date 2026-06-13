@@ -76,7 +76,7 @@ final class NoteStore: @unchecked Sendable {
             try Self.upsertFTS(database, noteId: note.id, title: title, body: body)
             return note
         }
-        mirrorToDisk(note: created, tags: tags)
+        try mirrorToDisk(note: created, tags: tags)
         return created
     }
 
@@ -114,7 +114,7 @@ final class NoteStore: @unchecked Sendable {
             try Self.upsertFTS(database, noteId: note.id, title: mutable.title, body: note.body)
             return mutable
         }
-        mirrorToDisk(note: mirrored, tags: tags)
+        try mirrorToDisk(note: mirrored, tags: tags)
     }
 
     func deleteNote(id: String) throws {
@@ -214,7 +214,7 @@ final class NoteStore: @unchecked Sendable {
         // rapid calls (e.g. double .onAppear) would create two notes for the
         // same date. The UNIQUE constraint on dailyDate enforces uniqueness at
         // the DB level; this write block makes the check-then-insert atomic.
-        let note = try db.write { database -> Note in
+        let (note, didCreate) = try db.write { database -> (Note, Bool) in
             try database.execute(
                 sql: """
                     INSERT OR IGNORE INTO notes
@@ -223,15 +223,25 @@ final class NoteStore: @unchecked Sendable {
                     """,
                 arguments: [UUID().uuidString, title, Date(), Date(), key]
             )
+            // INSERT OR IGNORE is a no-op when today's note already exists;
+            // `changesCount` tells us whether we actually created a row.
+            let created = database.changesCount > 0
             guard let note = try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne(database) else {
                 throw NoteStoreError.dailyNoteNotFound(key)
             }
-            // Seed FTS for the new daily note with the title only — body
-            // is empty at creation time.
-            try Self.upsertFTS(database, noteId: note.id, title: title, body: "")
-            return note
+            if created {
+                // Seed FTS for the new daily note with the title only — body
+                // is empty at creation time.
+                try Self.upsertFTS(database, noteId: note.id, title: title, body: "")
+            }
+            return (note, created)
         }
-        mirrorToDisk(note: note, tags: [])
+        // Only mirror on actual creation. The fetched `note` carries an empty
+        // body placeholder (bodies live on disk, not in the DB), so mirroring
+        // an *existing* daily note here would clobber its real on-disk content.
+        if didCreate {
+            try mirrorToDisk(note: note, tags: [])
+        }
         return note
     }
 
@@ -431,8 +441,13 @@ final class NoteStore: @unchecked Sendable {
         var written = 0
         for note in inDb where !onDisk.contains(note.id) {
             let tags = (try? self.tags(for: note.id)) ?? []
-            mirrorToDisk(note: note, tags: tags)
-            written += 1
+            // Tolerant: one unwritable note shouldn't abort the whole sweep.
+            do {
+                try mirrorToDisk(note: note, tags: tags)
+                written += 1
+            } catch {
+                Log.storage.error("migrateNotesToDisk: skipped \(note.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
         return written
     }
@@ -440,10 +455,14 @@ final class NoteStore: @unchecked Sendable {
     // MARK: - Disk mirror (Phase 5 — Slice 2)
 
     /// Builds the on-disk representation of a note and writes it through
-    /// `fileStore`. Failures are logged but never thrown — Slice 2 keeps
-    /// SQLite as the source of truth, so a transient disk error must not
-    /// roll back a successful DB write. Slice 4 will flip the polarity.
-    private func mirrorToDisk(note: Note, tags: [String]) {
+    /// `fileStore`. The `.md` file is the source of truth for the body (the
+    /// `notes.body` column was dropped in v13 — SQLite keeps only a short
+    /// `bodyExcerpt`), so a failed write here means the body is *lost*. The
+    /// error is therefore propagated to the caller (which surfaces it to the
+    /// user) rather than swallowed. Callers MUST pass a `note` whose `.body`
+    /// holds the real body (e.g. from `fetchNote`), never a bare DB-decoded
+    /// note whose `.body` is the empty placeholder.
+    private func mirrorToDisk(note: Note, tags: [String]) throws {
         guard let fileStore else { return }
         // Preserve any unknown frontmatter keys already on disk (per-note
         // `font:`, external tools' `aliases:`/`cover:`, …). We rebuild the
@@ -468,14 +487,15 @@ final class NoteStore: @unchecked Sendable {
             ),
             body: note.body
         )
+        // Stamp the write before it lands so the vault watcher suppresses
+        // the reconcile this FSEvents change would otherwise trigger —
+        // the DB/index is already current in-process.
+        VaultWriteGuard.shared.recordSelfWrite()
         do {
-            // Stamp the write before it lands so the vault watcher suppresses
-            // the reconcile this FSEvents change would otherwise trigger —
-            // the DB/index is already current in-process.
-            VaultWriteGuard.shared.recordSelfWrite()
             try fileStore.write(file)
         } catch {
             Log.storage.error("NoteStore.mirrorToDisk failed for \(note.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
 
