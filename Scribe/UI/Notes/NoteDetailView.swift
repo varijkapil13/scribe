@@ -94,6 +94,18 @@ struct NoteDetailView: View {
                             .accessibilityLabel("Document outline")
                         }
                     }
+
+                    // Inline tags — same token field the Tasks inspector uses,
+                    // so a note's tags are visible and editable where they live
+                    // (they were previously stored + sidebar-navigable but had
+                    // no UI in the editor).
+                    TagTokenField(
+                        tags: vm.tags,
+                        suggestions: { vm.tagSuggestions($0) },
+                        onAdd: { vm.addTag($0) },
+                        onRemove: { vm.removeTag($0) }
+                    )
+                    .accessibilityLabel("Note tags")
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xl)

@@ -116,4 +116,51 @@ final class NoteDetailViewModelTests: XCTestCase {
         XCTAssertEqual(inner.meetingSummary?.summary, "Discussed scope and risks.")
         XCTAssertEqual(inner.meetingSummary?.keyDecisions, ["Use Swift 6"])
     }
+
+    // MARK: - Tags (Slice C1)
+
+    private func makeVM(_ note: Note) -> NoteDetailViewModel {
+        NoteDetailViewModel(note: note, store: notes, transcriptStore: transcripts, onNavigate: { _ in })
+    }
+
+    func testAddTagNormalisesAndDedupes() async throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("  #Work ")   // trims, strips '#', lowercases → "work"
+        vm.addTag("work")       // duplicate after normalisation → ignored
+        vm.addTag("   ")        // blank → ignored
+        XCTAssertEqual(vm.tags, ["work"])
+        XCTAssertTrue(vm.isDirty)
+    }
+
+    func testRemoveTag() async throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("alpha")
+        vm.addTag("beta")
+        vm.removeTag("alpha")
+        XCTAssertEqual(vm.tags, ["beta"])
+    }
+
+    func testSavePersistsTags() async throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("project")
+        vm.save()
+        XCTAssertFalse(vm.isDirty, "save() should clear the dirty flag on success")
+        XCTAssertEqual(try notes.tags(for: note.id), ["project"])
+    }
+
+    func testTagSuggestionsExcludeAppliedAndRankPrefix() async throws {
+        // Seed the store's tag vocabulary.
+        _ = try notes.createNote(title: "A", body: "", tags: ["work", "workout", "personal"])
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("work")   // applied → must be excluded from suggestions
+
+        let suggestions = vm.tagSuggestions("wor")
+        XCTAssertFalse(suggestions.contains("work"), "applied tag must be excluded")
+        XCTAssertTrue(suggestions.contains("workout"), "prefix match must be suggested")
+        XCTAssertFalse(suggestions.contains("personal"), "non-matching tag must be excluded")
+    }
 }

@@ -81,6 +81,43 @@ final class NoteDetailViewModel: ObservableObject {
 
     func markDirty() { isDirty = true }
 
+    // MARK: - Tags
+
+    /// Suggestions for the inline tag token field: known note tags matching
+    /// `prefix` (prefix hits first, then substring), excluding already-applied
+    /// ones. Mirrors the Tasks inspector's autocomplete behaviour.
+    func tagSuggestions(_ prefix: String) -> [String] {
+        let applied = Set(tags)
+        let pool = ((try? store.allNoteTags()) ?? []).filter { !applied.contains($0) }
+        let q = prefix.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return pool }
+        let prefixHits = pool.filter { $0.hasPrefix(q) }
+        let substringHits = pool.filter { !$0.hasPrefix(q) && $0.contains(q) }
+        return prefixHits + substringHits
+    }
+
+    /// Adds a normalised tag (trimmed, leading '#' stripped, lowercased — to
+    /// match `NoteStore.normalizeTags` so the live chips equal what's saved).
+    /// No-op for blanks or duplicates. Marks dirty so autosave persists it.
+    func addTag(_ raw: String) {
+        let normalised = Self.normalizeTag(raw)
+        guard !normalised.isEmpty, !tags.contains(normalised) else { return }
+        tags.append(normalised)
+        markDirty()
+    }
+
+    func removeTag(_ tag: String) {
+        guard let idx = tags.firstIndex(of: tag) else { return }
+        tags.remove(at: idx)
+        markDirty()
+    }
+
+    private static func normalizeTag(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") { s.removeFirst() }
+        return s.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
     /// Flushes a pending autosave immediately. The autosave runs on a 1.5s
     /// debounce; when the note view goes away (switching notes, closing the
     /// window) the debounce timer is cancelled with the view model, so edits

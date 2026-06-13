@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    # Run on the default branch and on Claude working branches so every push is
+    # compiled + tested on a real macOS 26 toolchain (the dev container has no
+    # Swift toolchain and the app is Apple-framework-only, so CI is the only
+    # place these actually build).
+    branches: [master, "claude/**"]
   pull_request:
-  # Allow manual runs from the Actions tab.
   workflow_dispatch:
 
 concurrency:
@@ -12,10 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Logic-only unit tests via SwiftPM. These never boot the audio/recording
-  # stack, so they run headless on a CI runner (see project.yml note).
+  # Logic-only unit tests via SwiftPM + line-coverage summary. These never boot
+  # the audio/recording stack, so they run headless (see project.yml note).
   test:
-    name: swift test
+    name: swift test + coverage
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -33,12 +36,38 @@ jobs:
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}
           restore-keys: ${{ runner.os }}-spm-
 
-      - name: Run tests
-        run: swift test --parallel
+      - name: Run tests with coverage
+        run: swift test --parallel --enable-code-coverage
+
+      - name: Coverage summary
+        # Best-effort: print total line coverage for the app sources (excluding
+        # tests + SwiftPM build dir). Non-fatal so a path difference across
+        # toolchains can't red the build. Tighten into a hard threshold once the
+        # CI-measured baseline is known.
+        run: |
+          set -x
+          PROF=$(find .build -name '*.profdata' | head -1)
+          XCTEST=$(find .build -name '*.xctest' -type d | head -1)
+          if [ -n "$PROF" ] && [ -n "$XCTEST" ]; then
+            BIN="$XCTEST/Contents/MacOS/$(basename "$XCTEST" .xctest)"
+            xcrun llvm-cov report "$BIN" -instr-profile "$PROF" \
+              -ignore-filename-regex='(ScribeTests|\.build)/' \
+              | tee coverage.txt | tail -1
+          else
+            echo "coverage artifacts not found (prof=$PROF xctest=$XCTEST)"
+          fi || true
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.txt
+          if-no-files-found: ignore
 
   # Compile the shippable app target from the xcodegen-generated project.
-  # Code signing is disabled so no certificates are needed in CI — this only
-  # verifies the app builds, not that it's distributable.
+  # Code signing is disabled so no certificates are needed in CI — this is the
+  # authoritative "does it build?" gate.
   build:
     name: build app (unsigned)
     runs-on: macos-26
@@ -65,3 +94,44 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+  # End-to-end XCUITests driving the built app through its accessibility tree.
+  # Marked non-blocking for now: launching a UI-test runner needs the app to be
+  # (ad-hoc) signed, which isn't wired on CI yet. The job still compiles the UI
+  # test target and surfaces results/artifacts; promote to a required check once
+  # ad-hoc signing is confirmed working on the runner.
+  ui-test:
+    name: XCUITests (macOS)
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Run UI tests
+        run: |
+          xcodebuild test \
+            -project Scribe.xcodeproj \
+            -scheme Scribe \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath TestResults.xcresult
+
+      - name: Upload UI test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore

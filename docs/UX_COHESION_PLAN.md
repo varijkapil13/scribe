@@ -29,23 +29,22 @@ behave identically everywhere.
 - One PR per Phase (or per Slice for the larger ones), each green on CI before
   merge. Keep slices independently shippable.
 
-## Decisions needed (product forks)
+## Decisions made (2026-06-13)
 
-These change the *shape* of later phases. Recommended defaults are in **bold**;
-Phase E in particular is blocked until D-1/D-2 are settled.
+Settled with the product owner; Phase E is now unblocked.
 
-- **D-1 · Canonical day view.** Is the day-planning home `TodayView` (note +
-  tasks split) or the `TaskCalendar`? **Default: `TodayView` is the home; the
-  two month-grid calendars become a single shared component scoped by surface.**
-- **D-2 · Where "Today" lives.** Keep it under the Capture surface, or promote
-  it to a top-level/cross-surface home above the switcher? **Default: promote to
-  a top-level "Today" entry that's surface-agnostic.**
-- **D-3 · Graph & Task Calendar placement.** Stay in the footer or move into a
-  sidebar "Views" group? **Default: move into sidebar "Views".**
-- **D-4 · Post-stop behavior.** After Stop, auto-navigate to the transcript, or
-  show a non-intrusive "View recording →" affordance? **Default: a transient
-  inline affordance (don't yank focus if the user kept taking notes); auto-nav
-  only when the user was on the now-empty live view.**
+- **D-1 · Canonical day view → `TodayView` is home.** The two month-grid
+  calendars (`NoteCalendarView`, `TaskCalendarView`) collapse into a single
+  shared component scoped by content.
+- **D-2 · "Today" placement → top-level, surface-agnostic.** Promote to a
+  top-level entry independent of the Capture/Notes/Tasks switcher; drop the
+  redundant `NotesFilter.today`.
+- **D-3 · Graph & Task Calendar → sidebar "Views" group.** Out of the footer
+  and into a labelled, discoverable group.
+- **D-4 · Post-stop → smart affordance + conditional nav.** Show a transient
+  "Recording saved · View →" affordance; auto-navigate to the transcript only
+  when the user was on the now-empty live view, never stealing focus from a
+  note being written.
 
 ---
 

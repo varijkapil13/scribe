@@ -79,6 +79,26 @@ final class ScribeUITests: XCTestCase {
                       "Note editor did not open after running \"New Note\"")
     }
 
+    // MARK: - (b2) Note editor exposes inline tags (Slice C1)
+
+    /// Notes used to store tags with no editor UI. The note header now hosts the
+    /// same `TagTokenField` as the Tasks inspector; its entry field carries
+    /// `.accessibilityLabel("Add tag")`.
+    func testNoteEditorShowsInlineTagField() {
+        let app = launchApp()
+        XCTAssertTrue(mainWindow(app).waitForExistence(timeout: 10))
+
+        _ = openCommandPalette(app)
+        let newNote = app.buttons["New Note"]
+        XCTAssertTrue(newNote.waitForExistence(timeout: 5),
+                      "\"New Note\" command not found in the palette")
+        newNote.click()
+
+        let tagField = app.textFields["Add tag"]
+        XCTAssertTrue(tagField.waitForExistence(timeout: 5),
+                      "Note editor did not show the inline tag field")
+    }
+
     // MARK: - (c) ⌘1 / ⌘2 / ⌘3 surface switching
 
     func testSurfaceSwitchingShortcuts() {
