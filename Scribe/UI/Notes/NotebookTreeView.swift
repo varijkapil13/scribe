@@ -239,6 +239,7 @@ private struct NotebookTreeRow: View {
         let plural = count == 1 ? "note" : "notes"
         return "The folder will be deleted. Its \(count) \(plural) won’t be deleted — they’ll move to your Inbox."
     }
+}
 
 // MARK: - Note leaf row
 
