@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  iOS / iPadOS entitlements. Unlike the macOS target, the iOS App Sandbox
+	  is implicit (no app-sandbox key) and the recording-related entitlements
+	  (audio-input, user-selected files, screen capture) are deliberately
+	  ABSENT — recording is macOS-only.
+
+	  This file enables iCloud sync (see docs/ICLOUD-MULTIPLATFORM-DESIGN.md):
+	    • CloudDocuments + ubiquity container → the note vault syncs as .md
+	      files via iCloud Drive (stays Obsidian-compatible, visible in Files).
+	    • CloudKit → the tasks/projects sync engine (no file representation).
+	    • aps-environment → remote-change push so other devices pull promptly.
+
+	  REQUIRES the Apple Developer account to provision the
+	  `iCloud.com.varij.scribe` container + push before a signed build. It is
+	  committed ready-to-wire; CI builds unsigned so it isn't applied there yet.
+	-->
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.com.varij.scribe</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+		<string>CloudDocuments</string>
+	</array>
+	<key>com.apple.developer.ubiquity-container-identifiers</key>
+	<array>
+		<string>iCloud.com.varij.scribe</string>
+	</array>
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
