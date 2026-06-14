@@ -66,16 +66,29 @@ targets:
         DEVELOPMENT_TEAM: U8A3QH6Y84
         CODE_SIGN_STYLE: Automatic
         TEST_TARGET_NAME: Scribe
-  # iOS / iPadOS app target (Milestone 0 foundation). A standalone SwiftUI
-  # stub for now — the real notes+tasks UI arrives in Milestone 1. NO audio /
-  # ScreenCaptureKit / KeyboardShortcuts is part of this target by design;
-  # recording is a macOS-only feature. Shared logic will be linked from the
-  # ScribeCore package once extracted (see docs/IOS-MIGRATION-PLAN.md).
+  # iOS / iPadOS app target. The notes + tasks client (no recording — that's
+  # macOS-only). Compiles the portable core directly (multiplatform target, not
+  # a separate ScribeCore package — see docs/ICLOUD-MULTIPLATFORM-DESIGN.md):
+  # Storage, Tasks, the meeting/entity data models, and shared logging. The two
+  # FSEvents-bound vault files (NoteVaultWatcher, VaultCoordinator) are excluded
+  # — they're macOS-only and nothing else in Storage references them in code.
   ScribeiOS:
     type: application
     platform: iOS
     sources:
       - path: ScribeiOS/
+      - path: Scribe/Storage
+        excludes:
+          - NoteVaultWatcher.swift   # CoreServices / FSEvents — macOS only
+          - VaultCoordinator.swift   # owns the watcher; imports SwiftUI chrome
+      - path: Scribe/Tasks            # RecurrenceRule/Engine, QuickAddParser, reminders — all portable
+      - path: Scribe/Utilities/Log.swift
+      - path: Scribe/Intelligence/MeetingModels.swift
+      - path: Scribe/Intelligence/TranscriptAnalyzer.swift   # ExtractedEntity + NaturalLanguage (iOS-ok)
+      - path: Scribe/App/AppLaunchEnvironment.swift
+    dependencies:
+      - package: GRDB.swift
+        product: GRDB
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
