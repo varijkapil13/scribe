@@ -18,6 +18,7 @@ final class SyncReconcilerTests: XCTestCase {
             "local-only": side(t0),                 // push upsert
             "local-newer": side(t1),                // push upsert (local wins)
             "local-gone": side(t1, deleted: true),  // push delete (local tombstone wins)
+            "remote-gone": side(t0),                // we have it; remote tombstone is newer → apply delete
             "agree": side(t0)                        // tie → no change
         ]
         let remote: [String: SyncMergePolicy.Side] = [
