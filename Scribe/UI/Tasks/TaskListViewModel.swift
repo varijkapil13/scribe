@@ -175,9 +175,12 @@ final class TaskListViewModel: ObservableObject {
                 let ra = Self.priorityRank(a.priority), rb = Self.priorityRank(b.priority)
                 return ra != rb ? ra < rb : a.sortOrder < b.sortOrder
             case .title:
-                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+                // Tiebreak equal titles by sortOrder so rows don't shuffle
+                // unpredictably across re-sorts (the sort isn't stable).
+                let cmp = a.title.localizedCaseInsensitiveCompare(b.title)
+                return cmp == .orderedSame ? a.sortOrder < b.sortOrder : cmp == .orderedAscending
             case .created:
-                return a.createdAt < b.createdAt
+                return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.sortOrder < b.sortOrder
             }
         }
     }
@@ -394,12 +397,22 @@ final class TaskListViewModel: ObservableObject {
 
     /// Cancels ("Won't do") or restores a task.
     func cancelTask(_ task: TodoTask) {
-        do { try store.cancelTask(id: task.id) }
+        do {
+            try store.cancelTask(id: task.id)
+            // A cancelled task shouldn't still fire its reminder.
+            Task { await reminderScheduler.cancel(taskId: task.id) }
+        }
         catch { Log.ui.error("TaskListViewModel.cancelTask failed: \(error.localizedDescription, privacy: .public)") }
     }
 
     func uncancelTask(_ task: TodoTask) {
-        do { try store.uncancelTask(id: task.id) }
+        do {
+            try store.uncancelTask(id: task.id)
+            // Restoring re-arms the reminder if it still has a future remindAt.
+            if let refreshed = try store.fetchTask(id: task.id) {
+                Task { await reminderScheduler.schedule(refreshed) }
+            }
+        }
         catch { Log.ui.error("TaskListViewModel.uncancelTask failed: \(error.localizedDescription, privacy: .public)") }
     }
 
@@ -430,8 +443,34 @@ final class TaskListViewModel: ObservableObject {
         exitSelectMode()
     }
 
-    func batchComplete()                          { runBatch { _ = try store.completeTasks(ids: $0) } }
-    func batchDelete()                            { runBatch { _ = try store.deleteTasks(ids: $0) } }
+    func batchComplete() {
+        // Capture ids before runBatch clears the selection, so reminders can
+        // be re-armed (recurring) or cancelled (completed) like the single-task
+        // toggle path does — otherwise batch-completed tasks keep firing.
+        let ids = Array(selection)
+        runBatch { _ = try store.completeTasks(ids: $0) }
+        for id in ids {
+            Task { @MainActor in
+                guard let refreshed = try? store.fetchTask(id: id) else { return }
+                if refreshed.isCompleted {
+                    await reminderScheduler.cancel(taskId: id)
+                } else {
+                    await reminderScheduler.schedule(refreshed)
+                }
+            }
+        }
+    }
+
+    func batchDelete() {
+        // Capture ids before the selection is cleared so we can cancel each
+        // task's pending reminder — the single-task delete already does this.
+        let ids = Array(selection)
+        runBatch { _ = try store.deleteTasks(ids: $0) }
+        for id in ids {
+            Task { await reminderScheduler.cancel(taskId: id) }
+        }
+    }
+
     func batchMove(toProject id: String?)         { runBatch { try store.moveTasks(ids: $0, toProject: id) } }
     func batchReschedule(to date: Date?)          { runBatch { try store.rescheduleTasks(ids: $0, to: date) } }
     func batchPriority(_ p: TodoTask.Priority?)   { runBatch { try store.setPriority(p, forTasks: $0) } }

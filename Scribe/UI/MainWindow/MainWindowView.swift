@@ -85,6 +85,7 @@ struct MainWindowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openSettings) private var openSettings
     @State private var projectEditorMode: ProjectEditorMode?
+    @State private var projectPendingDelete: Project?
     @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
     @State private var notesExpanded: Bool = true
@@ -361,10 +362,7 @@ struct MainWindowView: View {
                                     Label("Edit…", systemImage: "pencil")
                                 }
                                 Button(role: .destructive) {
-                                    projectsViewModel.delete(id: project.id)
-                                    if case .tasks(.project(let id)) = nav.current, id == project.id {
-                                        nav.navigate(to: .tasks(.inbox))
-                                    }
+                                    projectPendingDelete = project
                                 } label: {
                                     Label("Delete project", systemImage: "trash")
                                 }
@@ -509,6 +507,26 @@ struct MainWindowView: View {
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search…")
         .navigationTitle("Scribe")
+        .confirmationDialog(
+            projectPendingDelete.map { "Delete “\($0.name)”?" } ?? "Delete project?",
+            isPresented: Binding(
+                get: { projectPendingDelete != nil },
+                set: { if !$0 { projectPendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Project", role: .destructive) {
+                guard let project = projectPendingDelete else { return }
+                projectsViewModel.delete(id: project.id)
+                if case .tasks(.project(let id)) = nav.current, id == project.id {
+                    nav.navigate(to: .tasks(.inbox))
+                }
+                projectPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) { projectPendingDelete = nil }
+        } message: {
+            Text("The project will be deleted. Its tasks won’t be deleted — they’ll move to your Inbox.")
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             surfaceSwitcher
         }

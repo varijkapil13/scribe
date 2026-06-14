@@ -24,6 +24,9 @@ struct LiveTranscriptFeed: View {
     /// Drives the empty/listening state copy. When `nil` the feed simply shows
     /// nothing while empty (the compact pane has its own header).
     var isTranscribing: Bool = false
+    /// When the session is paused, the empty-state copy says so instead of
+    /// claiming we're listening — nothing new will arrive until resume.
+    var isPaused: Bool = false
     var isDownloadingModel: Bool = false
     /// When true, the comfortable variant shows the full listening/empty card.
     var showsListeningState: Bool = true
@@ -198,11 +201,11 @@ struct LiveTranscriptFeed: View {
                 ProgressView()
                     .controlSize(.large)
             } else {
-                Image(systemName: isTranscribing ? "waveform" : "mic.slash")
+                Image(systemName: listeningIcon)
                     .font(.system(size: 34, weight: .light))
                     .foregroundStyle(.tertiary)
                     .symbolRenderingMode(.hierarchical)
-                    .symbolEffect(.variableColor.iterative, isActive: isTranscribing && !reduceMotion)
+                    .symbolEffect(.variableColor.iterative, isActive: isTranscribing && !isPaused && !reduceMotion)
             }
 
             VStack(spacing: DesignTokens.Spacing.xs) {
@@ -223,8 +226,14 @@ struct LiveTranscriptFeed: View {
         .accessibilityLabel("\(listeningHeadline). \(listeningSubtitle)")
     }
 
+    private var listeningIcon: String {
+        if isPaused { return "pause.fill" }
+        return isTranscribing ? "waveform" : "mic.slash"
+    }
+
     private var listeningHeadline: String {
         if isDownloadingModel { return "Downloading speech model…" }
+        if isPaused { return "Paused" }
         if isTranscribing { return "Listening…" }
         return "Ready to record"
     }
@@ -232,6 +241,9 @@ struct LiveTranscriptFeed: View {
     private var listeningSubtitle: String {
         if isDownloadingModel {
             return "First-time setup for this language. This usually takes under a minute."
+        }
+        if isPaused {
+            return "Recording is paused. Resume to continue transcribing."
         }
         if isTranscribing {
             return "Transcribed segments will appear here as you speak."

@@ -425,9 +425,18 @@ struct MarkdownEditorView: NSViewRepresentable {
                         return line
                     }
                 } else {
+                    // Renumber the whole block sequentially. Strip any existing
+                    // "N. " prefix first so a partially-numbered selection (e.g.
+                    // "5. a" / "b") becomes "1. a" / "2. b" rather than keeping
+                    // the stale numbers and producing a gapped sequence.
                     newLines = lines.enumerated().map { i, line -> String in
-                        if line.range(of: olPattern, options: .regularExpression) != nil { return line }
-                        return "\(i + 1). \(line)"
+                        let content: String
+                        if let r = line.range(of: olPattern, options: .regularExpression) {
+                            content = String(line[r.upperBound...])
+                        } else {
+                            content = line
+                        }
+                        return "\(i + 1). \(content)"
                     }
                 }
                 let newBlock = newLines.joined(separator: "\n") + "\n"

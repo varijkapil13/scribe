@@ -60,6 +60,7 @@ private struct NotebookTreeRow: View {
     @State private var noteTitle = ""
     @State private var isCreatingChild = false
     @State private var childName = ""
+    @State private var showDeleteFolderConfirm = false
 
     private var hasChildren: Bool {
         notebooks.contains { $0.parentId == notebook.id } ||
@@ -183,6 +184,22 @@ private struct NotebookTreeRow: View {
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .contextMenu { contextMenuItems }
+        .confirmationDialog(
+            "Delete “\(notebook.name)”?",
+            isPresented: $showDeleteFolderConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Folder", role: .destructive) {
+                if case .note(let id) = selection,
+                   notes.first(where: { $0.id == id })?.notebookId == notebook.id {
+                    selection = .notes(.all)
+                }
+                try? NoteStore.shared.deleteNotebook(id: notebook.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(deleteFolderMessage)
+        }
     }
 
     @ViewBuilder
@@ -210,14 +227,17 @@ private struct NotebookTreeRow: View {
         }
         Divider()
         Button(role: .destructive) {
-            if case .note(let id) = selection,
-               notes.first(where: { $0.id == id })?.notebookId == notebook.id {
-                selection = .notes(.all)
-            }
-            try? NoteStore.shared.deleteNotebook(id: notebook.id)
+            showDeleteFolderConfirm = true
         } label: {
             Label("Delete Folder", systemImage: "trash")
         }
+    }
+
+    private var deleteFolderMessage: String {
+        let count = childNotes.count
+        guard count > 0 else { return "This empty folder will be deleted." }
+        let plural = count == 1 ? "note" : "notes"
+        return "The folder will be deleted. Its \(count) \(plural) won’t be deleted — they’ll move to your Inbox."
     }
 }
 
@@ -226,6 +246,9 @@ private struct NotebookTreeRow: View {
 struct NoteLeafRow: View {
     let note: Note
     @Binding var selection: MainSelection?
+
+    @State private var showDeleteConfirm = false
+    @State private var sessionCount = 0
 
     private var isSelected: Bool {
         if case .note(let id) = selection { return id == note.id }
@@ -255,11 +278,34 @@ struct NoteLeafRow: View {
             }
             Divider()
             Button(role: .destructive) {
-                if isSelected { selection = .notes(.all) }
-                try? NoteStore.shared.deleteNote(id: note.id)
+                // Deleting a note cascades to its recordings; confirm first
+                // and tell the user how many will go with it.
+                sessionCount = (try? NoteStore.shared.sessionCount(forNoteId: note.id)) ?? 0
+                showDeleteConfirm = true
             } label: {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .confirmationDialog(
+            "Delete “\(note.title.isEmpty ? "Untitled" : note.title)”?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if isSelected { selection = .notes(.all) }
+                try? NoteStore.shared.deleteNote(id: note.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(deleteMessage)
+        }
+    }
+
+    private var deleteMessage: String {
+        if sessionCount > 0 {
+            let plural = sessionCount == 1 ? "recording" : "recordings"
+            return "This note and its \(sessionCount) \(plural) — including transcripts, summaries, and action items — will be permanently deleted. Tasks you created from it are kept."
+        }
+        return "This note will be permanently deleted. This can’t be undone."
     }
 }

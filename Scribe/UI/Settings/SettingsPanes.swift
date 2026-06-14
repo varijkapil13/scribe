@@ -369,6 +369,8 @@ private struct StorageSettingsPane: View {
     @AppStorage("retainAudio") var retainAudio: Bool = false
     @AppStorage("storageLocation") var storageLocation: String = ""
     @State private var showDeleteConfirmation: Bool = false
+    @State private var deleteError: String?
+    @State private var didDelete: Bool = false
 
     var body: some View {
         Form {
@@ -407,7 +409,7 @@ private struct StorageSettingsPane: View {
                     Button("Delete All Data", role: .destructive, action: deleteAllData)
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This permanently removes every session, segment, summary, and action item. This action cannot be undone.")
+                    Text("This permanently removes every session, segment, summary, and action item. Your notes are kept. This action cannot be undone.")
                 }
 
                 Text("Scribe stores data at ~/Library/Application Support/Scribe/.")
@@ -416,6 +418,19 @@ private struct StorageSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .alert("Couldn’t Delete Data", isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteError ?? "")
+        }
+        .alert("Transcripts Deleted", isPresented: $didDelete) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("All sessions, segments, summaries, and action items were removed.")
+        }
     }
 
     private func chooseStorageLocation() {
@@ -430,7 +445,12 @@ private struct StorageSettingsPane: View {
     }
 
     private func deleteAllData() {
-        try? TranscriptStore().deleteAllData()
+        do {
+            try TranscriptStore().deleteAllData()
+            didDelete = true
+        } catch {
+            deleteError = error.localizedDescription
+        }
     }
 }
 

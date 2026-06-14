@@ -8,6 +8,7 @@ final class NoteDetailViewModelTests: XCTestCase {
     private var dbm: DatabaseManager!
     private var notes: NoteStore!
     private var transcripts: TranscriptStore!
+    private var tasks: TaskStore!
     private var cancellables: Set<AnyCancellable> = []
 
     override func setUp() async throws {
@@ -15,26 +16,36 @@ final class NoteDetailViewModelTests: XCTestCase {
         dbm = try DatabaseManager(path: ":memory:")
         notes = NoteStore(databaseManager: dbm)
         transcripts = TranscriptStore(databaseManager: dbm)
+        tasks = TaskStore(databaseManager: dbm)
     }
 
     override func tearDown() async throws {
         cancellables.removeAll()
         notes = nil
         transcripts = nil
+        tasks = nil
         dbm = nil
         try await super.tearDown()
+    }
+
+    /// Builds a fully-injected VM. Crucially passes `taskStore: tasks` so the
+    /// VM never instantiates `TaskStore.shared` (which opens the on-disk
+    /// `DatabaseManager.shared`) — keeping the test hermetic.
+    private func makeVM(_ note: Note) -> NoteDetailViewModel {
+        NoteDetailViewModel(
+            note: note,
+            store: notes,
+            transcriptStore: transcripts,
+            taskStore: tasks,
+            onNavigate: { _ in }
+        )
     }
 
     func testSessionsExposesBoundSessions() async throws {
         let note = try notes.createNote(title: "N", body: "")
         let session = try transcripts.createSession(title: "S", noteId: note.id)
 
-        let vm = NoteDetailViewModel(
-            note: note,
-            store: notes,
-            transcriptStore: transcripts,
-            onNavigate: { _ in }
-        )
+        let vm = makeVM(note)
 
         let expectation = self.expectation(description: "sessions delivered")
         vm.$sessions
@@ -52,12 +63,7 @@ final class NoteDetailViewModelTests: XCTestCase {
 
     func testSessionsEmptyWhenNoneBound() async throws {
         let note = try notes.createNote(title: "N", body: "")
-        let vm = NoteDetailViewModel(
-            note: note,
-            store: notes,
-            transcriptStore: transcripts,
-            onNavigate: { _ in }
-        )
+        let vm = makeVM(note)
 
         // Allow at least one observation emission so we know the publisher fired
         // (and stayed empty).
@@ -87,12 +93,7 @@ final class NoteDetailViewModelTests: XCTestCase {
         try transcripts.saveSummary(summary)
 
         // Build the VM with injected stores.
-        let vm = NoteDetailViewModel(
-            note: note,
-            store: notes,
-            transcriptStore: transcripts,
-            onNavigate: { _ in }
-        )
+        let vm = makeVM(note)
 
         // Wait for the observation to deliver the bound session.
         let expectation = self.expectation(description: "sessions delivered")
@@ -115,5 +116,48 @@ final class NoteDetailViewModelTests: XCTestCase {
         XCTAssertNotNil(inner.meetingSummary, "Inner VM should see the summary persisted to the injected store")
         XCTAssertEqual(inner.meetingSummary?.summary, "Discussed scope and risks.")
         XCTAssertEqual(inner.meetingSummary?.keyDecisions, ["Use Swift 6"])
+    }
+
+    // MARK: - Tags (Slice C1)
+
+    func testAddTagNormalisesAndDedupes() async throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("  #Work ")   // trims, strips '#', lowercases → "work"
+        vm.addTag("work")       // duplicate after normalisation → ignored
+        vm.addTag("   ")        // blank → ignored
+        XCTAssertEqual(vm.tags, ["work"])
+        XCTAssertTrue(vm.isDirty)
+    }
+
+    func testRemoveTag() async throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("alpha")
+        vm.addTag("beta")
+        vm.removeTag("alpha")
+        XCTAssertEqual(vm.tags, ["beta"])
+    }
+
+    func testSavePersistsTags() async throws {
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("project")
+        vm.save()
+        XCTAssertFalse(vm.isDirty, "save() should clear the dirty flag on success")
+        XCTAssertEqual(try notes.tags(for: note.id), ["project"])
+    }
+
+    func testTagSuggestionsExcludeAppliedAndRankPrefix() async throws {
+        // Seed the store's tag vocabulary.
+        _ = try notes.createNote(title: "A", body: "", tags: ["work", "workout", "personal"])
+        let note = try notes.createNote(title: "N", body: "")
+        let vm = makeVM(note)
+        vm.addTag("work")   // applied → must be excluded from suggestions
+
+        let suggestions = vm.tagSuggestions("wor")
+        XCTAssertFalse(suggestions.contains("work"), "applied tag must be excluded")
+        XCTAssertTrue(suggestions.contains("workout"), "prefix match must be suggested")
+        XCTAssertFalse(suggestions.contains("personal"), "non-matching tag must be excluded")
     }
 }

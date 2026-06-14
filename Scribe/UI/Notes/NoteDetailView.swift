@@ -94,6 +94,18 @@ struct NoteDetailView: View {
                             .accessibilityLabel("Document outline")
                         }
                     }
+
+                    // Inline tags — same token field the Tasks inspector uses,
+                    // so a note's tags are visible and editable where they live
+                    // (they were previously stored + sidebar-navigable but had
+                    // no UI in the editor).
+                    TagTokenField(
+                        tags: vm.tags,
+                        suggestions: { vm.tagSuggestions($0) },
+                        onAdd: { vm.addTag($0) },
+                        onRemove: { vm.removeTag($0) }
+                    )
+                    .accessibilityLabel("Note tags")
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xl)
@@ -150,6 +162,11 @@ struct NoteDetailView: View {
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+        }
+        .onDisappear {
+            // Commit any edit still inside the autosave debounce window before
+            // this view (and its view model) is torn down on a note switch.
+            vm.flushPendingSave()
         }
         .onChange(of: selectedSessionId) { _, newValue in
             if let updated = SessionSelectionReducer.userCollapsedFromTransition(

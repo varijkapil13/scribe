@@ -38,20 +38,15 @@ struct NoteListView: View {
             Divider()
 
             if vm.filteredNotes.isEmpty {
-                VStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: vm.searchText.isEmpty ? "note.text" : "magnifyingglass")
-                        .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(.quaternary)
-                    Text(vm.searchText.isEmpty ? "No notes yet" : "No results")
-                        .font(DesignTokens.Typography.section)
-                        .foregroundStyle(.secondary)
-                    if vm.searchText.isEmpty {
-                        Text("Press ⌘N to create your first note.")
-                            .font(.callout)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Shared EmptyStateView (one component, one tone across the app)
+                // rather than a bespoke stack.
+                EmptyStateView(
+                    systemImage: vm.searchText.isEmpty ? "note.text" : "magnifyingglass",
+                    title: vm.searchText.isEmpty ? "No notes yet" : "No results",
+                    message: vm.searchText.isEmpty
+                        ? "Create a note with ⌘N, or record a meeting to start one automatically."
+                        : "No notes match “\(vm.searchText)”."
+                )
             } else {
                 List(vm.filteredNotes, selection: $selectedNoteId) { note in
                     NoteRowView(note: note)
