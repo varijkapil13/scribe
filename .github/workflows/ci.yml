@@ -99,13 +99,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-  # End-to-end XCUITests driving the built app through its accessibility tree.
-  # Marked non-blocking for now: launching a UI-test runner needs the app to be
-  # (ad-hoc) signed, which isn't wired on CI yet. The job still compiles the UI
-  # test target and surfaces results/artifacts; promote to a required check once
-  # ad-hoc signing is confirmed working on the runner.
+  # Compile the XCUITest target (app + UI tests) via build-for-testing. We do
+  # NOT run the tests on CI yet: launching the XCUITest runner needs the app
+  # ad-hoc signed + TCC automation permission, which isn't wired on the runner
+  # (running `xcodebuild test` failed at launch on every run). build-for-testing
+  # still guards that ScribeUITests.swift compiles against the app's a11y API.
+  # Promote to full `xcodebuild test` once signing is configured.
   ui-test:
-    name: XCUITests (macOS)
+    name: compile UI tests (macOS)
     runs-on: macos-26
     continue-on-error: true
     steps:
@@ -120,22 +121,13 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      - name: Run UI tests
+      - name: Build for testing (compiles app + XCUITest target, unsigned)
         run: |
-          xcodebuild test \
+          xcodebuild build-for-testing \
             -project Scribe.xcodeproj \
             -scheme Scribe \
             -configuration Debug \
             -destination 'platform=macOS,arch=arm64' \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            -resultBundlePath TestResults.xcresult
-
-      - name: Upload UI test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-test-results
-          path: TestResults.xcresult
-          if-no-files-found: ignore
+            CODE_SIGNING_ALLOWED=NO
