@@ -82,6 +82,7 @@ targets:
           - NoteVaultWatcher.swift   # CoreServices / FSEvents — macOS only
           - VaultCoordinator.swift   # owns the watcher; imports SwiftUI chrome
       - path: Scribe/Tasks            # RecurrenceRule/Engine, QuickAddParser, reminders — all portable
+      - path: Scribe/Sync             # CloudKit task sync (merge policy, record mapping, service)
       - path: Scribe/UI/Tasks/ActionItemConverter.swift   # pure logic: ActionItem→Task + NSDataDetector.scribeDateDetector (QuickAddParser needs it)
       - path: Scribe/Utilities/Log.swift
       - path: Scribe/Intelligence/MeetingModels.swift
