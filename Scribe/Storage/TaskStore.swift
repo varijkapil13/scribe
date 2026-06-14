@@ -167,7 +167,10 @@ final class TaskStore {
     }
 
     func deleteTask(id: String) throws {
-        try db.write { _ = try TodoTask.deleteOne($0, key: id) }
+        try db.write { database in
+            _ = try TodoTask.deleteOne(database, key: id)
+            try Self.recordTombstone(database, id: id)
+        }
     }
 
     /// Moves a task to a different project (or out to Inbox when `projectId`
@@ -537,7 +540,66 @@ final class TaskStore {
     func deleteTasks(ids: [String]) throws -> Int {
         guard !ids.isEmpty else { return 0 }
         return try db.write { database in
-            try TodoTask.deleteAll(database, keys: ids)
+            let count = try TodoTask.deleteAll(database, keys: ids)
+            for id in ids { try Self.recordTombstone(database, id: id) }
+            return count
+        }
+    }
+
+    // MARK: - CloudKit sync support
+    //
+    // Backs `TaskSyncCoordinator`. Tombstones (the `task_tombstones` table)
+    // let deletes propagate: a deleted row is otherwise indistinguishable from
+    // one that never existed. See SyncMergePolicy / SyncReconciler.
+
+    private static func recordTombstone(_ db: Database, id: String, at date: Date = Date()) throws {
+        try db.execute(
+            sql: "INSERT OR REPLACE INTO task_tombstones (id, deletedAt) VALUES (?, ?)",
+            arguments: [id, date]
+        )
+    }
+
+    /// Local sync state for every id the engine should consider: live tasks
+    /// (not deleted) plus tombstones (deleted). A tombstone overrides a live
+    /// row for the same id (shouldn't co-occur, but tombstone wins if so).
+    func localTaskSides() throws -> [String: SyncMergePolicy.Side] {
+        try db.read { database in
+            var sides: [String: SyncMergePolicy.Side] = [:]
+            for task in try TodoTask.fetchAll(database) {
+                sides[task.id] = SyncMergePolicy.Side(updatedAt: task.updatedAt, isDeleted: false)
+            }
+            let rows = try Row.fetchAll(database, sql: "SELECT id, deletedAt FROM task_tombstones")
+            for row in rows {
+                let id: String = row["id"]
+                let deletedAt: Date = row["deletedAt"]
+                sides[id] = SyncMergePolicy.Side(updatedAt: deletedAt, isDeleted: true)
+            }
+            return sides
+        }
+    }
+
+    /// Fetches the live tasks for the given ids (for pushing upserts).
+    func tasks(forIDs ids: [String]) throws -> [TodoTask] {
+        guard !ids.isEmpty else { return [] }
+        return try db.read { try TodoTask.fetchAll($0, keys: ids) }
+    }
+
+    /// Applies a remote upsert: writes the task verbatim — preserving its
+    /// remote `updatedAt` (does NOT bump it, unlike `updateTask`) — and clears
+    /// any local tombstone for the id.
+    func upsertFromSync(_ task: TodoTask) throws {
+        try db.write { database in
+            try task.save(database)
+            try database.execute(sql: "DELETE FROM task_tombstones WHERE id = ?", arguments: [task.id])
+        }
+    }
+
+    /// Applies a remote delete: removes the local row. No tombstone is written
+    /// — the deletion originated remotely, so there's nothing to re-push.
+    func applyRemoteDelete(id: String) throws {
+        try db.write { database in
+            _ = try TodoTask.deleteOne(database, key: id)
+            try database.execute(sql: "DELETE FROM task_tombstones WHERE id = ?", arguments: [id])
         }
     }
 
