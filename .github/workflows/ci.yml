@@ -95,6 +95,37 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+  # Compile the iOS/iPadOS app for the simulator (unsigned). The ScribeiOS
+  # target is the notes+tasks client (no recording). Building here is the only
+  # automated guard for the iOS port without physical devices. Starts from the
+  # M0a stub and grows as portable sources are added to the target.
+  build-ios:
+    name: build iOS app (unsigned)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build iOS (simulator, unsigned)
+        run: |
+          xcodebuild \
+            -project Scribe.xcodeproj \
+            -scheme ScribeiOS \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
   # End-to-end XCUITests driving the built app through its accessibility tree.
   # Marked non-blocking for now: launching a UI-test runner needs the app to be
   # (ad-hoc) signed, which isn't wired on CI yet. The job still compiles the UI
