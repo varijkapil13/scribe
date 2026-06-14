@@ -8,6 +8,7 @@ final class NoteDetailViewModelTests: XCTestCase {
     private var dbm: DatabaseManager!
     private var notes: NoteStore!
     private var transcripts: TranscriptStore!
+    private var tasks: TaskStore!
     private var cancellables: Set<AnyCancellable> = []
 
     override func setUp() async throws {
@@ -15,26 +16,36 @@ final class NoteDetailViewModelTests: XCTestCase {
         dbm = try DatabaseManager(path: ":memory:")
         notes = NoteStore(databaseManager: dbm)
         transcripts = TranscriptStore(databaseManager: dbm)
+        tasks = TaskStore(databaseManager: dbm)
     }
 
     override func tearDown() async throws {
         cancellables.removeAll()
         notes = nil
         transcripts = nil
+        tasks = nil
         dbm = nil
         try await super.tearDown()
+    }
+
+    /// Builds a fully-injected VM. Crucially passes `taskStore: tasks` so the
+    /// VM never instantiates `TaskStore.shared` (which opens the on-disk
+    /// `DatabaseManager.shared`) — keeping the test hermetic.
+    private func makeVM(_ note: Note) -> NoteDetailViewModel {
+        NoteDetailViewModel(
+            note: note,
+            store: notes,
+            transcriptStore: transcripts,
+            taskStore: tasks,
+            onNavigate: { _ in }
+        )
     }
 
     func testSessionsExposesBoundSessions() async throws {
         let note = try notes.createNote(title: "N", body: "")
         let session = try transcripts.createSession(title: "S", noteId: note.id)
 
-        let vm = NoteDetailViewModel(
-            note: note,
-            store: notes,
-            transcriptStore: transcripts,
-            onNavigate: { _ in }
-        )
+        let vm = makeVM(note)
 
         let expectation = self.expectation(description: "sessions delivered")
         vm.$sessions
@@ -52,12 +63,7 @@ final class NoteDetailViewModelTests: XCTestCase {
 
     func testSessionsEmptyWhenNoneBound() async throws {
         let note = try notes.createNote(title: "N", body: "")
-        let vm = NoteDetailViewModel(
-            note: note,
-            store: notes,
-            transcriptStore: transcripts,
-            onNavigate: { _ in }
-        )
+        let vm = makeVM(note)
 
         // Allow at least one observation emission so we know the publisher fired
         // (and stayed empty).
@@ -87,12 +93,7 @@ final class NoteDetailViewModelTests: XCTestCase {
         try transcripts.saveSummary(summary)
 
         // Build the VM with injected stores.
-        let vm = NoteDetailViewModel(
-            note: note,
-            store: notes,
-            transcriptStore: transcripts,
-            onNavigate: { _ in }
-        )
+        let vm = makeVM(note)
 
         // Wait for the observation to deliver the bound session.
         let expectation = self.expectation(description: "sessions delivered")
@@ -118,10 +119,6 @@ final class NoteDetailViewModelTests: XCTestCase {
     }
 
     // MARK: - Tags (Slice C1)
-
-    private func makeVM(_ note: Note) -> NoteDetailViewModel {
-        NoteDetailViewModel(note: note, store: notes, transcriptStore: transcripts, onNavigate: { _ in })
-    }
 
     func testAddTagNormalisesAndDedupes() async throws {
         let note = try notes.createNote(title: "N", body: "")

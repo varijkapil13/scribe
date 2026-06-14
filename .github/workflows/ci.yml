@@ -37,7 +37,11 @@ jobs:
           restore-keys: ${{ runner.os }}-spm-
 
       - name: Run tests with coverage
-        run: swift test --parallel --enable-code-coverage
+        # NOT --parallel: the suite shares the on-disk DatabaseManager.shared
+        # (via *.shared stores), which races under multiple test processes
+        # (one erases/migrates the DB file while another reads → "no such
+        # table: grdb_migrations"). The project runs tests single-process.
+        run: swift test --enable-code-coverage
 
       - name: Coverage summary
         # Best-effort: print total line coverage for the app sources (excluding
