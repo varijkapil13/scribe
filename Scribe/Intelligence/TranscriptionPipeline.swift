@@ -1,5 +1,9 @@
 import Foundation
-import AVFoundation
+// See MicrophoneCapture: AVFAudio's converter-input block is `@Sendable`, but
+// `AVAudioConverter.convert` runs it synchronously. `@preconcurrency` strips
+// the imported Sendable annotations so capturing the source buffer and the
+// local `delivered` flag in the block is not flagged as a data race.
+@preconcurrency import AVFoundation
 import Speech
 import CoreMedia
 
@@ -98,7 +102,7 @@ final class TranscriptionPipeline {
         // format (e.g. Float32 to an Int16-expecting transcriber) trips a
         // runtime precondition inside SpeechRecognizerWorker.preRunRecognition
         // on the first buffer.
-        if let best = try await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) {
+        if let best = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) {
             self.analyzerFormat = best
             Log.speech.info("Pipeline[\(self.speaker, privacy: .public)] analyzer format: \(String(describing: best), privacy: .public)")
         }
@@ -213,13 +217,19 @@ final class TranscriptionPipeline {
         ) else { return nil }
 
         var error: NSError?
-        var delivered = false
+        // Reference box (see SystemAudioCapture): the converter-input block must
+        // hand the source buffer over exactly once. A class flag mutated via a
+        // `let` binding avoids the captured-var diagnostic; `@unchecked Sendable`
+        // is sound because `convert` runs the block synchronously on the calling
+        // thread, so the gate never crosses a concurrency boundary.
+        final class InputGate: @unchecked Sendable { var delivered = false }
+        let gate = InputGate()
         let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
-            if delivered {
+            if gate.delivered {
                 outStatus.pointee = .noDataNow
                 return nil
             }
-            delivered = true
+            gate.delivered = true
             outStatus.pointee = .haveData
             return buffer
         }

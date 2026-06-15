@@ -1,4 +1,8 @@
-import AVFoundation
+// See MicrophoneCapture: AVFAudio's converter-input block is `@Sendable`, but
+// `AVAudioConverter.convert` runs it synchronously. `@preconcurrency` strips
+// the imported Sendable annotations so capturing the source buffer and the
+// local `consumed` flag in the block is not flagged as a data race.
+@preconcurrency import AVFoundation
 import CoreGraphics
 import CoreMedia
 import ScreenCaptureKit
@@ -197,13 +201,20 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unc
             }
 
             var error: NSError?
-            var consumed = false
+            // Reference box: the converter-input block must hand the source
+            // buffer over exactly once. Holding the "provided" flag in a class
+            // (mutated via a `let` binding) rather than a captured `var` avoids
+            // the captured-var-mutation diagnostic. `@unchecked Sendable` is
+            // sound here because `convert` invokes the block synchronously on the
+            // calling thread — the gate never crosses a concurrency boundary.
+            final class InputGate: @unchecked Sendable { var consumed = false }
+            let gate = InputGate()
             converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
-                if consumed {
+                if gate.consumed {
                     outStatus.pointee = AVAudioConverterInputStatus.noDataNow
                     return nil
                 }
-                consumed = true
+                gate.consumed = true
                 outStatus.pointee = AVAudioConverterInputStatus.haveData
                 return sourceBuffer
             }

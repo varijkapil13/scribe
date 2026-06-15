@@ -80,7 +80,7 @@ final class MCPServer: ObservableObject {
     private func read(conn: NWConnection, buffer: Data) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, _, error in
             guard let self else { return }
-            if let error { conn.cancel(); return }
+            if error != nil { conn.cancel(); return }
             let accumulated = buffer + (data ?? Data())
             Task { @MainActor in
                 if let req = HTTPRequest(data: accumulated) {
