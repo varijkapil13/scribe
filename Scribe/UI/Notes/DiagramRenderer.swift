@@ -62,7 +62,7 @@ final class DiagramRenderer: NSObject {
 
     // MARK: - Parsing (unchanged behaviour, returns richer blocks)
 
-    nonisolated(unsafe) private static let blockRegex = try? NSRegularExpression(
+    nonisolated private static let blockRegex = try? NSRegularExpression(
         pattern: #"```(mermaid|plantuml)\n([\s\S]*?)```"#
     )
 

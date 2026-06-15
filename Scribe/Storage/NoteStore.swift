@@ -42,7 +42,7 @@ final class NoteStore: @unchecked Sendable {
 
     // nonisolated(unsafe) required for Swift 6 strict concurrency on a global
     // stored property accessed from non-isolated contexts.
-    nonisolated(unsafe) static let shared: NoteStore = {
+    nonisolated static let shared: NoteStore = {
         let dir = try? NotesDirectory.defaultLocation()
         let fileStore = dir.map { NoteFileStore(directory: $0) }
         return NoteStore(databaseManager: .shared, fileStore: fileStore)

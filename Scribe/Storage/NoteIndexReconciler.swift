@@ -104,7 +104,7 @@ struct NoteIndexReconciler {
         try NoteStore.upsertFTS(db, noteId: file.id, title: note.title, body: file.body)
     }
 
-    nonisolated(unsafe) private static let dailyDateFormatter: DateFormatter = {
+    nonisolated private static let dailyDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")

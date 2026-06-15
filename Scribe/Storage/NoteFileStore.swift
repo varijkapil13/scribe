@@ -188,7 +188,7 @@ struct NoteFileStore {
     // Local time, matching NoteStore.dailyDateFormatter so a round-trip
     // through (String → Date → String) preserves the day. Using UTC here
     // would shift the day by ±1 for users west of UTC.
-    nonisolated(unsafe) private static let dailyDateFormatter: DateFormatter = {
+    nonisolated private static let dailyDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")

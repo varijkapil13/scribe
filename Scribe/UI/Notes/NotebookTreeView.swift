@@ -140,7 +140,7 @@ private struct NotebookTreeRow: View {
                     ) {
                         let n = childName.trimmingCharacters(in: .whitespaces)
                         if !n.isEmpty {
-                            try? NoteStore.shared.createNotebook(name: n, parentId: notebook.id)
+                            _ = try? NoteStore.shared.createNotebook(name: n, parentId: notebook.id)
                         }
                         isCreatingChild = false; childName = ""
                     } onCancel: {
