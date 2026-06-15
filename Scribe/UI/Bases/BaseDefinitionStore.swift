@@ -68,7 +68,7 @@ final class BaseDefinitionStore: @unchecked Sendable {
     /// second keep a distinct `createdAt` after a disk round-trip (plain
     /// `.iso8601` truncates to whole seconds, which would collapse creation
     /// ordering for bases made in quick succession).
-    private static let iso8601: ISO8601DateFormatter = {
+    private nonisolated(unsafe) static let iso8601: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
