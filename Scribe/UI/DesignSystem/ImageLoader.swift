@@ -13,7 +13,7 @@ enum ImageLoader {
 
     nonisolated(unsafe) private static var cache: [String: NSImage] = [:]
     nonisolated(unsafe) private static var order: [String] = []
-    nonisolated(unsafe) private static let cacheQueue = DispatchQueue(label: "scribe.imageloader.cache")
+    nonisolated private static let cacheQueue = DispatchQueue(label: "scribe.imageloader.cache")
     private static let cacheCap = 32
 
     static func load(path: String) -> NSImage? {
