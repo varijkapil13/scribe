@@ -4,6 +4,7 @@ import SwiftUI
 struct TaggedContentView: View {
     let tag: String
     var onNavigate: (String) -> Void
+    var onNavigateToTask: (String) -> Void
 
     @State private var notes: [Note] = []
     @State private var tasks: [TodoTask] = []
@@ -23,8 +24,10 @@ struct TaggedContentView: View {
             if !tasks.isEmpty {
                 Section("Tasks") {
                     ForEach(tasks) { task in
-                        Text(task.title)
-                            .foregroundStyle(.secondary)
+                        Button(task.title) {
+                            onNavigateToTask(task.id)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
