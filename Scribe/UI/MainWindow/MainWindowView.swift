@@ -175,7 +175,13 @@ struct MainWindowView: View {
                 nav.replaceCurrent(.live)
             }
             appState.currentSelection = nav.current
-            if !hasCompletedOnboarding { showOnboarding = true }
+            // Never show onboarding in the screenshot/UI-test fixture mode,
+            // regardless of when the fixture sets `hasCompletedOnboarding`
+            // (avoids a set-vs-read race that left the Welcome sheet — and its
+            // mic-permission step — covering every captured screen).
+            if !hasCompletedOnboarding && !AppLaunchEnvironment.usesUITestFixtures {
+                showOnboarding = true
+            }
         }
         .onDisappear { projectsViewModel.stop() }
         .sheet(isPresented: $showOnboarding) {
