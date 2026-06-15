@@ -179,9 +179,7 @@ private struct TodayTasksRail: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
             Text(eyebrow)
-                .font(DesignTokens.Typography.eyebrow)
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
+                .eyebrowStyle()
                 .accessibilityAddTraits(.isHeader)
 
             Text(progress.summary)

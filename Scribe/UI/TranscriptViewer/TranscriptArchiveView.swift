@@ -117,9 +117,9 @@ private struct SessionArchiveRow: View {
             Image(systemName: "waveform")
                 .foregroundStyle(.secondary)
                 .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text(session.title.isEmpty ? "Untitled recording" : session.title)
-                    .font(.body)
+                    .font(DesignTokens.Typography.body)
                     .lineLimit(1)
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Text(session.createdAt, format: .dateTime.month().day().hour().minute())
@@ -133,7 +133,7 @@ private struct SessionArchiveRow: View {
             }
             Spacer()
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(session.title.isEmpty ? "Untitled recording" : session.title)

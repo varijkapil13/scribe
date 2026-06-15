@@ -22,7 +22,7 @@ struct SegmentView: View {
                         .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 4)
+                .padding(.top, DesignTokens.Spacing.xs)
                 .accessibilityLabel(isSelected ? "Deselect segment" : "Select segment")
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
@@ -46,13 +46,13 @@ struct SegmentView: View {
                     }
                     SpeakerChip(speaker: segment.speaker)
                     Text(segment.formattedTimestamp)
-                        .font(.system(.caption2, design: .monospaced))
+                        .font(DesignTokens.Typography.timestamp)
                         .foregroundStyle(.tertiary)
                     Spacer()
                 }
 
                 Text(segment.text)
-                    .font(.body)
+                    .font(DesignTokens.Typography.body)
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)

@@ -60,7 +60,7 @@ struct SessionRowView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.top, 2)
+                .padding(.top, DesignTokens.Spacing.xxs)
             }
         }
         .padding(.vertical, DesignTokens.Spacing.xs)

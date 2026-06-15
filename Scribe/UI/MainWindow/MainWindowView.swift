@@ -511,13 +511,13 @@ struct MainWindowView: View {
                     if results.isEmpty {
                         Label("No results", systemImage: "magnifyingglass")
                             .foregroundStyle(.secondary)
-                            .font(.callout)
+                            .font(DesignTokens.Typography.callout)
                     } else {
                         ForEach(results) { note in
                             NavigationLink(value: MainSelection.note(note.id)) {
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                                     Text(note.title.isEmpty ? "Untitled" : note.title)
-                                        .font(.body)
+                                        .font(DesignTokens.Typography.body)
                                         .fontWeight(.medium)
                                         .lineLimit(1)
                                     Text(note.updatedAt, style: .relative)
@@ -891,11 +891,11 @@ struct KeyCapGroup: View {
                     .frame(minWidth: 18, minHeight: 18)
                     .padding(.horizontal, 4)
                     .background(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
                             .fill(DesignTokens.Palette.surfaceElevated)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
                             .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
                     )
             }
@@ -1060,16 +1060,16 @@ struct InlineNameField: View {
 
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
-                .font(.body)
+                .font(DesignTokens.Typography.body)
                 .focused($isFocused)
                 .onSubmit { onCommit() }
                 .onExitCommand { onCancel() }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .listRowBackground(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                 .fill(Color.accentColor.opacity(0.10))
-                .padding(.horizontal, -4)
+                .padding(.horizontal, -DesignTokens.Spacing.xs)
         )
         .onAppear { isFocused = true }
     }
