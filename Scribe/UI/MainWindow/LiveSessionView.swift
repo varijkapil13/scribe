@@ -156,17 +156,16 @@ struct LiveSessionView: View {
         }
     }
 
-    private var eyebrow: String {
-        if appState.audioManager.isPaused { return "PAUSED" }
-        if appState.isTranscribing { return "RECORDING" }
-        return "READY"
+    /// Shared live-session state, so the hero's eyebrow + tint classify the
+    /// session identically to the in-note pane and the floating controller.
+    private var status: LiveFeedStatus {
+        .resolve(isTranscribing: appState.isTranscribing,
+                 isPaused: appState.audioManager.isPaused)
     }
 
-    private var eyebrowTint: Color {
-        if appState.audioManager.isPaused { return DesignTokens.Palette.paused }
-        if appState.isTranscribing { return DesignTokens.Palette.recording }
-        return .secondary
-    }
+    private var eyebrow: String { status.eyebrow }
+
+    private var eyebrowTint: Color { status.tint }
 
     // MARK: - Transport
 
@@ -346,14 +345,7 @@ struct LiveSessionView: View {
     // MARK: - Helpers
 
     private var formattedDuration: String {
-        let total = Int(appState.audioManager.recordingDuration)
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
+        LiveFeedStatus.formattedElapsed(appState.audioManager.recordingDuration)
     }
 
     private var currentMicDisplayName: String {

@@ -137,18 +137,21 @@ struct LiveControllerOverlay: View {
         .accessibilityLabel("Recording controller")
     }
 
+    /// Shared live-session state, so the controller's glyph/tint classify the
+    /// session identically to `LiveSessionView` and the in-note pane.
+    private var status: LiveFeedStatus {
+        .resolve(isTranscribing: appState.isTranscribing,
+                 isPaused: audioManager.isPaused)
+    }
+
     /// Non-color state glyph (record / pause) so meaning survives
     /// Differentiate Without Color and reads at a glance.
     private var stateGlyph: some View {
-        Image(systemName: audioManager.isPaused
-              ? DesignTokens.Palette.pausedSymbol
-              : DesignTokens.Palette.recordingSymbol)
+        Image(systemName: status.symbol)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(audioManager.isPaused
-                             ? DesignTokens.Palette.paused
-                             : DesignTokens.Palette.recording)
+            .foregroundStyle(status.tint)
             .symbolEffect(.pulse, isActive: !audioManager.isPaused && !reduceMotion && !differentiateWithoutColor)
-            .accessibilityLabel(audioManager.isPaused ? "Paused" : "Recording")
+            .accessibilityLabel(status.label)
     }
 
     private var pauseButton: some View {
@@ -232,13 +235,6 @@ struct LiveControllerOverlay: View {
     // MARK: - Helpers
 
     private var formattedDuration: String {
-        let total = Int(audioManager.recordingDuration)
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
+        LiveFeedStatus.formattedElapsed(audioManager.recordingDuration)
     }
 }
