@@ -56,6 +56,10 @@ let package = Package(
                 "UI/Notes/CodeEditNoteTextView.swift",
                 "UI/Notes/CodeEditNoteSupport.swift",
                 "UI/Notes/EditorDiagramFolding.swift",
+                // Callout panels + focus-mode dimming (imports CodeEditTextView).
+                // The colour/icon mapping lives in EditorCalloutStyle.swift,
+                // which imports only AppKit and stays in the target.
+                "UI/Notes/EditorCalloutDecorations.swift",
                 // SwiftUI views that transitively reference the editor surface.
                 "UI/Notes/NoteEditorView.swift",
                 "UI/Notes/NoteDetailView.swift",

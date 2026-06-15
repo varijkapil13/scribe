@@ -89,6 +89,17 @@ struct CodeEditNoteTextView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Focus mode preference, shared with ``NoteDetailView`` (which drives the
+    /// surrounding-chrome hide off the same key). Read here so the editor can
+    /// dim non-active blocks without ``NoteEditorView`` having to thread the
+    /// flag down. Default off, matching the old editor.
+    @AppStorage("noteEditor.focusMode") private var focusModeEnabled: Bool = false
+
+    /// Raised dim floor under Increase Contrast so dimmed text still reads.
+    /// The scrim opacity is `1 - focusDimAlpha`; the lower bound keeps dimmed
+    /// text legible while clearly de-emphasising it.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     /// Transient editor UI state (cursor, scroll, find panel). Owned here so a
     /// caller only needs to provide the text binding.
     @State private var editorState = SourceEditorState()
@@ -148,7 +159,11 @@ struct CodeEditNoteTextView: View {
             slashMenuActive: slashMenuActive,
             onSlashMove: onSlashMove,
             onSlashCommit: onSlashCommit,
-            onSlashDismiss: onSlashDismiss
+            onSlashDismiss: onSlashDismiss,
+            focusModeEnabled: focusModeEnabled,
+            // Under Reduce Transparency, lift the dim floor so the scrim is
+            // lighter and dimmed text stays legible.
+            focusDimAlpha: reduceTransparency ? 0.5 : 0.18
         )
     }
 }

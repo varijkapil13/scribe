@@ -83,10 +83,25 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
         var onSlashMove: ((Bool) -> Void)? = nil
         var onSlashCommit: (() -> Bool)? = nil
         var onSlashDismiss: (() -> Bool)? = nil
+        /// Focus mode: dim every block except the caret's. Mirrors the old
+        /// editor's `focusModeEnabled`; read from the `noteEditor.focusMode`
+        /// preference by ``CodeEditNoteTextView``.
+        var focusModeEnabled: Bool = false
+        /// Dim scrim opacity floor (0…1). Lower = more dimming. Mirrors the old
+        /// editor's `focusDimAlpha`.
+        var focusDimAlpha: CGFloat = 0.18
     }
 
     var host = Host(slashMenuActive: false) {
-        didSet { reinstallActions() }
+        didSet {
+            reinstallActions()
+            // Focus-mode preference can flip without any text / selection change,
+            // so repaint decorations when it does.
+            if host.focusModeEnabled != oldValue.focusModeEnabled
+                || host.focusDimAlpha != oldValue.focusDimAlpha {
+                refreshDecorations(positions: controller?.cursorPositions ?? [])
+            }
+        }
     }
 
     private weak var controller: TextViewController?
@@ -100,6 +115,11 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
     /// ``DiagramFoldingController``.
     private let diagramFolding = DiagramFoldingController()
 
+    /// Obsidian callout rendering + focus-mode dimming. Draws type-tinted
+    /// panels / bars / icons for `> [!type]` blockquotes and (when focus mode is
+    /// on) dims every block except the caret's. See ``CalloutDecorationController``.
+    private let calloutDecorations = CalloutDecorationController()
+
     // MARK: TextViewCoordinator
 
     func prepareCoordinator(controller: TextViewController) {
@@ -109,18 +129,22 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
         installKeyMonitor()
         reinstallActions()
         diagramFolding.attach(to: controller.textView)
+        calloutDecorations.attach(to: controller.textView)
         refreshDiagramFolding(positions: controller.cursorPositions)
+        refreshDecorations(positions: controller.cursorPositions)
     }
 
     func textViewDidChangeSelection(controller: TextViewController, newPositions: [CursorPosition]) {
         reportSlashAndWiki(positions: newPositions)
         reportSelectionGeometry(positions: newPositions)
         refreshDiagramFolding(positions: newPositions)
+        refreshDecorations(positions: newPositions)
     }
 
     func textViewDidChangeText(controller: TextViewController) {
         reportSlashAndWiki(positions: controller.cursorPositions)
         refreshDiagramFolding(positions: controller.cursorPositions)
+        refreshDecorations(positions: controller.cursorPositions)
     }
 
     func destroy() {
@@ -129,6 +153,7 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         diagramFolding.detach()
+        calloutDecorations.detach()
         controller = nil
         textView = nil
     }
@@ -137,6 +162,16 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
     private func refreshDiagramFolding(positions: [CursorPosition]) {
         let selection = positions.first?.range ?? NSRange(location: 0, length: 0)
         diagramFolding.refresh(selection: selection)
+    }
+
+    /// Recomputes callout panels + focus-mode dimming for the current selection.
+    private func refreshDecorations(positions: [CursorPosition]) {
+        let selection = positions.first?.range ?? NSRange(location: 0, length: 0)
+        calloutDecorations.refresh(
+            selection: selection,
+            focusMode: host.focusModeEnabled,
+            dimAlpha: host.focusDimAlpha
+        )
     }
 
     // MARK: - Slash-menu key interception
