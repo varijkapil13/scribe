@@ -28,7 +28,7 @@ struct RecordingStatusPill: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Text(formattedDuration)
-                    .font(DesignTokens.Typography.timer)
+                    .font(.system(.caption, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.primary)
             }
         }
