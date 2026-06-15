@@ -24,6 +24,7 @@ struct BasesScreen: View {
             Divider()
             content
         }
+        .accessibilityIdentifier("bases-screen")
         .navigationTitle("Bases")
         .onAppear { model.reload() }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { _ in
@@ -45,12 +46,15 @@ struct BasesScreen: View {
             Spacer()
             Picker("Layout", selection: $model.layout) {
                 ForEach(BasesViewModel.Layout.allCases) { layout in
-                    Label(layout.title, systemImage: layout.systemImage).tag(layout)
+                    Label(layout.title, systemImage: layout.systemImage)
+                        .tag(layout)
+                        .accessibilityIdentifier("bases-layout-\(layout.rawValue)")
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .accessibilityIdentifier("bases-layout-picker")
         }
         .padding(DesignTokens.Spacing.md)
     }
