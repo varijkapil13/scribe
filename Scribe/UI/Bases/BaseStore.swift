@@ -208,32 +208,35 @@ struct BaseQuery: Equatable, Codable, Hashable, Sendable {
 
     static func sorted(_ records: [BaseRecord], by sort: BaseSort) -> [BaseRecord] {
         records.sorted { a, b in
-            let order = compareRecords(a, b, key: sort.key)
-            // Records missing the key sort last regardless of direction.
-            switch order {
-            case .orderedSame:
-                // Stable tiebreak on title so the order is deterministic.
-                let ta = a.note.title.lowercased()
-                let tb = b.note.title.lowercased()
-                return sort.ascending ? ta < tb : tb < ta
-            case .orderedAscending:
-                return sort.ascending
-            case .orderedDescending:
-                return !sort.ascending
+            let va = a.value(forKey: sort.key)
+            let vb = b.value(forKey: sort.key)
+
+            // Records missing the sort key always sink to the bottom, in BOTH
+            // directions — only present-vs-present comparisons honor `ascending`.
+            switch (va, vb) {
+            case (nil, nil):
+                return tiebreak(a, b, ascending: sort.ascending)
+            case (nil, _):
+                return false        // a missing → a after b
+            case (_, nil):
+                return true         // b missing → a before b
+            case (let va?, let vb?):
+                switch compareValues(va, vb) {
+                case .orderedSame:       return tiebreak(a, b, ascending: sort.ascending)
+                case .orderedAscending:  return sort.ascending
+                case .orderedDescending: return !sort.ascending
+                }
             }
         }
     }
 
-    private static func compareRecords(_ a: BaseRecord, _ b: BaseRecord, key: String) -> ComparisonResult {
-        let va = a.value(forKey: key)
-        let vb = b.value(forKey: key)
-        switch (va, vb) {
-        case (nil, nil):   return .orderedSame
-        case (nil, _):     return .orderedDescending  // missing sorts after present
-        case (_, nil):     return .orderedAscending
-        case (let va?, let vb?):
-            return compareValues(va, vb)
-        }
+    /// Deterministic, direction-aware tiebreak on title so equal keys keep a
+    /// stable order.
+    private static func tiebreak(_ a: BaseRecord, _ b: BaseRecord, ascending: Bool) -> Bool {
+        let ta = a.note.title.lowercased()
+        let tb = b.note.title.lowercased()
+        if ta == tb { return false }
+        return ascending ? ta < tb : tb < ta
     }
 
     /// Type-aware ordering of two typed values.
