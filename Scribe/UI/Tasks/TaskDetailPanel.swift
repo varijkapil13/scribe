@@ -73,16 +73,6 @@ struct TaskDetailPanel: View {
                         Divider().padding(.horizontal, DesignTokens.Spacing.lg)
                         sourceBlock(sessionId: sessionId, title: viewModel.sourceSessionTitle)
                     }
-                    if let err = viewModel.saveError {
-                        HStack(spacing: DesignTokens.Spacing.sm) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                            Text(err)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(DesignTokens.Spacing.lg)
-                    }
                 }
             }
             Divider()
@@ -92,6 +82,15 @@ struct TaskDetailPanel: View {
         .onChange(of: viewModel.lastSavedAt) { _, newValue in
             guard newValue != nil else { return }
             flashSaved()
+        }
+        // Recoverable persistence failures (disk/db write failed) go to the
+        // unified banner rather than inline text — one feedback language
+        // (see FeedbackPolicy). The panel is hosted in several contexts without
+        // an injected AppState, so route through the shared instance.
+        .onChange(of: viewModel.saveError) { _, newValue in
+            if let message = newValue {
+                AppState.shared.report(message)
+            }
         }
         .onDisappear {
             savedHideTask?.cancel()
@@ -174,6 +173,15 @@ struct TaskDetailPanel: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...4)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Field-level validation stays inline, tied to its control
+                // (one-feedback-language convention — see FeedbackPolicy).
+                if let validation = viewModel.validationError {
+                    Text(validation)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("Title error: \(validation)")
+                }
             }
 
             savedBadge

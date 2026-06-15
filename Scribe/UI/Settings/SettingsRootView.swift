@@ -17,5 +17,9 @@ struct SettingsRootView: View {
             }
         }
         .frame(width: 640, height: 540)
+        // Settings lives in its own window, so it needs its own host for the
+        // unified feedback banner/toast (vault move/open outcomes route here via
+        // AppState — see FeedbackPolicy). The main window has its own host.
+        .errorBanner(.shared)
     }
 }

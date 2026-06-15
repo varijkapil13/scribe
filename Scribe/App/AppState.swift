@@ -37,7 +37,17 @@ final class AppState: ObservableObject {
     @Published var lastFinishedSessionId: String?
     /// Surfaces the most recent error from the recording / transcription / persistence
     /// pipelines so the UI can show a banner. `nil` means "nothing wrong right now".
+    ///
+    /// This is the `.banner` channel of the one-feedback-language convention
+    /// (see `FeedbackPolicy`). Prefer `report(_:)` over assigning this directly.
     @Published var lastError: String?
+
+    /// Surfaces a brief success confirmation (e.g. "Moved 12 files") so the UI
+    /// can show a success toast. `nil` means "nothing to confirm right now".
+    ///
+    /// This is the `.toast` channel of the one-feedback-language convention
+    /// (see `FeedbackPolicy`). Set via `notify(_:)`.
+    @Published var lastNotice: String?
 
     /// The current sidebar selection in `MainWindowView`. Updated by the view
     /// on every selection change. `AppDelegate.startRecording` reads it when
@@ -222,7 +232,7 @@ final class AppState: ObservableObject {
 
         audioManager.onSystemError = { [weak self] _ in
             guard let self else { return }
-            self.lastError = Self.systemAudioRevokedMessage
+            self.report(Self.systemAudioRevokedMessage)
         }
     }
 
@@ -247,7 +257,7 @@ final class AppState: ObservableObject {
             self?.ingestTranscribedSegment(segment)
         }
         speechEngine.onSessionError = { [weak self] error in
-            self?.lastError = error.localizedDescription
+            self?.report(error)
         }
     }
 
@@ -303,8 +313,8 @@ final class AppState: ObservableObject {
             )
         } catch {
             // Surface the failure (e.g. disk full) instead of silently dropping
-            // the segment. The UI listens to `lastError` and shows a banner.
-            lastError = "Failed to save segment: \(error.localizedDescription)"
+            // the segment. Recoverable/background → banner channel.
+            report("Failed to save segment: \(error.localizedDescription)")
         }
     }
 
@@ -339,6 +349,36 @@ final class AppState: ObservableObject {
     /// Stable identifier for the in-progress live row — re-using the same
     /// UUID keeps SwiftUI's diff happy so the row animates rather than flickers.
     private let pendingSegmentId = UUID()
+
+    // MARK: - Feedback
+
+    /// Reports a recoverable / transient / background failure through the unified
+    /// banner channel. This is the one entry point callers should use instead of
+    /// hand-rolling their own banner / alert / inline string — it keeps every
+    /// surface speaking the same feedback language (see `FeedbackPolicy`).
+    ///
+    /// Asserts at the routing layer that the convention's `.recoverableFailure`
+    /// really does map to the banner, so a future policy change can't silently
+    /// reroute these. Genuine blocking failures (e.g. "couldn't open the
+    /// database") should stay a `.alert` at their call site, not come through here.
+    func report(_ message: String) {
+        assert(FeedbackPolicy.channel(for: .recoverableFailure) == .banner)
+        lastError = message
+    }
+
+    /// Reports a recoverable failure described by an `Error`, using its
+    /// localized description. Convenience over `report(String)` for `catch` sites.
+    func report(_ error: Error) {
+        report(error.localizedDescription)
+    }
+
+    /// Shows a brief success confirmation through the unified toast channel
+    /// (e.g. "Moved 12 files"). Routed through the same banner host with a
+    /// success style rather than a bespoke widget (see `FeedbackPolicy`).
+    func notify(_ message: String) {
+        assert(FeedbackPolicy.channel(for: .success) == .toast)
+        lastNotice = message
+    }
 
     // MARK: - Session Lifecycle
 
@@ -403,7 +443,7 @@ final class AppState: ObservableObject {
                   self.audioManager.shouldCaptureSystemAudio,
                   !self.hasLoggedFirstSystemBuffer else { return }
             Log.audio.error("No system-audio buffers after \(String(describing: Self.systemAudioWatchdogDelay), privacy: .public) — Screen Recording permission likely revoked (rebuild?).")
-            self.lastError = Self.systemAudioRevokedMessage
+            self.report(Self.systemAudioRevokedMessage)
         }
     }
 

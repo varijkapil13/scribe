@@ -216,13 +216,19 @@ struct NoteDetailView: View {
                 userExplicitlyCollapsed: userExplicitlyCollapsed
             )
         }
-        .alert("Error", isPresented: Binding(
-            get: { vm.errorMessage != nil },
-            set: { if !$0 { vm.errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(vm.errorMessage ?? "")
+        // Note save / reload failures are recoverable, background-ish problems
+        // (autosave debounce, a backlinks refresh) — they should never block the
+        // editor with a modal. Route them to the unified banner instead of a
+        // blocking `.alert` (one feedback language — see FeedbackPolicy). A
+        // genuine hard failure that the user *must* act on would still warrant a
+        // `.alert`; none of these qualify.
+        .onChange(of: vm.errorMessage) { _, newValue in
+            if let message = newValue {
+                appState.report(message)
+                // The banner now owns the message; clear the VM flag so it
+                // doesn't re-fire on the next dependency change.
+                vm.errorMessage = nil
+            }
         }
         .sheet(item: $openedTaskFromAction) { task in
             TaskInspectorSheet(task: task) { openedTaskFromAction = nil }
