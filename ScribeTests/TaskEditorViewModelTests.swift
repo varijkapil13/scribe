@@ -60,7 +60,11 @@ final class TaskEditorViewModelTests: XCTestCase {
         let vm = TaskEditorViewModel(task: task, store: store, reminderScheduler: NoOpTaskReminderScheduler())
         vm.title = "   "
         XCTAssertFalse(vm.save())
-        XCTAssertEqual(vm.saveError, "Title can't be empty.")
+        // Empty-title is field validation (inline, tied to the title control),
+        // distinct from a recoverable persistence failure (banner). See
+        // FeedbackPolicy / the one-feedback-language convention.
+        XCTAssertEqual(vm.validationError, "Title can't be empty.")
+        XCTAssertNil(vm.saveError)
 
         // Original row is untouched.
         let unchanged = try XCTUnwrap(store.fetchTask(id: task.id))

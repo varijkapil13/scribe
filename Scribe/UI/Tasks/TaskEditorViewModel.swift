@@ -24,7 +24,14 @@ final class TaskEditorViewModel: ObservableObject {
     /// Kept in sync with `tagsInput` so either entry path round-trips.
     @Published var tags: [String]
     @Published private(set) var availableProjects: [Project] = []
+    /// A *recoverable persistence failure* (disk/db write failed). Per the
+    /// one-feedback-language convention (`FeedbackPolicy`), the view routes this
+    /// to the unified banner rather than showing it inline.
     @Published private(set) var saveError: String?
+    /// *Field-level validation* tied to the title control (e.g. "Title can't be
+    /// empty"). Stays inline next to the field — never a substitute for
+    /// surfacing an actual failure (see `FeedbackPolicy`).
+    @Published private(set) var validationError: String?
     /// Title of the meeting session this task originated from, when the task
     /// has a `sourceSessionId` AND that session still exists. Surfaced as a
     /// "From: <title>" link in the editor sheet. Nil when the task has no
@@ -166,9 +173,11 @@ final class TaskEditorViewModel: ObservableObject {
     func save() -> Bool {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
-            saveError = "Title can't be empty."
+            // Field validation → inline, tied to the title control.
+            validationError = "Title can't be empty."
             return false
         }
+        validationError = nil
         do {
             var updated = originalTask
             updated.title = trimmedTitle

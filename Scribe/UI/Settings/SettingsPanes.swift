@@ -94,7 +94,6 @@ private struct GeneralSettingsPane: View {
 
     @State private var openConfirm: OpenConfirm?
     @State private var moveConfirm: MoveConfirm?
-    @State private var successMessage: String?
 
     private var resolvedVaultPath: String {
         vault.currentRoot?.path
@@ -130,16 +129,10 @@ private struct GeneralSettingsPane: View {
                         ProgressView().controlSize(.small)
                     }
                 }
-                if let success = successMessage {
-                    Text(success)
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
-                if let err = vault.lastError {
-                    Text(err)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
+                // Vault move/open outcomes are recoverable/background events, so
+                // they speak the one feedback language: failures route to the
+                // unified banner, successes to the success toast (see
+                // FeedbackPolicy) — no bespoke inline red/green status here.
                 Text("Move copies your current notes into a new folder. Open switches Scribe to use an existing folder as the vault — your current files stay where they are.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -180,6 +173,15 @@ private struct GeneralSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        // VaultCoordinator also sets `lastError` from its background reconcile
+        // (a recoverable failure). Forward any such failure to the unified
+        // banner so vault problems speak the same language wherever they arise
+        // (see FeedbackPolicy).
+        .onChange(of: vault.lastError) { _, newValue in
+            if let message = newValue {
+                AppState.shared.report(message)
+            }
+        }
         .confirmationDialog(
             "Move vault?",
             isPresented: Binding(get: { moveConfirm != nil },
@@ -259,30 +261,28 @@ private struct GeneralSettingsPane: View {
                 toRemove: preview.toRemove
             )
         } catch {
-            vault.lastError = error.localizedDescription
+            AppState.shared.report(error)
         }
     }
 
     private func performMove(to destination: URL) {
-        successMessage = nil
         Task {
             do {
                 let copied = try await vault.moveVault(to: destination)
-                successMessage = "Moved \(copied) file\(copied == 1 ? "" : "s") to \(destination.lastPathComponent)."
+                AppState.shared.notify("Moved \(copied) file\(copied == 1 ? "" : "s") to \(destination.lastPathComponent).")
             } catch {
-                vault.lastError = error.localizedDescription
+                AppState.shared.report(error)
             }
         }
     }
 
     private func performOpen(to destination: URL) {
-        successMessage = nil
         Task {
             do {
                 try await vault.openVault(at: destination)
-                successMessage = "Opened \(destination.lastPathComponent)."
+                AppState.shared.notify("Opened \(destination.lastPathComponent).")
             } catch {
-                vault.lastError = error.localizedDescription
+                AppState.shared.report(error)
             }
         }
     }
