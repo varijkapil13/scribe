@@ -19,7 +19,7 @@ struct ErrorBanner: View {
                 .font(.system(size: 14, weight: .semibold))
                 .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text("Something went wrong")
                     .font(.system(.callout, weight: .semibold))
                     .foregroundStyle(.primary)
@@ -35,7 +35,7 @@ struct ErrorBanner: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .padding(6)
+                    .padding(6) // bespoke hit-padding for the close glyph (between xs/sm)
             }
             .buttonStyle(.plain)
             .help("Dismiss")
@@ -89,7 +89,7 @@ struct SuccessBanner: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .padding(6)
+                    .padding(6) // bespoke hit-padding for the close glyph (between xs/sm)
             }
             .buttonStyle(.plain)
             .help("Dismiss")
