@@ -24,7 +24,7 @@ struct FormatBubble: View {
                          label: "Inline code", hint: "Command Backtick") { actions.code?() }
             bubbleButton("link", label: "Link", hint: "Command K") { actions.link?() }
 
-            Divider().frame(height: 18).padding(.horizontal, 2)
+            Divider().frame(height: 18).padding(.horizontal, DesignTokens.Spacing.xxs)
 
             Menu {
                 Button("Paragraph") { actions.setHeading?(0) }
@@ -50,7 +50,7 @@ struct FormatBubble: View {
             .help("Turn into…")
             .accessibilityLabel("Turn into block type")
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, DesignTokens.Spacing.xs)
         .padding(.vertical, 3)
         .background(bubbleBackground)
         .overlay(

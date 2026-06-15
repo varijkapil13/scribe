@@ -58,7 +58,7 @@ struct UniversalSearchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                 TextField("Search or run a command…", text: $vm.query)
@@ -76,7 +76,7 @@ struct UniversalSearchView: View {
                     .accessibilityLabel("Clear search")
                 }
             }
-            .padding(16)
+            .padding(DesignTokens.Spacing.lg)
 
             Divider()
 
@@ -123,8 +123,8 @@ struct UniversalSearchView: View {
         Text(title)
             .font(.caption.bold())
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DesignTokens.Spacing.lg)
+            .padding(.vertical, DesignTokens.Spacing.xs)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.bar)
             .accessibilityAddTraits(.isHeader)
@@ -139,7 +139,7 @@ struct UniversalSearchView: View {
                 Image(systemName: row.item.systemImage)
                     .frame(width: 20)
                     .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                     Text(row.item.title).font(.body)
                     if !row.item.subtitle.isEmpty {
                         Text(row.item.subtitle)
@@ -153,8 +153,8 @@ struct UniversalSearchView: View {
                     KeyCapGroup(keys: keys).accessibilityHidden(true)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DesignTokens.Spacing.lg)
+            .padding(.vertical, DesignTokens.Spacing.sm)
             .contentShape(Rectangle())
             .background(isSelected ? Color.accentColor.opacity(0.16) : .clear)
         }

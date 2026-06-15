@@ -44,14 +44,14 @@ struct FormatToolbar: View {
                 Button("Heading 2")  { actions.setHeading?(2) }
                 Button("Heading 3")  { actions.setHeading?(3) }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DesignTokens.Spacing.xs) {
                     Image(systemName: "textformat.size")
                     Image(systemName: "chevron.down")
                         .imageScale(.small)
                         .foregroundStyle(.tertiary)
                 }
                 .frame(height: 32)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
             }
             .menuStyle(.borderlessButton)
             .help("Paragraph style")
@@ -68,7 +68,7 @@ struct FormatToolbar: View {
             Spacer()
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignTokens.Spacing.xs)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
     }

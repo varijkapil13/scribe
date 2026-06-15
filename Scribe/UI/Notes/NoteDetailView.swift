@@ -61,8 +61,8 @@ struct NoteDetailView: View {
                 .textFieldStyle(.plain)
                 .foregroundStyle(.primary)
                 .focused($titleFocused)
-                .padding(.vertical, 2)
-                .padding(.horizontal, 4)
+                .padding(.vertical, DesignTokens.Spacing.xxs)
+                .padding(.horizontal, DesignTokens.Spacing.xs)
                 .background(
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
                         .fill(titleFocused ? Color.accentColor.opacity(0.07) : .clear)
