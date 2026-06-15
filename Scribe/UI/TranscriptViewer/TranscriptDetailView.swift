@@ -393,7 +393,7 @@ struct TranscriptDetailView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     Text("Summary failed")
-                        .font(.system(.headline, weight: .semibold))
+                        .font(DesignTokens.Typography.section)
                 }
                 Text(error)
                     .font(.callout)
@@ -411,9 +411,9 @@ struct TranscriptDetailView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                     Text("Executive Summary")
-                        .font(.system(.headline, weight: .semibold))
+                        .font(DesignTokens.Typography.section)
                     Text(summary.summary)
-                        .font(.body)
+                        .font(DesignTokens.Typography.body)
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                 }
@@ -424,7 +424,7 @@ struct TranscriptDetailView: View {
                 if !summary.keyDecisions.isEmpty {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                         Text("Key Decisions")
-                            .font(.system(.headline, weight: .semibold))
+                            .font(DesignTokens.Typography.section)
                         ForEach(summary.keyDecisions, id: \.self) { decision in
                             HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
                                 Image(systemName: "checkmark.seal.fill")
@@ -442,7 +442,7 @@ struct TranscriptDetailView: View {
                 if !summary.keyTopics.isEmpty {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                         Text("Topics Discussed")
-                            .font(.system(.headline, weight: .semibold))
+                            .font(DesignTokens.Typography.section)
                         FlowLayoutView(items: summary.keyTopics) { topic in
                             TagChip(text: topic, tint: .accentColor)
                         }
@@ -453,7 +453,7 @@ struct TranscriptDetailView: View {
                 if !summary.followUpQuestions.isEmpty {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                         Text("Follow-Up Questions")
-                            .font(.system(.headline, weight: .semibold))
+                            .font(DesignTokens.Typography.section)
                         ForEach(summary.followUpQuestions, id: \.self) { question in
                             HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
                                 Image(systemName: "questionmark.circle.fill")
@@ -543,7 +543,7 @@ struct TranscriptDetailView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     Text("Analysis failed")
-                        .font(.system(.headline, weight: .semibold))
+                        .font(DesignTokens.Typography.section)
                 }
                 Text(error)
                     .font(.callout)
@@ -710,13 +710,13 @@ private struct ActionItemRow: View {
                     .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.plain)
-            .padding(.top, 2)
+            .padding(.top, DesignTokens.Spacing.xxs)
             .accessibilityLabel(isCompleted ? "Mark as not done" : "Mark as done")
             .accessibilityAddTraits(isCompleted ? .isSelected : [])
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 Text(item.description)
-                    .font(.body)
+                    .font(DesignTokens.Typography.body)
                     .strikethrough(isCompleted, color: .secondary)
                     .foregroundStyle(isCompleted ? .secondary : .primary)
                     .textSelection(.enabled)
@@ -884,7 +884,7 @@ struct MoveSegmentsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                     Text("Move Segments")
                         .font(.system(.title3, weight: .semibold))
                     Text("\(viewModel.selectedSegmentIds.count) segment\(viewModel.selectedSegmentIds.count == 1 ? "" : "s") will be appended to the chosen transcript.")
@@ -939,7 +939,7 @@ private struct MoveTargetRow: View {
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(Color.secondary.opacity(0.12)))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text(session.title.isEmpty ? "Untitled Session" : session.title)
                     .font(.system(.body, weight: .semibold))
                     .foregroundStyle(.primary)

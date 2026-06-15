@@ -311,11 +311,9 @@ struct LiveSessionView: View {
                 }
             }
         } label: {
-            HStack(spacing: 2) {
+            HStack(spacing: DesignTokens.Spacing.xxs) {
                 Text(languageDisplay)
-                    .font(DesignTokens.Typography.eyebrow)
-                    .tracking(0.8)
-                    .textCase(.uppercase)
+                    .eyebrowStyle()
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .semibold))
             }
