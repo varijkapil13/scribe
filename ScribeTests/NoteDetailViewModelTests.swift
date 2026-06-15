@@ -48,6 +48,7 @@ final class NoteDetailViewModelTests: XCTestCase {
         let vm = makeVM(note)
 
         let expectation = self.expectation(description: "sessions delivered")
+        expectation.assertForOverFulfill = false  // publisher may deliver more than once
         vm.$sessions
             .dropFirst()  // skip the initial empty value the @Published property emits
             .sink { sessions in
@@ -66,8 +67,12 @@ final class NoteDetailViewModelTests: XCTestCase {
         let vm = makeVM(note)
 
         // Allow at least one observation emission so we know the publisher fired
-        // (and stayed empty).
+        // (and stayed empty). `$sessions` emits the initial value AND the GRDB
+        // observation's delivery, so the sink can fulfill more than once —
+        // tolerate it (otherwise XCTest raises an NSException that crashes the
+        // whole test process, which made this flaky in CI).
         let expectation = self.expectation(description: "initial empty observation")
+        expectation.assertForOverFulfill = false
         vm.$sessions
             .sink { _ in expectation.fulfill() }
             .store(in: &cancellables)
@@ -97,6 +102,7 @@ final class NoteDetailViewModelTests: XCTestCase {
 
         // Wait for the observation to deliver the bound session.
         let expectation = self.expectation(description: "sessions delivered")
+        expectation.assertForOverFulfill = false  // publisher may deliver more than once
         vm.$sessions
             .dropFirst()
             .sink { sessions in

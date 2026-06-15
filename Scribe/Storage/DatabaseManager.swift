@@ -568,6 +568,15 @@ final class DatabaseManager: @unchecked Sendable {
                           columns: ["cancelledAt"])
         }
 
+        // Tombstones for deleted tasks so CloudKit sync can propagate deletes
+        // (a deleted row is otherwise indistinguishable from "never existed").
+        migrator.registerMigration("v16_task_tombstones") { db in
+            try db.create(table: "task_tombstones") { t in
+                t.column("id", .text).primaryKey()
+                t.column("deletedAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }
 
