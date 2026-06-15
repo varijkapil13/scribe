@@ -29,6 +29,12 @@ final class AppState: ObservableObject {
     @Published var overlaySegments: [TranscriptionSegment] = []
     @Published var currentSessionId: String?
     @Published var isTranscribing: Bool = false
+    /// The id of the session that most recently finished, set by `stopSession`
+    /// before `currentSessionId` is cleared. Drives the post-stop navigation to
+    /// the finished transcript (see `RecordingNavigationPolicy.stopDestination`).
+    /// Cleared at the start of `startSession` so a new recording doesn't carry a
+    /// stale destination.
+    @Published var lastFinishedSessionId: String?
     /// Surfaces the most recent error from the recording / transcription / persistence
     /// pipelines so the UI can show a banner. `nil` means "nothing wrong right now".
     @Published var lastError: String?
@@ -355,6 +361,8 @@ final class AppState: ObservableObject {
         }
         let session = try transcriptStore.createSession(title: title, noteId: noteId)
         currentSessionId = session.id
+        // A fresh recording supersedes any prior post-stop destination.
+        lastFinishedSessionId = nil
 
         // Reset live view buffer, coalesce buffer, and diagnostic flags.
         overlaySegments.removeAll()
@@ -459,6 +467,9 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Expose the finished session so the UI can navigate to its transcript
+        // once `isTranscribing` flips false. Set before clearing currentSessionId.
+        lastFinishedSessionId = finishedSessionId
         currentSessionId = nil
         isTranscribing = false
     }
