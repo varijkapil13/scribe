@@ -9,7 +9,7 @@ final class TranscriptStore: @unchecked Sendable {
 
     // MARK: - Properties
 
-    nonisolated(unsafe) static let shared = TranscriptStore()
+    nonisolated static let shared = TranscriptStore()
 
     private let dbManager: DatabaseManager
 
@@ -28,7 +28,7 @@ final class TranscriptStore: @unchecked Sendable {
     /// note — transcripts are part of notes, not standalone entities.
     @discardableResult
     func createSession(title: String, noteId: String) throws -> Session {
-        var session = Session(title: title, noteId: noteId)
+        let session = Session(title: title, noteId: noteId)
         try db.write { database in
             try session.insert(database)
         }
@@ -144,7 +144,7 @@ final class TranscriptStore: @unchecked Sendable {
         speaker: String,
         text: String
     ) throws -> Segment {
-        var segment = Segment(
+        let segment = Segment(
             sessionId: sessionId,
             startMs: startMs,
             endMs: endMs,
