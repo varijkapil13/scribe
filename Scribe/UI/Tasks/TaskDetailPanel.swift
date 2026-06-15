@@ -15,6 +15,12 @@ struct TaskDetailPanel: View {
 
     let task: TodoTask
     var onDismiss: () -> Void
+    /// Optional navigation hook for a task converted from a meeting: when
+    /// provided, the "From: <recording>" row becomes a button that opens the
+    /// source recording's transcript via this closure (passed the session id).
+    /// Hosts without a navigation context (e.g. the calendar / note / transcript
+    /// inspector sheets) pass nil, leaving the row a read-only label.
+    var onOpenRecording: ((String) -> Void)?
 
     @StateObject private var viewModel: TaskEditorViewModel
     @State private var showDeleteConfirm = false
@@ -30,9 +36,14 @@ struct TaskDetailPanel: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(task: TodoTask, onDismiss: @escaping () -> Void) {
+    init(
+        task: TodoTask,
+        onDismiss: @escaping () -> Void,
+        onOpenRecording: ((String) -> Void)? = nil
+    ) {
         self.task = task
         self.onDismiss = onDismiss
+        self.onOpenRecording = onOpenRecording
         _viewModel = StateObject(wrappedValue: TaskEditorViewModel(task: task))
         _hasReminder = State(initialValue: task.remindAt != nil)
         _lastRemindDate = State(initialValue: task.remindAt)
@@ -58,9 +69,9 @@ struct TaskDetailPanel: View {
                     scheduleBlock
                     Divider().padding(.horizontal, DesignTokens.Spacing.lg)
                     organizationBlock
-                    if let title = viewModel.sourceSessionTitle {
+                    if let sessionId = viewModel.sourceSessionId {
                         Divider().padding(.horizontal, DesignTokens.Spacing.lg)
-                        sourceBlock(title: title)
+                        sourceBlock(sessionId: sessionId, title: viewModel.sourceSessionTitle)
                     }
                     if let err = viewModel.saveError {
                         HStack(spacing: DesignTokens.Spacing.sm) {
@@ -331,12 +342,46 @@ struct TaskDetailPanel: View {
 
     // MARK: - Source
 
-    private func sourceBlock(title: String) -> some View {
+    @ViewBuilder
+    private func sourceBlock(sessionId: String, title: String?) -> some View {
         panelRow(icon: "waveform.badge.mic", label: "From") {
-            Text(title)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if let title {
+                if let onOpenRecording {
+                    // The source recording still exists and we have a navigation
+                    // context: offer a button that opens its transcript.
+                    Button {
+                        viewModel.flush()
+                        onOpenRecording(sessionId)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(title)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.callout)
+                    }
+                    .buttonStyle(.link)
+                    .help("Open the source recording")
+                    .accessibilityLabel("Open source recording: \(title)")
+                } else {
+                    // No navigation host (inspector sheets): read-only label.
+                    Text(title)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                // The source recording was deleted: keep the provenance visible
+                // but make clear it can no longer be opened.
+                Text("Recording deleted")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .italic()
+                    .lineLimit(1)
+                    .accessibilityLabel("Source recording was deleted")
+            }
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
     }

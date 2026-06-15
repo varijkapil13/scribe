@@ -8,6 +8,10 @@ struct TaskListView: View {
     /// When set (command-bar / ⌘K deep-link), focus this task and open its
     /// inspector once the list loads.
     private let focusTaskId: String?
+    /// Navigation hook for opening the source recording of a task that was
+    /// converted from a meeting. Forwarded to the detail panel's "From:
+    /// <recording>" affordance. Nil hides the navigation behaviour.
+    private let onOpenRecording: ((String) -> Void)?
 
     @StateObject private var viewModel: TaskListViewModel
     @State private var selectedTask: TodoTask?
@@ -40,9 +44,14 @@ struct TaskListView: View {
     /// Active sort, persisted per filter (TickTick parity).
     @State private var sortMode: TaskListViewModel.TaskSort = .smart
 
-    init(filter: TaskStore.Filter, focusTaskId: String? = nil) {
+    init(
+        filter: TaskStore.Filter,
+        focusTaskId: String? = nil,
+        onOpenRecording: ((String) -> Void)? = nil
+    ) {
         self.filter = filter
         self.focusTaskId = focusTaskId
+        self.onOpenRecording = onOpenRecording
         _viewModel = StateObject(wrappedValue: TaskListViewModel(filter: filter))
     }
 
@@ -201,7 +210,11 @@ struct TaskListView: View {
             // Right: detail panel (slides in when a task is selected)
             if let task = selectedTask {
                 Divider()
-                TaskDetailPanel(task: task, onDismiss: { selectedTask = nil })
+                TaskDetailPanel(
+                    task: task,
+                    onDismiss: { selectedTask = nil },
+                    onOpenRecording: onOpenRecording
+                )
                     .frame(width: 320)
                     .id(task.id)
                     .transition(.move(edge: .trailing).combined(with: .opacity))

@@ -687,7 +687,10 @@ struct MainWindowView: View {
         case .recordings:
             TranscriptArchiveView(onNavigate: { nav.navigate(to: .session($0)) })
         case .tasks(let filter):
-            TaskListView(filter: filter)
+            TaskListView(
+                filter: filter,
+                onOpenRecording: { nav.navigate(to: .session($0)) }
+            )
                 .id(filter)
         case .taskCalendar:
             TaskCalendarView(onNavigateToNote: { noteId in
@@ -714,7 +717,11 @@ struct MainWindowView: View {
         case .task(let id):
             // Command-bar deep-link to a single task: open the All list and
             // focus it (its inspector opens automatically).
-            TaskListView(filter: .all, focusTaskId: id)
+            TaskListView(
+                filter: .all,
+                focusTaskId: id,
+                onOpenRecording: { nav.navigate(to: .session($0)) }
+            )
                 .id("task-\(id)")
         case .notes(let filter):
             notesDetailView(filter: filter)
