@@ -309,7 +309,7 @@ private struct IntelligenceSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                     Text("Apple Intelligence is available on this Mac")
@@ -654,16 +654,16 @@ private struct MCPSettingsPane: View {
 
             if mcpEnabled && server.isRunning {
                 Section("Connect an Agent") {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                         Text("Add this to your MCP client config (e.g. Claude Desktop's `claude_desktop_config.json`):")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(claudeDesktopConfig)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
-                            .padding(8)
-                            .background(Color.primary.opacity(0.05))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .padding(DesignTokens.Spacing.sm)
+                            .background(DesignTokens.Palette.fill(.hover))
+                            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
                     }
                 }
 
@@ -716,7 +716,7 @@ private struct MCPSettingsPane: View {
 /// System-Settings-style toggle with a caption describing what it does.
 @ViewBuilder
 fileprivate func toggleWithCaption(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
         Toggle(title, isOn: isOn)
         Text(caption)
             .font(.caption)

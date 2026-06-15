@@ -143,7 +143,7 @@ struct OnboardingView: View {
 
         case .systemAudio:
             Toggle(isOn: $captureSystemAudio) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                     Text("Capture system audio for meetings")
                         .font(.callout.weight(.medium))
                     Text("Turn this on to transcribe remote participants. You can change it any time.")
@@ -175,12 +175,12 @@ struct OnboardingView: View {
     /// illustrative — it shows the three segments the user will move between so
     /// the rows below read as "what lives where".
     private var surfaceSwitcherPreview: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: DesignTokens.Spacing.xxs) {
             switcherSegment(symbol: "waveform", title: "Capture", selected: true)
             switcherSegment(symbol: "doc.text", title: "Notes", selected: false)
             switcherSegment(symbol: "checklist", title: "Tasks", selected: false)
         }
-        .padding(2)
+        .padding(DesignTokens.Spacing.xxs)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                 .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
@@ -217,7 +217,7 @@ struct OnboardingView: View {
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 28)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text(name)
                     .font(.callout.weight(.medium))
                 Text(detail)
