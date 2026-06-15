@@ -96,6 +96,19 @@ struct OnboardingView: View {
     @ViewBuilder
     private var stepExtras: some View {
         switch step.kind {
+        case .surfaces:
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                surfaceRow(symbol: "waveform",
+                           name: "Capture",
+                           detail: "Record & transcribe conversations")
+                surfaceRow(symbol: "doc.text",
+                           name: "Notes",
+                           detail: "A markdown notebook for your ideas")
+                surfaceRow(symbol: "checklist",
+                           name: "Tasks",
+                           detail: "Keep your to-dos within reach")
+            }
+
         case .microphone:
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 HStack(spacing: DesignTokens.Spacing.md) {
@@ -152,6 +165,27 @@ struct OnboardingView: View {
         case .welcome:
             EmptyView()
         }
+    }
+
+    private func surfaceRow(symbol: String, name: String, detail: String) -> some View {
+        HStack(spacing: DesignTokens.Spacing.md) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(accent)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.callout.weight(.medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(name). \(detail)")
     }
 
     private func shortcutKeycap(_ label: String) -> some View {
@@ -213,7 +247,7 @@ struct OnboardingView: View {
 
     // MARK: - Steps model
 
-    private enum StepKind { case welcome, microphone, systemAudio, recordShortcut }
+    private enum StepKind { case welcome, surfaces, microphone, systemAudio, recordShortcut }
 
     private struct Step: Identifiable {
         let id = UUID()
@@ -227,6 +261,10 @@ struct OnboardingView: View {
                  symbol: "text.quote",
                  title: "Welcome to Scribe",
                  body: "A calm place to record conversations, transcribe them on-device, and turn them into notes and tasks — all privately, all yours."),
+            Step(kind: .surfaces,
+                 symbol: "square.grid.2x2",
+                 title: "Three places to work",
+                 body: "Scribe is three surfaces in one. Capture records and transcribes your conversations. Notes is a markdown notebook for writing things down. Tasks keeps your to-dos in view."),
             Step(kind: .microphone,
                  symbol: "mic",
                  title: "Hear yourself think",
