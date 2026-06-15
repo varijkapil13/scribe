@@ -91,6 +91,8 @@ struct NoteEditorScreen: View {
         _model = StateObject(wrappedValue: NoteEditorModel(noteId: noteId))
     }
 
+    @State private var newTag: String = ""
+
     var body: some View {
         VStack(spacing: 0) {
             TextField("Title", text: $model.title)
@@ -99,6 +101,8 @@ struct NoteEditorScreen: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
             Divider().padding(.top, 8)
+            tagsBar
+            Divider()
             TextEditor(text: $model.body)
                 .font(.body)
                 .padding(.horizontal, 12)
@@ -108,6 +112,112 @@ struct NoteEditorScreen: View {
         .onChange(of: model.title) { model.markDirty() }
         .onChange(of: model.body) { model.markDirty() }
         .onDisappear { model.flush() }
+    }
+
+    /// Inline tag editor: a wrapping row of removable chips plus an add field
+    /// that commits on submit. Normalisation (trim, strip leading '#',
+    /// lowercase, dedupe) lives in the model to match the macOS note editor.
+    private var tagsBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !model.tags.isEmpty {
+                TagFlowLayout(spacing: 6) {
+                    ForEach(model.tags, id: \.self) { tag in
+                        TagChip(tag: tag) { model.removeTag(tag) }
+                    }
+                }
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "tag")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Add tag", text: $newTag)
+                    .font(.subheadline)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onSubmit(commitTag)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    private func commitTag() {
+        model.addTag(newTag)
+        newTag = ""
+    }
+}
+
+/// A single removable tag chip — label plus an "x" button.
+private struct TagChip: View {
+    let tag: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("#\(tag)")
+                .font(.caption)
+                .lineLimit(1)
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove tag \(tag)")
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(.secondarySystemBackground), in: Capsule())
+    }
+}
+
+/// Minimal wrapping layout for chips — flows children left-to-right and wraps
+/// to the next line when the proposed width is exceeded. Native `Layout`, no
+/// AppKit.
+private struct TagFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
+                totalHeight += rowHeight + spacing
+                totalWidth = max(totalWidth, rowWidth)
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                rowWidth += (rowWidth > 0 ? spacing : 0) + size.width
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
+        totalHeight += rowHeight
+        totalWidth = max(totalWidth, rowWidth)
+        return CGSize(width: min(totalWidth, maxWidth), height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let maxWidth = bounds.width
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width - bounds.minX > maxWidth {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading,
+                          proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 
@@ -142,6 +252,7 @@ final class NotesViewModel: ObservableObject {
 final class NoteEditorModel: ObservableObject {
     @Published var title: String = ""
     @Published var body: String = ""
+    @Published var tags: [String] = []
 
     private let noteId: String
     private let store: NoteStore
@@ -160,6 +271,31 @@ final class NoteEditorModel: ObservableObject {
         self.note = note
         self.title = note.title
         self.body = note.body
+        self.tags = (try? store.tags(for: noteId)) ?? []
+    }
+
+    // MARK: - Tags
+
+    /// Adds a normalised tag (trimmed, leading '#' stripped, lowercased — to
+    /// match `NoteStore.normalizeTags` so the live chips equal what's saved).
+    /// No-op for blanks or duplicates. Marks dirty so autosave persists it.
+    func addTag(_ raw: String) {
+        let normalised = Self.normalizeTag(raw)
+        guard !normalised.isEmpty, !tags.contains(normalised) else { return }
+        tags.append(normalised)
+        markDirty()
+    }
+
+    func removeTag(_ tag: String) {
+        guard let idx = tags.firstIndex(of: tag) else { return }
+        tags.remove(at: idx)
+        markDirty()
+    }
+
+    private static func normalizeTag(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") { s.removeFirst() }
+        return s.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
     func markDirty() {
@@ -178,7 +314,6 @@ final class NoteEditorModel: ObservableObject {
         guard dirty, var note else { return }
         note.title = title
         note.body = body
-        let tags = (try? store.tags(for: noteId)) ?? []
         try? store.updateNote(note, tags: tags)
         self.note = note
         dirty = false
