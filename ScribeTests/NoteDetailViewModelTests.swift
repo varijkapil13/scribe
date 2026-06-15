@@ -10,6 +10,10 @@ final class NoteDetailViewModelTests: XCTestCase {
     private var transcripts: TranscriptStore!
     private var tasks: TaskStore!
     private var cancellables: Set<AnyCancellable> = []
+    /// Temp vault root for the disk-backed file store used by the property
+    /// round-trip tests. `nil` for the logic-only tests above (no disk mirror).
+    private var tempRoot: URL?
+    private var fileStore: NoteFileStore?
 
     override func setUp() async throws {
         try await super.setUp()
@@ -25,7 +29,22 @@ final class NoteDetailViewModelTests: XCTestCase {
         transcripts = nil
         tasks = nil
         dbm = nil
+        if let tempRoot { try? FileManager.default.removeItem(at: tempRoot) }
+        tempRoot = nil
+        fileStore = nil
         try await super.tearDown()
+    }
+
+    /// Swaps `notes` for a disk-backed store (temp dir + in-memory DB) so the
+    /// property load/save path — which reads/writes frontmatter `extra` on the
+    /// `.md` file — has somewhere to persist. Used only by the property tests.
+    private func useDiskBackedStore() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let store = NoteFileStore(directory: NotesDirectory(root: root))
+        tempRoot = root
+        fileStore = store
+        notes = NoteStore(databaseManager: dbm, fileStore: store)
     }
 
     /// Builds a fully-injected VM. Crucially passes `taskStore: tasks` so the
@@ -165,5 +184,125 @@ final class NoteDetailViewModelTests: XCTestCase {
         XCTAssertFalse(suggestions.contains("work"), "applied tag must be excluded")
         XCTAssertTrue(suggestions.contains("workout"), "prefix match must be suggested")
         XCTAssertFalse(suggestions.contains("personal"), "non-matching tag must be excluded")
+    }
+
+    // MARK: - Properties (frontmatter round-trip)
+
+    /// Writes the `.md` frontmatter for a freshly created note's id, injecting
+    /// the given `extra` lines, then returns the (now disk-backed) note.
+    /// Mirrors how an external editor / earlier save would have left the file.
+    private func seedNoteWithExtra(_ extra: [FrontmatterEntry], body: String = "Body") throws -> Note {
+        let note = try notes.createNote(title: "Props", body: body)
+        let url = try XCTUnwrap(try fileStore?.findURL(for: note.id))
+        var file = try XCTUnwrap(fileStore?.read(at: url))
+        file.frontmatter.extra = extra
+        _ = try fileStore?.write(file)
+        return note
+    }
+
+    func testLoadPropertiesFromFrontmatter() throws {
+        useDiskBackedStore()
+        let note = try seedNoteWithExtra([
+            FrontmatterEntry(key: "status", value: "doing"),
+            FrontmatterEntry(key: "priority", value: "2"),
+            FrontmatterEntry(key: "starred", value: "true"),
+        ])
+
+        let vm = makeVM(note)
+
+        XCTAssertEqual(vm.properties.map(\.key), ["status", "priority", "starred"])
+        XCTAssertEqual(vm.properties.first { $0.key == "priority" }?.value, .number(2))
+        XCTAssertEqual(vm.properties.first { $0.key == "starred" }?.value, .checkbox(true))
+    }
+
+    func testLoadPropertiesEmptyWhenNoExtra() throws {
+        useDiskBackedStore()
+        let note = try notes.createNote(title: "Bare", body: "")
+        let vm = makeVM(note)
+        XCTAssertTrue(vm.properties.isEmpty)
+    }
+
+    func testUpdatePropertiesPersistsToFrontmatterAndRoundTrips() throws {
+        useDiskBackedStore()
+        let note = try notes.createNote(title: "Edit me", body: "The body stays.")
+        let vm = makeVM(note)
+
+        vm.updateProperties([
+            NoteProperty(key: "status", value: .select("done")),
+            NoteProperty(key: "count", value: .number(3)),
+            NoteProperty(key: "topics", value: .list(["swift", "macos"])),
+        ])
+
+        // Persisted to disk: re-read the file's frontmatter directly.
+        let url = try XCTUnwrap(try fileStore?.findURL(for: note.id))
+        let file = try XCTUnwrap(fileStore?.read(at: url))
+        XCTAssertEqual(file.frontmatter.extraValue(forKey: "status"), "done")
+        XCTAssertEqual(file.frontmatter.extraValue(forKey: "count"), "3")
+        XCTAssertEqual(file.frontmatter.extraValue(forKey: "topics"), "[swift, macos]")
+        // Body preserved.
+        XCTAssertEqual(file.body, "The body stays.")
+
+        // Round-trips back through a fresh VM load. `select` and `text` share an
+        // identical wire encoding (a bare scalar), so without a Base column type
+        // hint the heuristic reader infers the bare `done` as `.text` — the value
+        // survives losslessly, the *type* narrows to text. `number` and `list`
+        // carry distinguishing wire shapes and round-trip with their own types.
+        let reloaded = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+        XCTAssertEqual(reloaded.properties.first { $0.key == "status" }?.value, .text("done"))
+        XCTAssertEqual(reloaded.properties.first { $0.key == "count" }?.value, .number(3))
+        XCTAssertEqual(reloaded.properties.first { $0.key == "topics" }?.value, .list(["swift", "macos"]))
+    }
+
+    func testUpdatePropertiesDropsEmptyValues() throws {
+        useDiskBackedStore()
+        let note = try seedNoteWithExtra([FrontmatterEntry(key: "status", value: "doing")])
+        let vm = makeVM(note)
+
+        // Clearing status to empty + adding a non-empty key.
+        vm.updateProperties([
+            NoteProperty(key: "status", value: .select("")),
+            NoteProperty(key: "owner", value: .text("varij")),
+        ])
+
+        // Empty `status` dropped; `owner` kept — both on disk and in the bound list.
+        let url = try XCTUnwrap(try fileStore?.findURL(for: note.id))
+        let file = try XCTUnwrap(fileStore?.read(at: url))
+        XCTAssertNil(file.frontmatter.extraValue(forKey: "status"))
+        XCTAssertEqual(file.frontmatter.extraValue(forKey: "owner"), "varij")
+        XCTAssertEqual(vm.properties.map(\.key), ["owner"])
+    }
+
+    func testUpdatePropertiesPreservesReservedExtras() throws {
+        useDiskBackedStore()
+        // `font` is a reserved extra (per-note typeface) the property pane
+        // must not surface or clobber.
+        let note = try seedNoteWithExtra([
+            FrontmatterEntry(key: "font", value: "serif"),
+            FrontmatterEntry(key: "status", value: "doing"),
+        ])
+        let vm = makeVM(note)
+        XCTAssertEqual(vm.properties.map(\.key), ["status"], "reserved `font` must not surface as a property")
+
+        vm.updateProperties([NoteProperty(key: "status", value: .select("done"))])
+
+        let url = try XCTUnwrap(try fileStore?.findURL(for: note.id))
+        let file = try XCTUnwrap(fileStore?.read(at: url))
+        XCTAssertEqual(file.frontmatter.extraValue(forKey: "font"), "serif", "reserved extra preserved")
+        XCTAssertEqual(file.frontmatter.extraValue(forKey: "status"), "done")
+    }
+
+    func testPropertyOptionSuggestionsAggregatesSelectAndList() throws {
+        useDiskBackedStore()
+        let note = try seedNoteWithExtra([
+            FrontmatterEntry(key: "status", value: "doing"),
+            FrontmatterEntry(key: "topics", value: "[swift, macos]"),
+        ])
+        let vm = makeVM(note)
+        // A `list` value contributes its distinct members (sorted) as options.
+        XCTAssertEqual(vm.propertyOptionSuggestions["topics"], ["macos", "swift"])
+        // A bare scalar (`status: doing`) infers as `.text`, not `.select`, since
+        // the two are wire-identical and no Base column pins the type here — so it
+        // is not a select/list option source and is absent from the suggestions.
+        XCTAssertNil(vm.propertyOptionSuggestions["status"])
     }
 }

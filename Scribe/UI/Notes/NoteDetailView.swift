@@ -8,6 +8,11 @@ struct NoteDetailView: View {
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
+    /// Whether the frontmatter "Properties" block is expanded. Seeded on
+    /// appear: expanded when the note already has properties, collapsed
+    /// (but discoverable) when it has none.
+    @State private var propertiesExpanded: Bool = false
+    @State private var didSeedPropertiesExpansion: Bool = false
     @State private var selectedSessionId: String? = nil
     @State private var userExplicitlyCollapsed: Bool = false
     @State private var openedTaskFromAction: TodoTask?
@@ -139,6 +144,22 @@ struct NoteDetailView: View {
                         onRemove: { vm.removeTag($0) }
                     )
                     .accessibilityLabel("Note tags")
+
+                    // Frontmatter properties — Obsidian-style typed metadata
+                    // block. Reuses the standalone `NotePropertiesView`; the
+                    // VM owns load/save back to the `.md` file's frontmatter.
+                    NotePropertiesSection(
+                        isExpanded: $propertiesExpanded,
+                        count: vm.properties.count,
+                        editor: {
+                            NotePropertiesView(
+                                properties: $vm.properties,
+                                onCommit: { vm.updateProperties($0) },
+                                optionSuggestions: vm.propertyOptionSuggestions
+                            )
+                        }
+                    )
+                    .accessibilityLabel("Note properties")
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xl)
@@ -194,6 +215,16 @@ struct NoteDetailView: View {
                     onNavigate: onNavigate
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .onAppear {
+            // Collapse the properties block by default for notes with none
+            // (it stays discoverable via its disclosure header); expand it
+            // when the note already carries properties. Seed once so a user
+            // toggle isn't overwritten on a later re-appear.
+            if !didSeedPropertiesExpansion {
+                propertiesExpanded = !vm.properties.isEmpty
+                didSeedPropertiesExpansion = true
             }
         }
         .onDisappear {
@@ -288,6 +319,83 @@ struct NoteDetailView: View {
             defaultName: ExportFileName.safe(vm.note.title),
             fileExtension: "md"
         )
+    }
+}
+
+// MARK: - Properties section
+
+/// Collapsible disclosure wrapper around `NotePropertiesView` so the
+/// frontmatter properties block sits unobtrusively in the note header.
+///
+/// When collapsed it shows a compact "Properties (count)" disclosure row;
+/// when expanded it hands off to `NotePropertiesView`, which renders its own
+/// "Properties" header (with the add affordance), so the collapsed row stays
+/// out of the way to avoid a duplicated title.
+private struct NotePropertiesSection<Editor: View>: View {
+    @Binding var isExpanded: Bool
+    let count: Int
+    @ViewBuilder var editor: () -> Editor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if isExpanded {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    collapseButton
+                }
+                editor()
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                collapsedRow
+            }
+        }
+    }
+
+    private var collapsedRow: some View {
+        Button {
+            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+                isExpanded = true
+            }
+        } label: {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Image(systemName: "list.bullet.rectangle")
+                    .imageScale(.small)
+                Text("Properties")
+                if count > 0 {
+                    Text("\(count)")
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .imageScale(.small)
+                    .foregroundStyle(.tertiary)
+            }
+            .font(DesignTokens.Typography.eyebrow)
+            .textCase(.uppercase)
+            .tracking(0.5)
+            .foregroundStyle(.secondary)
+            .padding(.vertical, DesignTokens.Spacing.xxs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show note properties")
+    }
+
+    private var collapseButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
+                isExpanded = false
+            }
+        } label: {
+            Image(systemName: "chevron.up")
+                .imageScale(.small)
+                .foregroundStyle(.tertiary)
+                .padding(DesignTokens.Spacing.xxs)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Hide note properties")
     }
 }
 

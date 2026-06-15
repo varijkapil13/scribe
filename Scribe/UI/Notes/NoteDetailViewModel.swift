@@ -7,6 +7,11 @@ final class NoteDetailViewModel: ObservableObject {
     @Published var note: Note
     @Published var tags: [String] = []
     @Published var backlinks: [Note] = []
+    /// The note's typed frontmatter properties (Obsidian-style "properties"
+    /// block), derived from the `.md` file's frontmatter `extra` on load and
+    /// persisted straight back to disk on edit. Bound into `NotePropertiesView`
+    /// in the editor header.
+    @Published var properties: [NoteProperty] = []
     @Published var isDirty: Bool = false
     @Published var errorMessage: String? = nil
     @Published var sessions: [Session] = []
@@ -63,10 +68,82 @@ final class NoteDetailViewModel: ObservableObject {
         do {
             tags = try store.tags(for: note.id)
             backlinks = try store.backlinks(for: note.id)
+            loadProperties()
             recomputeUnresolvedLinks()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Properties (frontmatter)
+
+    /// Reads the note's typed properties from its `.md` frontmatter `extra`
+    /// map via the `NoteFrontmatter` bridge. Disk is the source of truth for
+    /// frontmatter extras (they aren't DB columns), so we read straight from
+    /// the file store. No-op when no file store is wired (logic-only tests
+    /// without a disk mirror) — `properties` stays empty.
+    func loadProperties() {
+        guard let frontmatter = currentFrontmatter() else {
+            properties = []
+            return
+        }
+        properties = frontmatter.properties()
+    }
+
+    /// Persists the full property list back into the note's frontmatter,
+    /// preserving the body and every other (reserved + unknown) frontmatter
+    /// key, then refreshes the in-memory list to reflect the normalised /
+    /// dropped-empty result. Called from `NotePropertiesView`'s `onCommit`.
+    ///
+    /// Properties are written directly to disk (not through `updateNote`)
+    /// because frontmatter `extra` isn't mirrored from the DB — and
+    /// `NoteStore.mirrorToDisk` already re-reads and preserves on-disk extras
+    /// on a body/tag save, so the two write paths don't clobber each other.
+    func updateProperties(_ updated: [NoteProperty]) {
+        guard let fileStore = store.fileStore,
+              let url = try? fileStore.findURL(for: note.id),
+              var file = try? fileStore.read(at: url) else {
+            // No disk backing — keep the edit live in-memory so the UI still
+            // reflects it, but there's nowhere to persist.
+            properties = updated
+            return
+        }
+        file.frontmatter.applyProperties(updated)
+        do {
+            VaultWriteGuard.shared.recordSelfWrite()
+            _ = try fileStore.write(file)
+            // Re-derive from what was actually written so the bound list
+            // matches disk (empty values dropped, order normalised).
+            properties = file.frontmatter.properties()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Distinct existing values per `select`/`list` key across the note's own
+    /// properties, powering `NotePropertiesView`'s suggestion menus.
+    var propertyOptionSuggestions: [String: [String]] {
+        var out: [String: [String]] = [:]
+        for property in properties {
+            switch property.value {
+            case .select(let s) where !s.isEmpty:
+                out[property.key, default: []].append(s)
+            case .list(let xs):
+                out[property.key, default: []].append(contentsOf: xs)
+            default:
+                break
+            }
+        }
+        return out.mapValues { Array(Set($0)).sorted() }
+    }
+
+    /// The current on-disk frontmatter for this note, if a file store is wired
+    /// and a file exists. Used to read/seed typed properties.
+    private func currentFrontmatter() -> NoteFrontmatter? {
+        guard let fileStore = store.fileStore,
+              let url = try? fileStore.findURL(for: note.id),
+              let file = try? fileStore.read(at: url) else { return nil }
+        return file.frontmatter
     }
 
     func save() {
