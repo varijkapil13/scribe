@@ -55,6 +55,7 @@ let package = Package(
                 // Editor surface (imports CodeEditSourceEditor).
                 "UI/Notes/CodeEditNoteTextView.swift",
                 "UI/Notes/CodeEditNoteSupport.swift",
+                "UI/Notes/EditorDiagramFolding.swift",
                 // SwiftUI views that transitively reference the editor surface.
                 "UI/Notes/NoteEditorView.swift",
                 "UI/Notes/NoteDetailView.swift",
