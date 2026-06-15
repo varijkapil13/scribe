@@ -217,9 +217,25 @@ jobs:
             TEST_RUNNER_SCRIBE_SCREENSHOT_DIR="$SCRIBE_SCREENSHOT_DIR" \
             2>&1 | tee "$SCRIBE_SCREENSHOT_DIR/xcodebuild.log"
 
+      # The macOS app/test process is sandboxed and can't reliably write PNGs to
+      # the runner temp dir, but every screenshot IS captured as an XCTAttachment
+      # inside the .xcresult. Export those attachments to real PNG files so they
+      # can be downloaded and viewed directly.
+      - name: Extract screenshots from xcresult
+        if: always()
+        run: |
+          XCR="${{ runner.temp }}/screenshots/ScreenshotTests.xcresult"
+          OUT="${{ runner.temp }}/screenshots/extracted"
+          mkdir -p "$OUT"
+          if [ -d "$XCR" ]; then
+            xcrun xcresulttool export attachments \
+              --path "$XCR" --output-path "$OUT" || true
+          fi
+          ls -la "$OUT" || true
+
       - name: List captured screenshots
         if: always()
-        run: ls -la "${{ runner.temp }}/screenshots" || true
+        run: ls -la "${{ runner.temp }}/screenshots" "${{ runner.temp }}/screenshots/extracted" || true
 
       - name: Upload screenshots + result bundle
         if: always()
@@ -228,6 +244,7 @@ jobs:
           name: ui-screenshots
           path: |
             ${{ runner.temp }}/screenshots/*.png
+            ${{ runner.temp }}/screenshots/extracted/**
             ${{ runner.temp }}/screenshots/xcodebuild.log
             ${{ runner.temp }}/screenshots/ScreenshotTests.xcresult
           if-no-files-found: warn
