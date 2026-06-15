@@ -238,13 +238,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        // Post the navigate notification BEFORE `startSession` flips
-        // `isTranscribing`. MainWindowView's `.onChange(of:isTranscribing)`
-        // would otherwise observe a still-stale `selection` and flash the
-        // LiveSessionView for one frame before the navigate handler runs.
-        // Posting first means `selection = .note(id)` lands before the
-        // recording flip, and the existing `if case .note = selection`
-        // guard suppresses the flash.
+        // Auto-create path: hand the freshly created meeting note to the window
+        // so it routes a single atomic transition through `NavigationCoordinator`
+        // (`replaceCurrent` via `RecordingNavigationPolicy.autoCreateDestination`).
+        // We still post before `startSession` flips `isTranscribing` as
+        // defense-in-depth, but correctness no longer *depends* on that
+        // ordering: `.note(id)` is the only destination this path ever sets, so
+        // the `isTranscribing` policy can never resolve to `.live` first. There
+        // is no intermediate `.live` frame even if the two SwiftUI observation
+        // callbacks were reordered or coalesced (B1.1).
         if resolved.didCreateNote {
             NotificationCenter.default.post(
                 name: .scribeRequestNavigateToNote,
