@@ -242,9 +242,13 @@ final class NoteDetailViewModelTests: XCTestCase {
         // Body preserved.
         XCTAssertEqual(file.body, "The body stays.")
 
-        // Round-trips back through a fresh VM load.
+        // Round-trips back through a fresh VM load. `select` and `text` share an
+        // identical wire encoding (a bare scalar), so without a Base column type
+        // hint the heuristic reader infers the bare `done` as `.text` — the value
+        // survives losslessly, the *type* narrows to text. `number` and `list`
+        // carry distinguishing wire shapes and round-trip with their own types.
         let reloaded = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
-        XCTAssertEqual(reloaded.properties.first { $0.key == "status" }?.value, .select("done"))
+        XCTAssertEqual(reloaded.properties.first { $0.key == "status" }?.value, .text("done"))
         XCTAssertEqual(reloaded.properties.first { $0.key == "count" }?.value, .number(3))
         XCTAssertEqual(reloaded.properties.first { $0.key == "topics" }?.value, .list(["swift", "macos"]))
     }
@@ -294,7 +298,11 @@ final class NoteDetailViewModelTests: XCTestCase {
             FrontmatterEntry(key: "topics", value: "[swift, macos]"),
         ])
         let vm = makeVM(note)
-        XCTAssertEqual(vm.propertyOptionSuggestions["status"], ["doing"])
+        // A `list` value contributes its distinct members (sorted) as options.
         XCTAssertEqual(vm.propertyOptionSuggestions["topics"], ["macos", "swift"])
+        // A bare scalar (`status: doing`) infers as `.text`, not `.select`, since
+        // the two are wire-identical and no Base column pins the type here — so it
+        // is not a select/list option source and is absent from the suggestions.
+        XCTAssertNil(vm.propertyOptionSuggestions["status"])
     }
 }
