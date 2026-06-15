@@ -6,9 +6,10 @@ import SwiftUI
 /// `NavigationStack`. On iPad this still reads well; a `NavigationSplitView`
 /// refinement for regular width can come later.
 struct RootTabView: View {
-    enum Tab: Hashable { case today, notes, tasks }
+    enum Tab: Hashable { case today, notes, tasks, settings }
 
     @State private var selection: Tab = .today
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView(selection: $selection) {
@@ -23,6 +24,17 @@ struct RootTabView: View {
             TasksScreen()
                 .tabItem { Label("Tasks", systemImage: "checklist") }
                 .tag(Tab.tasks)
+
+            SettingsScreen()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(Tab.settings)
+        }
+        // Opportunistic sync when the app returns to the foreground. No-op
+        // unless the user enabled iCloud sync (CloudKitSyncService.isEnabled).
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { try? await TaskSyncCoordinator.live.sync() }
+            }
         }
     }
 }

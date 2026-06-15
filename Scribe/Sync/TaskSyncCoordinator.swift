@@ -76,6 +76,17 @@ final class TaskSyncCoordinator {
         self.cursor = cursor
     }
 
+    /// The production coordinator wired to the shared task store + CloudKit.
+    /// Computed (not a stored singleton) so it carries no cross-actor state;
+    /// the cursor it uses persists in `UserDefaults`.
+    static var live: TaskSyncCoordinator {
+        TaskSyncCoordinator(
+            local: TaskStore.shared,
+            remote: CloudKitSyncService(),
+            cursor: UserDefaultsSyncCursorStore()
+        )
+    }
+
     /// Full round-trip. No-op unless the user opted into iCLoud sync.
     func sync() async throws {
         guard CloudKitSyncService.isEnabled else { return }
