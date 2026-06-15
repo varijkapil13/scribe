@@ -76,6 +76,15 @@ struct TodayView: View {
     /// Task Calendar always plan against the same selected day.
     @Environment(DayPlanningModel.self) private var dayPlanning
 
+    /// On first open the `HSplitView` lays out its panes at a compressed width
+    /// and then resolves toward the `idealWidth` split — and SwiftUI *animates*
+    /// that resolution, so the note pane and task rail visibly slide sideways
+    /// (the day strip appearing to grow from 5→7 days) for a beat before
+    /// settling. Freeze animations for that first layout pass so the split
+    /// snaps straight to its resting widths; user-driven divider drags (which
+    /// only happen after `hasAppeared`) still animate normally.
+    @State private var hasAppeared = false
+
     var body: some View {
         HSplitView {
             DailyNoteView(selectedDate: selectedDateBinding, onNavigate: onNavigate)
@@ -89,6 +98,14 @@ struct TodayView: View {
                 .layoutPriority(1)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(tasksAccessibilityLabel)
+        }
+        .transaction { txn in
+            if !hasAppeared { txn.animation = nil }
+        }
+        .onAppear {
+            // Flip on the next runloop tick so the very first layout pass — the
+            // one that would otherwise animate the split into place — is excluded.
+            DispatchQueue.main.async { hasAppeared = true }
         }
     }
 
