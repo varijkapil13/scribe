@@ -52,6 +52,50 @@ final class ActionItemConverterTests: XCTestCase {
         XCTAssertEqual(draft.projectId, "project-7")
     }
 
+    func testDraftDefaultsToInboxWhenNoProjectSupplied() {
+        // Omitting projectId keeps the task in Inbox (nil), the pre-B3 default,
+        // so unbound transcripts don't get misfiled into a project.
+        let item = ActionItem(
+            id: UUID(),
+            description: "Review the deck",
+            assignee: nil,
+            deadline: nil,
+            priority: nil,
+            sourceText: ""
+        )
+        let draft = ActionItemConverter.draft(from: item, sessionId: "session-9", detector: nil)
+        XCTAssertNil(draft.projectId)
+        XCTAssertEqual(draft.sourceSessionId, "session-9")
+    }
+
+    func testProjectAndSourceCoexistWithRichFields() {
+        // The B3 context (projectId + sourceSessionId) must survive alongside
+        // the rest of the mapped fields, not clobber assignee/deadline mapping.
+        let item = ActionItem(
+            id: UUID(),
+            description: "Ship the migration",
+            assignee: "Bob",
+            deadline: "December 1, 2099",
+            priority: .medium,
+            sourceText: "Bob owns the migration."
+        )
+        let detector = NSDataDetector.scribeDateDetector
+        let draft = ActionItemConverter.draft(
+            from: item,
+            sessionId: "session-77",
+            projectId: "project-99",
+            detector: detector
+        )
+
+        XCTAssertEqual(draft.projectId, "project-99")
+        XCTAssertEqual(draft.sourceSessionId, "session-77")
+        XCTAssertEqual(draft.sourceActionItemId, item.id.uuidString)
+        XCTAssertEqual(draft.priority, .medium)
+        XCTAssertEqual(draft.tags, ["bob"])
+        XCTAssertTrue(draft.notes.contains("Assignee: Bob"))
+        XCTAssertNotNil(draft.dueAt)
+    }
+
     func testDraftIncludesDeadlineNoteEvenWhenUnparseable() {
         let item = ActionItem(
             id: UUID(),

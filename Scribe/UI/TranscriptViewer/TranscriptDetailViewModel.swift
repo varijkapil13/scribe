@@ -46,6 +46,7 @@ final class TranscriptDetailViewModel: ObservableObject {
 
     private let store: TranscriptStore
     private let taskStore: TaskStore
+    private let noteStore: NoteStore
 
     // MARK: - Computed Properties
 
@@ -71,10 +72,25 @@ final class TranscriptDetailViewModel: ObservableObject {
 
     init(session: Session,
          store: TranscriptStore = TranscriptStore(),
-         taskStore: TaskStore = TaskStore()) {
+         taskStore: TaskStore = TaskStore(),
+         noteStore: NoteStore = .shared) {
         self.session = session
         self.store = store
         self.taskStore = taskStore
+        self.noteStore = noteStore
+    }
+
+    /// Project the session's converted tasks should land in. Derived from the
+    /// note this session is bound to (its `notebookId`); `nil` when the session
+    /// is unbound or its note lives in Inbox, which keeps the task in Inbox.
+    /// Looked up lazily at conversion time rather than cached so a note moved
+    /// between notebooks is reflected without rebuilding the view model.
+    var boundProjectId: String? {
+        guard let noteId = session.noteId,
+              let note = try? noteStore.fetchNote(id: noteId) else {
+            return nil
+        }
+        return note.notebookId
     }
 
     /// Re-fetches session metadata from the store. Called after edits to keep
@@ -153,12 +169,19 @@ final class TranscriptDetailViewModel: ObservableObject {
     /// (or the existing one when the row had already been converted) so the
     /// caller can immediately open the editor sheet on it.
     @discardableResult
-    func convertActionItemToTask(_ item: ActionItem) -> TodoTask? {
+    func convertActionItemToTask(_ item: ActionItem, projectId: String? = nil) -> TodoTask? {
         let actionItemId = item.id.uuidString
         if let existing = try? taskStore.fetchTaskForActionItem(actionItemId) {
             return existing
         }
-        let draft = ActionItemConverter.draft(from: item, sessionId: session.id)
+        // Prefer an explicitly supplied project; otherwise inherit the bound
+        // note's notebook so the task lands in the meeting's project, not Inbox.
+        let resolvedProjectId = projectId ?? boundProjectId
+        let draft = ActionItemConverter.draft(
+            from: item,
+            sessionId: session.id,
+            projectId: resolvedProjectId
+        )
         do {
             let created = try taskStore.createTask(
                 title: draft.title,
