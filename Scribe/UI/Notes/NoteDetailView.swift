@@ -33,6 +33,26 @@ struct NoteDetailView: View {
         VStack(spacing: 0) {
             // ── Document header ────────────────────────────────────────────
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                if !focusMode {
+                    // Muted breadcrumb so the user knows where they landed after a
+                    // ⌘K / deep-link jump. Uses the static "Notes" root rather than
+                    // the notebook name — the notebook label lives inside the
+                    // NotebookPicker's own state and isn't available here without a
+                    // new fetch.
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        Text("Notes")
+                        Image(systemName: "chevron.right")
+                            .imageScale(.small)
+                            .foregroundStyle(.tertiary)
+                        Text(vm.note.title.isEmpty ? "Untitled" : vm.note.title)
+                            .lineLimit(1)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Location: Notes, \(vm.note.title.isEmpty ? "Untitled" : vm.note.title)")
+                }
+
                 TextField("Untitled", text: Binding(
                     get: { vm.note.title },
                     set: { vm.note.title = $0; vm.markDirty() }

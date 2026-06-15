@@ -152,11 +152,29 @@ struct TaskDetailPanel: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-            TextField("Title", text: $viewModel.title, axis: .vertical)
-                .font(.system(.title3, weight: .semibold))
-                .textFieldStyle(.plain)
-                .lineLimit(1...4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                // Muted breadcrumb so the user knows where they landed after a
+                // ⌘K / deep-link jump. The project name comes from the picker
+                // data the panel already loads — no extra store calls.
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Text(breadcrumbProjectName)
+                    Image(systemName: "chevron.right")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                    Text(viewModel.title.isEmpty ? "Untitled" : viewModel.title)
+                        .lineLimit(1)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Location: \(breadcrumbProjectName), \(viewModel.title.isEmpty ? "Untitled" : viewModel.title)")
+
+                TextField("Title", text: $viewModel.title, axis: .vertical)
+                    .font(.system(.title3, weight: .semibold))
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             savedBadge
 
@@ -173,6 +191,15 @@ struct TaskDetailPanel: View {
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(DesignTokens.Spacing.lg)
+    }
+
+    /// Breadcrumb root for the task: its project's name, or "Inbox" when the
+    /// task has no project. Resolved from the picker data already in memory.
+    private var breadcrumbProjectName: String {
+        guard let projectId = viewModel.projectId,
+              let project = viewModel.availableProjects.first(where: { $0.id == projectId })
+        else { return "Inbox" }
+        return project.name
     }
 
     // MARK: - Notes
