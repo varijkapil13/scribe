@@ -52,7 +52,7 @@ struct BaseFilterControls: View {
                 Divider()
                 ForEach(availableKeys, id: \.self) { key in
                     Button(key) {
-                        query.sort = SortDescriptor(key: key, ascending: query.sort?.ascending ?? true)
+                        query.sort = BaseSort(key: key, ascending: query.sort?.ascending ?? true)
                     }
                 }
             } label: {

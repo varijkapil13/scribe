@@ -8,7 +8,7 @@ struct BaseTableView: View {
 
     let records: [BaseRecord]
     let columns: [String]
-    @Binding var sort: SortDescriptor?
+    @Binding var sort: BaseSort?
     var onOpenNote: (String) -> Void
 
     var body: some View {
@@ -46,7 +46,7 @@ struct BaseTableView: View {
             if sort?.key == key {
                 sort?.ascending.toggle()
             } else {
-                sort = SortDescriptor(key: key, ascending: true)
+                sort = BaseSort(key: key, ascending: true)
             }
         } label: {
             HStack(spacing: DesignTokens.Spacing.xxs) {
@@ -130,7 +130,7 @@ struct BaseTableView: View {
     BaseTableView(
         records: BasePreviewData.records,
         columns: ["status", "priority", "due", "starred"],
-        sort: .constant(SortDescriptor(key: "priority", ascending: true)),
+        sort: .constant(BaseSort(key: "priority", ascending: true)),
         onOpenNote: { print("open \($0)") }
     )
     .frame(width: 700, height: 360)

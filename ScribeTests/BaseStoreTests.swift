@@ -78,29 +78,29 @@ final class BaseStoreTests: XCTestCase {
     // MARK: - Sorting
 
     func testSortByNumberAscending() {
-        let query = BaseQuery(sort: SortDescriptor(key: "priority", ascending: true))
+        let query = BaseQuery(sort: BaseSort(key: "priority", ascending: true))
         let titles = query.apply(to: fixtures).map(\.note.title)
         XCTAssertEqual(titles, ["Bravo", "Charlie", "Alpha", "Delta"])  // 1,2,3,5
     }
 
     func testSortByNumberDescending() {
-        let query = BaseQuery(sort: SortDescriptor(key: "priority", ascending: false))
+        let query = BaseQuery(sort: BaseSort(key: "priority", ascending: false))
         let titles = query.apply(to: fixtures).map(\.note.title)
         XCTAssertEqual(titles, ["Delta", "Alpha", "Charlie", "Bravo"])  // 5,3,2,1
     }
 
     func testSortMissingKeySortsLast() {
         // Delta has no status; it should land last regardless of direction.
-        let asc = BaseQuery(sort: SortDescriptor(key: "status", ascending: true))
+        let asc = BaseQuery(sort: BaseSort(key: "status", ascending: true))
             .apply(to: fixtures).map(\.note.title)
         XCTAssertEqual(asc.last, "Delta")
-        let desc = BaseQuery(sort: SortDescriptor(key: "status", ascending: false))
+        let desc = BaseQuery(sort: BaseSort(key: "status", ascending: false))
             .apply(to: fixtures).map(\.note.title)
         XCTAssertEqual(desc.last, "Delta")
     }
 
     func testSortByTitle() {
-        let query = BaseQuery(sort: SortDescriptor(key: "title", ascending: true))
+        let query = BaseQuery(sort: BaseSort(key: "title", ascending: true))
         let titles = query.apply(to: fixtures).map(\.note.title)
         XCTAssertEqual(titles, ["Alpha", "Bravo", "Charlie", "Delta"])
     }
@@ -127,7 +127,7 @@ final class BaseStoreTests: XCTestCase {
     func testGroupHonorsFilterAndSort() {
         let query = BaseQuery(
             filters: [FilterClause(key: "starred", op: .isTrue)],
-            sort: SortDescriptor(key: "priority", ascending: true),
+            sort: BaseSort(key: "priority", ascending: true),
             groupBy: "status"
         )
         let groups = query.grouped(fixtures)

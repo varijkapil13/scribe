@@ -170,7 +170,7 @@ struct FilterClause: Identifiable, Equatable, Codable, Hashable, Sendable {
 
 // MARK: - Sorting
 
-struct SortDescriptor: Equatable, Codable, Hashable, Sendable {
+struct BaseSort: Equatable, Codable, Hashable, Sendable {
     var key: String
     var ascending: Bool
 
@@ -186,12 +186,12 @@ struct SortDescriptor: Equatable, Codable, Hashable, Sendable {
 /// a sort, and an optional group-by key for the board view.
 struct BaseQuery: Equatable, Codable, Hashable, Sendable {
     var filters: [FilterClause]
-    var sort: SortDescriptor?
+    var sort: BaseSort?
     /// Property key board columns / card sections group by. Typically a
     /// `select` property such as `status`.
     var groupBy: String?
 
-    init(filters: [FilterClause] = [], sort: SortDescriptor? = nil, groupBy: String? = nil) {
+    init(filters: [FilterClause] = [], sort: BaseSort? = nil, groupBy: String? = nil) {
         self.filters = filters
         self.sort = sort
         self.groupBy = groupBy
@@ -206,7 +206,7 @@ struct BaseQuery: Equatable, Codable, Hashable, Sendable {
         return Self.sorted(filtered, by: sort)
     }
 
-    static func sorted(_ records: [BaseRecord], by sort: SortDescriptor) -> [BaseRecord] {
+    static func sorted(_ records: [BaseRecord], by sort: BaseSort) -> [BaseRecord] {
         records.sorted { a, b in
             let order = compareRecords(a, b, key: sort.key)
             // Records missing the key sort last regardless of direction.

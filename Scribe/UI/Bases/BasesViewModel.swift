@@ -97,7 +97,7 @@ final class BasesViewModel {
         if query.sort?.key == key {
             query.sort?.ascending.toggle()
         } else {
-            query.sort = SortDescriptor(key: key, ascending: true)
+            query.sort = BaseSort(key: key, ascending: true)
         }
     }
 }
