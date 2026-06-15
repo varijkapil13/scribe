@@ -62,7 +62,7 @@ struct SubtaskChecklistView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
             ForEach(model.subtasks) { subtask in
                 SubtaskRow(
                     subtask: subtask,

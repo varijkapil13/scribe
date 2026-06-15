@@ -507,7 +507,7 @@ struct TaskListView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Quick-add syntax tip. Type #tag to tag, +project to file, !high for priority, or a date phrase like tomorrow.")
@@ -571,7 +571,7 @@ struct TaskListView: View {
             } ?? "Pick due date")
             .popover(isPresented: $showQuickAddDatePicker, arrowEdge: .bottom) {
                 InlineDatePickerView(selectedDate: $viewModel.quickAddDueDate)
-                    .padding(4)
+                    .padding(DesignTokens.Spacing.xs)
                     .scribeGlass(.hud, in: Rectangle())
             }
             .help(viewModel.quickAddDueDate.map {
@@ -579,12 +579,12 @@ struct TaskListView: View {
             } ?? "Pick due date")
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignTokens.Spacing.xs)
         .background(DesignTokens.Palette.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
         )
     }
 
@@ -711,7 +711,7 @@ struct TaskListView: View {
                         .padding(.bottom, DesignTokens.Spacing.xs)
                     ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, task in
                         if index > 0 {
-                            Divider().padding(.leading, 32)
+                            Divider().padding(.leading, DesignTokens.Spacing.xxl)
                         }
                         taskRow(for: task)
                     }
@@ -861,7 +861,7 @@ struct TaskListView: View {
                 }
                 persistCollapsedBuckets()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DesignTokens.Spacing.xs) {
                     Text(bucket.title)
                         .eyebrowStyle()
                     Image(systemName: "chevron.right")
@@ -886,7 +886,7 @@ struct TaskListView: View {
                     ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
                         if index > 0 {
                             Divider()
-                                .padding(.leading, 32)
+                                .padding(.leading, DesignTokens.Spacing.xxl)
                         }
                         taskRow(for: task, bucket: bucket)
                             .overlay(alignment: .top) {
@@ -1344,7 +1344,7 @@ struct TaskRowView: View {
                     get: { task.dueAt },
                     set: { onSetDue($0) }
                 ))
-                .padding(4)
+                .padding(DesignTokens.Spacing.xs)
                 .scribeGlass(.hud, in: Rectangle())
             }
         } else if affordancesVisible {
@@ -1360,7 +1360,7 @@ struct TaskRowView: View {
                     get: { task.dueAt },
                     set: { onSetDue($0) }
                 ))
-                .padding(4)
+                .padding(DesignTokens.Spacing.xs)
                 .scribeGlass(.hud, in: Rectangle())
             }
         }

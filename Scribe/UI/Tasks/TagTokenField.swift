@@ -61,7 +61,7 @@ struct TagTokenField: View {
             .accessibilityLabel("Remove tag \(tag)")
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .background(
             Capsule(style: .continuous)
                 .fill(tagTint.opacity(contrast == .increased ? 0.28 : 0.15))
@@ -113,7 +113,7 @@ struct TagTokenField: View {
                     onAdd(suggestion)
                     draft = ""
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
                         Image(systemName: "number")
                             .font(.system(size: 9))
                             .foregroundStyle(tagTint)
@@ -123,14 +123,14 @@ struct TagTokenField: View {
                         Spacer()
                     }
                     .padding(.horizontal, DesignTokens.Spacing.sm)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, DesignTokens.Spacing.xs)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add tag \(suggestion)")
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                 .fill(DesignTokens.Palette.surfaceElevated)
