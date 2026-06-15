@@ -36,7 +36,6 @@ struct NoteEditorView: View {
     // Fall back to the old always-on toolbar for accessibility / preference.
     @AppStorage("noteEditor.persistentToolbar") private var persistentToolbar: Bool = false
 
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var pageWidth: NotePageWidth {
@@ -54,11 +53,10 @@ struct NoteEditorView: View {
         typeface.baseFont(size: 15)
     }
 
-    /// Dim floor for focus mode: keep the dimmed text readable under Increase
-    /// Contrast (>= 0.6 so it still clears 4.5:1), otherwise calm 0.35.
-    private var focusDimAlpha: CGFloat {
-        contrast == .increased ? 0.6 : 0.35
-    }
+    // NOTE: focus-mode per-block dimming is not yet ported to the native
+    // editor (the old renderer dimmed non-active blocks via attributed-string
+    // rewrites; the tree-sitter highlighter owns attributes now). `focusModeEnabled`
+    // still drives the surrounding chrome hide in NoteDetailView. Deferred.
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,24 +69,17 @@ struct NoteEditorView: View {
             }
 
             ZStack(alignment: .topLeading) {
-                MarkdownEditorView(
+                // The note text surface is now the native CodeEditSourceEditor
+                // (TextKit 2 + tree-sitter), replacing the home-grown
+                // MarkdownEditorView. The slash menu, wiki-link completion
+                // popup, and selection-anchored format bubble are reused
+                // unchanged — they're driven off the same callbacks.
+                CodeEditNoteTextView(
                     text: $text,
-                    placeholder: "Write your note…",
                     font: bodyFont,
-                    actions: editorActions,
-                    extraHighlighter: highlightWikiLinks(_:),
-                    onWikiLinkTyped: { query in
-                        wikiQuery = query
-                        if query.isEmpty {
-                            showPopup = false
-                        } else {
-                            showPopup = true
-                            Task { await loadSuggestions(query: query) }
-                        }
-                    },
-                    onWikiLinkNavigate: { anchor in onNavigate(anchor) },
                     noteId: noteId,
-                    pageMeasure: pageWidth.measure,
+                    actions: editorActions,
+                    onWikiLinkNavigate: { anchor in onNavigate(anchor) },
                     onSlashTyped: { query, caret in
                         // A valid caret rect means an open "/…" token at the
                         // caret (query may be empty right after typing "/"). A
@@ -100,6 +91,15 @@ struct NoteEditorView: View {
                             showSlashMenu = true
                         } else {
                             showSlashMenu = false
+                        }
+                    },
+                    onWikiLinkTyped: { query in
+                        wikiQuery = query
+                        if query.isEmpty {
+                            showPopup = false
+                        } else {
+                            showPopup = true
+                            Task { await loadSuggestions(query: query) }
                         }
                     },
                     onSelectionChanged: { rect in
@@ -117,10 +117,13 @@ struct NoteEditorView: View {
                     slashMenuActive: showSlashMenu,
                     onSlashMove: { down in moveSlashHighlight(down: down) },
                     onSlashCommit: { commitHighlightedSlash() },
-                    onSlashDismiss: { dismissSlashIfShowing() },
-                    focusModeEnabled: focusModeEnabled,
-                    focusDimAlpha: focusDimAlpha
+                    onSlashDismiss: { dismissSlashIfShowing() }
                 )
+                // Centre the text column at the chosen reading measure
+                // (Craft-style). The editor itself wraps to its frame, so a
+                // capped, centred frame reproduces the old `pageMeasure` inset.
+                .frame(maxWidth: pageWidth.measure + 48)
+                .frame(maxWidth: .infinity, alignment: .center)
 
                 // Wiki-link completion popup (unchanged behavior).
                 if showPopup && !suggestions.isEmpty {
@@ -263,30 +266,7 @@ struct NoteEditorView: View {
         UserDefaults.standard.removeObject(forKey: NoteTypeface.storageKey(forNoteId: noteId))
     }
 
-    // MARK: - Wiki links (unchanged)
-
-    private static let wikiHighlightRegex: NSRegularExpression = {
-        // swiftlint:disable:next force_try
-        try! NSRegularExpression(pattern: #"\[\[([^\[\]]+)\]\]"#)
-    }()
-
-    private func highlightWikiLinks(_ attrStr: NSMutableAttributedString) {
-        let regex = Self.wikiHighlightRegex
-        let str = attrStr.string
-        let full = NSRange(str.startIndex..., in: str)
-        regex.enumerateMatches(in: str, range: full) { match, _, _ in
-            guard let match, match.numberOfRanges >= 2 else { return }
-            let fullRange = match.range
-            attrStr.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: fullRange)
-            attrStr.addAttribute(.underlineStyle,
-                                 value: NSUnderlineStyle.single.rawValue, range: fullRange)
-            // Set wikiAnchor attribute so mouseDown can read it directly — no scanning.
-            if let captureRange = Range(match.range(at: 1), in: str) {
-                let anchor = String(str[captureRange]).trimmingCharacters(in: .whitespaces)
-                attrStr.addAttribute(.wikiAnchor, value: anchor, range: fullRange)
-            }
-        }
-    }
+    // MARK: - Wiki links
 
     private func loadSuggestions(query: String) async {
         suggestions = (try? noteStore.searchNotes(query: query)) ?? []

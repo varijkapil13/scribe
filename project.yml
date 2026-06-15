@@ -16,6 +16,12 @@ targets:
     platform: macOS
     sources:
       - path: Scribe/
+        excludes:
+          # SwiftPM-only `@main` entry (gated on SCRIBE_SPM_ENTRY). The app's
+          # real entry point is ScribeApp (`@main`); compiling the shim here
+          # would be a duplicate top-level entry. See Package.swift's
+          # editor-exclusion-boundary note.
+          - App/SwiftPMEntryShim.swift
     resources:
       - path: Scribe/Resources/
     dependencies:
