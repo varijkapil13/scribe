@@ -34,7 +34,7 @@ struct SymbolPickerGrid: View {
                 cell(name: name, systemImage: name, label: name)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignTokens.Spacing.xs)
     }
 
     @ViewBuilder
