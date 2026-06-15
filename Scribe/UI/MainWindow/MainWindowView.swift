@@ -658,7 +658,11 @@ struct MainWindowView: View {
         case .graph:
             GraphView(onNavigate: { nav.navigate(to: .note($0)) })
         case .tag(let tag):
-            TaggedContentView(tag: tag, onNavigate: { nav.navigate(to: .note($0)) })
+            TaggedContentView(
+                tag: tag,
+                onNavigate: { nav.navigate(to: .note($0)) },
+                onNavigateToTask: { nav.navigate(to: .task($0)) }
+            )
         case .inbox:
             NotesBrowserView(scope: .inbox)
                 .id(NotesFilter.inbox)
