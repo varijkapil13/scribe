@@ -11,6 +11,16 @@ final class DatabaseManager: @unchecked Sendable {
 
     /// Shared instance using the default on-disk database path.
     static let shared: DatabaseManager = {
+        // Screenshot / UI-test fixture mode: redirect the database to a fresh
+        // temp file so the harness photographs a deterministic, seeded dataset
+        // and never touches the user's real DB. Gated entirely behind the
+        // launch flag (see `AppLaunchEnvironment`); a production launch takes
+        // the original path below unchanged.
+        if let fixturePath = AppLaunchEnvironment.fixtureDatabasePath {
+            // swiftlint:disable:next force_try
+            return try! DatabaseManager(path: fixturePath)
+        }
+
         let fileManager = FileManager.default
         let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let scribeDirectory = appSupportURL.appendingPathComponent("Scribe", isDirectory: true)

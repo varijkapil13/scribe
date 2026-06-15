@@ -193,3 +193,89 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
+
+  # SPIKE: actually RUN the XCUITest screenshot harness and publish the PNGs.
+  #
+  # `ScreenshotTests` launches the app in fixture mode (--uitest-fixtures), seeds
+  # a deterministic dataset (see UITestFixtures), walks every major surface, and
+  # writes one PNG per screen to $SCRIBE_SCREENSHOT_DIR plus an XCTAttachment in
+  # the .xcresult bundle. Both are uploaded as the `ui-screenshots` artifact.
+  #
+  # This may not produce images on a hosted runner: launching the XCUITest
+  # runner for a macOS app needs the app signed (ad-hoc is usually enough) AND a
+  # GUI login session, and the existing `compile UI tests` job exists precisely
+  # because `xcodebuild test` historically failed at launch here. We ad-hoc sign
+  # (CODE_SIGN_IDENTITY=-) to give it the best shot and keep the job
+  # continue-on-error so it can NEVER block other jobs or a merge. Whether or not
+  # the test launches, the .xcresult bundle is uploaded for diagnosis.
+  ui-screenshots:
+    name: ui-screenshots (spike)
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Run screenshot UI tests
+        env:
+          SCRIBE_SCREENSHOT_DIR: ${{ runner.temp }}/screenshots
+        run: |
+          set -o pipefail
+          mkdir -p "$SCRIBE_SCREENSHOT_DIR"
+          # Ad-hoc sign ("-") so the XCUITest runner can launch the app; no
+          # certificates needed. -only-testing scopes the run to the screenshot
+          # walk. -resultBundlePath keeps the attachments even if the run fails.
+          xcodebuild test \
+            -project Scribe.xcodeproj \
+            -scheme Scribe \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -only-testing:ScribeUITests/ScreenshotTests \
+            -resultBundlePath "$SCRIBE_SCREENSHOT_DIR/ScreenshotTests.xcresult" \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO \
+            TEST_RUNNER_SCRIBE_SCREENSHOT_DIR="$SCRIBE_SCREENSHOT_DIR" \
+            2>&1 | tee "$SCRIBE_SCREENSHOT_DIR/xcodebuild.log"
+
+      # The macOS app/test process is sandboxed and can't reliably write PNGs to
+      # the runner temp dir, but every screenshot IS captured as an XCTAttachment
+      # inside the .xcresult. Export those attachments to real PNG files so they
+      # can be downloaded and viewed directly.
+      - name: Extract screenshots from xcresult
+        if: always()
+        run: |
+          XCR="${{ runner.temp }}/screenshots/ScreenshotTests.xcresult"
+          OUT="${{ runner.temp }}/screenshots/extracted"
+          mkdir -p "$OUT"
+          if [ -d "$XCR" ]; then
+            xcrun xcresulttool export attachments \
+              --path "$XCR" --output-path "$OUT" || true
+          fi
+          ls -la "$OUT" || true
+
+      - name: List captured screenshots
+        if: always()
+        run: ls -la "${{ runner.temp }}/screenshots" "${{ runner.temp }}/screenshots/extracted" || true
+
+      - name: Upload screenshots + result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: |
+            ${{ runner.temp }}/screenshots/*.png
+            ${{ runner.temp }}/screenshots/extracted/**
+            ${{ runner.temp }}/screenshots/xcodebuild.log
+            ${{ runner.temp }}/screenshots/ScreenshotTests.xcresult
+          if-no-files-found: warn

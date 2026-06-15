@@ -99,20 +99,43 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertEqual(Set(result.map(\.id)), [overdue.id, today.id])
     }
 
-    func testUpcomingFilterCovers7DayWindowExcludingToday() throws {
+    func testUpcomingFilterSurfacesOverdueTodayAndNext7Days() throws {
         let cal = Calendar(identifier: .gregorian)
         let now = cal.date(from: DateComponents(year: 2026, month: 5, day: 6, hour: 9))!
+        let yesterday = cal.date(byAdding: .day, value: -1, to: now)!
+        let lastWeek = cal.date(byAdding: .day, value: -8, to: now)!
         let tomorrow = cal.date(byAdding: .day, value: 1, to: now)!
         let inSixDays = cal.date(byAdding: .day, value: 6, to: now)!
         let inEightDays = cal.date(byAdding: .day, value: 8, to: now)!
 
-        _ = try store.createTask(title: "Today", dueAt: now)
+        // Overdue tasks MUST surface in Upcoming (the bug this fixes): with all
+        // tasks overdue, the old window-only filter left the view blank.
+        let overdue = try store.createTask(title: "Overdue yesterday", dueAt: yesterday)
+        let wayOverdue = try store.createTask(title: "Overdue last week", dueAt: lastWeek)
+        let today = try store.createTask(title: "Today", dueAt: now)
         let t1 = try store.createTask(title: "Tomorrow", dueAt: tomorrow)
         let t2 = try store.createTask(title: "+6", dueAt: inSixDays)
         _ = try store.createTask(title: "+8", dueAt: inEightDays)
+        _ = try store.createTask(title: "Undated")
 
         let result = try store.fetchTasks(filter: .upcoming, calendar: cal, now: now)
-        XCTAssertEqual(Set(result.map(\.id)), [t1.id, t2.id])
+        // Overdue (any age) + today + within the next 7 days; undated and
+        // beyond-the-window tasks excluded.
+        XCTAssertEqual(Set(result.map(\.id)),
+                       [overdue.id, wayOverdue.id, today.id, t1.id, t2.id])
+    }
+
+    func testUpcomingFilterExcludesCompleted() throws {
+        let cal = Calendar(identifier: .gregorian)
+        let now = cal.date(from: DateComponents(year: 2026, month: 5, day: 6, hour: 9))!
+        let yesterday = cal.date(byAdding: .day, value: -1, to: now)!
+
+        let live = try store.createTask(title: "Overdue live", dueAt: yesterday)
+        let done = try store.createTask(title: "Overdue done", dueAt: yesterday)
+        try store.completeTask(id: done.id)
+
+        let result = try store.fetchTasks(filter: .upcoming, calendar: cal, now: now)
+        XCTAssertEqual(Set(result.map(\.id)), [live.id])
     }
 
     func testProjectFilterAndCompletedFilter() throws {

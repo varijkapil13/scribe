@@ -626,14 +626,15 @@ struct TaskListView: View {
         if viewModel.isSearching {
             searchContent
         } else if viewModel.groups.isEmpty {
+            let empty = emptyState
             EmptyStateView(
-                systemImage: "checkmark.circle",
-                title: "Nothing here yet",
-                message: emptyMessage,
-                actionTitle: "Add a task",
-                action: {
+                systemImage: empty.systemImage,
+                title: empty.title,
+                message: empty.message,
+                actionTitle: empty.showsAddAction ? "Add a task" : nil,
+                action: empty.showsAddAction ? {
                     NotificationCenter.default.post(name: .scribeFocusQuickAdd, object: nil)
-                }
+                } : nil
             )
         } else {
             ScrollView {
@@ -835,14 +836,36 @@ struct TaskListView: View {
         }
     }
 
-    private var emptyMessage: String {
+    /// Filter-aware empty state: each list explains *why* it's empty and what
+    /// belongs there, so a blank pane never reads as "something's broken".
+    /// `showsAddAction` hides the "Add a task" button where adding from the
+    /// current list wouldn't land a task in it (e.g. Completed).
+    private var emptyState: (systemImage: String, title: String, message: String, showsAddAction: Bool) {
         switch filter {
-        case .inbox:    return "Tasks without a project show up here."
-        case .today:    return "Nothing due today."
-        case .dueOn:    return "Nothing scheduled for this day."
-        case .upcoming: return "No tasks due in the next 7 days."
-        case .completed: return "Completed tasks will appear here."
-        default:        return "Add a task with the field above to get started."
+        case .inbox:
+            return ("tray", "Inbox is empty",
+                    "Tasks with no project land here.", true)
+        case .today:
+            return ("checkmark.circle", "Nothing due today",
+                    "Tasks due today and anything overdue show up here.", true)
+        case .dueOn:
+            return ("calendar", "Nothing scheduled",
+                    "No tasks are scheduled for this day.", true)
+        case .upcoming:
+            return ("calendar.badge.clock", "Nothing coming up",
+                    "Overdue and upcoming tasks appear here.", true)
+        case .project:
+            return ("folder", "No tasks yet",
+                    "No tasks in this project yet.", true)
+        case .completed:
+            return ("checkmark.circle", "Nothing completed yet",
+                    "Completed tasks will appear here.", false)
+        case .all:
+            return ("checkmark.circle", "Nothing here yet",
+                    "Add a task with the field above to get started.", true)
+        case .tag(let tag):
+            return ("number", "No tasks tagged #\(tag)",
+                    "Tasks tagged #\(tag) will appear here.", true)
         }
     }
 
