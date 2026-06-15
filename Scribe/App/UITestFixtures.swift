@@ -105,7 +105,7 @@ enum UITestFixtures {
     private static func seedNotes() {
         let notes = NoteStore.shared
         do {
-            _ = try notes.createNote(
+            let welcome = try notes.createNote(
                 title: "Welcome to Scribe",
                 body: """
                 Scribe keeps your meetings, notes, and tasks in one place.
@@ -116,8 +116,15 @@ enum UITestFixtures {
                 """,
                 tags: ["intro"]
             )
+            // Typed frontmatter properties so the Bases feature has content to
+            // show (table columns) and a `select` key the board can group by.
+            setProperties(on: welcome.id, [
+                NoteProperty(key: "status", value: .select("Done")),
+                NoteProperty(key: "area", value: .select("Docs")),
+                NoteProperty(key: "priority", value: .number(1))
+            ])
 
-            _ = try notes.createNote(
+            let arch = try notes.createNote(
                 title: "Architecture Overview",
                 body: """
                 # Architecture Overview
@@ -150,8 +157,13 @@ enum UITestFixtures {
                 """,
                 tags: ["docs", "engineering"]
             )
+            setProperties(on: arch.id, [
+                NoteProperty(key: "status", value: .select("In Progress")),
+                NoteProperty(key: "area", value: .select("Engineering")),
+                NoteProperty(key: "priority", value: .number(2))
+            ])
 
-            _ = try notes.createNote(
+            let oneOnOne = try notes.createNote(
                 title: "1:1 with Alex",
                 body: """
                 Talked through the launch timeline and blockers.
@@ -161,8 +173,25 @@ enum UITestFixtures {
                 """,
                 tags: ["meeting"]
             )
+            setProperties(on: oneOnOne.id, [
+                NoteProperty(key: "status", value: .select("Todo")),
+                NoteProperty(key: "area", value: .select("Product")),
+                NoteProperty(key: "priority", value: .number(3))
+            ])
         } catch {
             Log.app.error("UITestFixtures: note seed failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Writes typed frontmatter properties to a seeded note's `.md` file so the
+    /// Bases table/board/card views have content. Best-effort and gated by
+    /// fixture mode like the rest of the seed — a write failure just means the
+    /// Bases screen shows fewer columns, never a crash.
+    private static func setProperties(on noteId: String, _ properties: [NoteProperty]) {
+        do {
+            try BaseStore.shared.saveProperties(properties, forNoteId: noteId)
+        } catch {
+            Log.app.error("UITestFixtures: property seed failed for \(noteId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
