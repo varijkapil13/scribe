@@ -253,10 +253,21 @@ struct MainWindowView: View {
             // Session started → flip to the inline live view via the tested
             // RecordingNavigationPolicy: it returns .live unless the user is
             // already on a Note (whose inline pane handles streaming) or the
-            // auto-create path already navigated to a note. Stop returns nil.
+            // auto-create path already navigated to a note.
             if let dest = RecordingNavigationPolicy.destination(
                 currentSelection: nav.current, isRecording: isRecording
             ) {
+                withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+                    nav.navigate(to: dest)
+                }
+            }
+            // Session stopped → if the user was watching the live view (which
+            // goes blank on stop), take them to the finished transcript.
+            if !isRecording,
+               let dest = RecordingNavigationPolicy.stopDestination(
+                currentSelection: nav.current,
+                finishedSessionId: appState.lastFinishedSessionId
+               ) {
                 withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
                     nav.navigate(to: dest)
                 }
