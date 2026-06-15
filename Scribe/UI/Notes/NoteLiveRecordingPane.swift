@@ -17,18 +17,16 @@ struct NoteLiveRecordingPane: View {
         .background(DesignTokens.Palette.surfaceSunken)
     }
 
+    /// Shared live-feed identity so the in-note pane reads as the same session
+    /// as the full `LiveSessionView` and the floating controller: same state
+    /// label, tint, glyph, and elapsed-time formatting, driven by the one
+    /// `AudioSessionManager` clock.
     private var header: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-            Circle()
-                .fill(DesignTokens.Palette.recording)
-                .frame(width: 8, height: 8)
-                .accessibilityLabel("Recording in progress")
-            Text("Recording")
-                .font(DesignTokens.Typography.eyebrow)
-                .tracking(0.5)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
+        LiveFeedHeader(
+            status: .resolve(isTranscribing: appState.isTranscribing,
+                             isPaused: appState.audioManager.isPaused),
+            duration: appState.audioManager.recordingDuration
+        )
     }
 
     private var transcriptScroll: some View {
@@ -37,10 +35,12 @@ struct NoteLiveRecordingPane: View {
             partial: appState.speechEngine.partialResult,
             density: .compact,
             isTranscribing: appState.isTranscribing,
+            isPaused: appState.audioManager.isPaused,
             isDownloadingModel: appState.speechEngine.isDownloadingModel,
-            // The pane already shows its own "Recording" header, so the
-            // listening/empty card would be redundant here.
-            showsListeningState: false,
+            // Show the listening/empty state so the pane matches the full live
+            // view while we wait for the first words; the shared header above
+            // already carries the session identity.
+            showsListeningState: true,
             maxHeight: 160
         )
     }
