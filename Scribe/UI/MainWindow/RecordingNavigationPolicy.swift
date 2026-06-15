@@ -27,4 +27,19 @@ enum RecordingNavigationPolicy {
         if case .note = currentSelection { return nil }
         return .live
     }
+
+    /// Returns the transcript destination to navigate to when a recording
+    /// stops, or `nil` if no navigation is warranted.
+    ///
+    /// Only the user who was watching the live view (which goes blank once the
+    /// session ends) is taken to the finished transcript; anyone who browsed
+    /// off to a note/task/etc. is left where they are. Requires a non-nil
+    /// finished session id.
+    static func stopDestination(
+        currentSelection: MainSelection?,
+        finishedSessionId: String?
+    ) -> MainSelection? {
+        guard currentSelection == .live, let finishedSessionId else { return nil }
+        return .session(finishedSessionId)
+    }
 }

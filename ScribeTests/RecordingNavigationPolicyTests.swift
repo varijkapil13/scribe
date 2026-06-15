@@ -48,9 +48,8 @@ final class RecordingNavigationPolicyTests: XCTestCase {
     }
 
     func testRecordingStoppedNeverNavigates() {
-        // The previous codebase used to auto-navigate to the most-recent
-        // transcript on stop. That behaviour is gone; the policy must
-        // return nil for every "stopped" transition.
+        // The `destination` (start) policy never navigates on a stop
+        // transition; the dedicated `stopDestination` policy owns that case.
         XCTAssertNil(RecordingNavigationPolicy.destination(
             currentSelection: .live, isRecording: false
         ))
@@ -60,5 +59,37 @@ final class RecordingNavigationPolicyTests: XCTestCase {
         XCTAssertNil(RecordingNavigationPolicy.destination(
             currentSelection: nil, isRecording: false
         ))
+    }
+
+    // MARK: - Stop navigation
+
+    func testStoppedFromLiveNavigatesToFinishedTranscript() {
+        // The live view goes blank when the session ends, so a user watching
+        // it is taken straight to the finished transcript.
+        let dest = RecordingNavigationPolicy.stopDestination(
+            currentSelection: .live,
+            finishedSessionId: "s1"
+        )
+        XCTAssertEqual(dest, .session("s1"))
+    }
+
+    func testStoppedFromANoteStaysPut() {
+        // Anyone who browsed off to a note keeps their context; we don't yank
+        // them to the transcript.
+        let dest = RecordingNavigationPolicy.stopDestination(
+            currentSelection: .note("n1"),
+            finishedSessionId: "s1"
+        )
+        XCTAssertNil(dest)
+    }
+
+    func testStoppedWithNoFinishedSessionDoesNotNavigate() {
+        // No session id (e.g. a recording that never created one) → nowhere to
+        // navigate, even from the live view.
+        let dest = RecordingNavigationPolicy.stopDestination(
+            currentSelection: .live,
+            finishedSessionId: nil
+        )
+        XCTAssertNil(dest)
     }
 }
