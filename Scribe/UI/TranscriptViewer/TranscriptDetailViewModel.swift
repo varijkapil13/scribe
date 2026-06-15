@@ -163,6 +163,7 @@ final class TranscriptDetailViewModel: ObservableObject {
             let created = try taskStore.createTask(
                 title: draft.title,
                 notes: draft.notes,
+                projectId: draft.projectId,
                 priority: draft.priority,
                 dueAt: draft.dueAt,
                 sourceSessionId: draft.sourceSessionId,

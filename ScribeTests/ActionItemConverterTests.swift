@@ -26,6 +26,30 @@ final class ActionItemConverterTests: XCTestCase {
         XCTAssertTrue(draft.notes.contains("Assignee: Alice"))
         XCTAssertTrue(draft.notes.contains("Source: \"Alice will send the Q3 report by Friday.\""))
         XCTAssertNil(draft.dueAt) // no deadline → no parsed date
+        XCTAssertNil(draft.projectId) // no project context → Inbox (default)
+    }
+
+    func testDraftPropagatesSourceSessionAndProject() {
+        let item = ActionItem(
+            id: UUID(),
+            description: "Draft the spec",
+            assignee: nil,
+            deadline: nil,
+            priority: nil,
+            sourceText: ""
+        )
+        let draft = ActionItemConverter.draft(
+            from: item,
+            sessionId: "session-42",
+            projectId: "project-7",
+            detector: nil
+        )
+
+        // Converted tasks carry their source meeting + project context instead
+        // of silently landing in Inbox.
+        XCTAssertEqual(draft.sourceSessionId, "session-42")
+        XCTAssertEqual(draft.sourceActionItemId, item.id.uuidString)
+        XCTAssertEqual(draft.projectId, "project-7")
     }
 
     func testDraftIncludesDeadlineNoteEvenWhenUnparseable() {

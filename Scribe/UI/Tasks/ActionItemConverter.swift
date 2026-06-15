@@ -16,10 +16,14 @@ enum ActionItemConverter {
         var tags: [String]
         var sourceSessionId: String
         var sourceActionItemId: String
+        /// Project the converted task should land in. `nil` keeps the task in
+        /// Inbox (the default when the source meeting has no project context).
+        var projectId: String?
     }
 
     static func draft(from item: ActionItem,
                       sessionId: String,
+                      projectId: String? = nil,
                       now: Date = Date(),
                       detector: NSDataDetector? = .scribeDateDetector) -> Draft {
         let title = item.description.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -56,7 +60,8 @@ enum ActionItemConverter {
             dueAt: dueAt,
             tags: tags,
             sourceSessionId: sessionId,
-            sourceActionItemId: item.id.uuidString
+            sourceActionItemId: item.id.uuidString,
+            projectId: projectId
         )
     }
 
