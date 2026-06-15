@@ -1070,17 +1070,41 @@ final class MarkdownNSTextView: NSTextView {
 
     private var lastContentWidth: CGFloat = 0
     private var resizeReformatScheduled = false
+    private var insetUpdateScheduled = false
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         let newInset = measureInset(forWidth: newSize.width)
         if newInset != textContainerInset {
-            textContainerInset = newInset
+            scheduleInsetUpdate()
         }
         let contentWidth = newSize.width - newInset.width * 2
         if abs(contentWidth - lastContentWidth) > 0.5 {
             lastContentWidth = contentWidth
             scheduleResizeReformat()
+        }
+    }
+
+    /// Applies the measure inset on the next run-loop tick. Assigning
+    /// `textContainerInset` re-enters the layout engine; doing it synchronously
+    /// from `setFrameSize` — which AppKit calls *while it is already laying the
+    /// view out* — trips "-layoutSubtreeIfNeeded on a view which is already
+    /// being laid out". Deferring runs the mutation just past the active layout
+    /// pass. Coalesced so a live resize drag doesn't stack redundant updates,
+    /// and recomputed from the current bounds in case the frame moved again.
+    /// Enqueued before `scheduleResizeReformat`'s block, so the FIFO main queue
+    /// guarantees the inset lands before the reformat reads it.
+    private func scheduleInsetUpdate() {
+        if insetUpdateScheduled { return }
+        insetUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.insetUpdateScheduled = false
+            let target = self.measureInset(forWidth: self.bounds.width)
+            if target != self.textContainerInset {
+                self.textContainerInset = target
+                self.needsDisplay = true
+            }
         }
     }
 

@@ -241,7 +241,7 @@ enum NoteFrontmatterCodec {
         return f
     }()
 
-    nonisolated(unsafe) private static let dateOnlyFormatter: DateFormatter = {
+    nonisolated private static let dateOnlyFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
