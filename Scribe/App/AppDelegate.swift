@@ -25,6 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             "selectedLanguage": "auto"
         ])
 
+        // Screenshot / UI-test fixture mode: seed a deterministic dataset into
+        // the (already-redirected) temp database + notes vault before any view
+        // reads it. No-op on every production launch (see UITestFixtures /
+        // AppLaunchEnvironment). Runs before VaultCoordinator.start() so the
+        // launch reconciler indexes the seeded note files.
+        UITestFixtures.seedIfNeeded()
+
         // Use the shared singleton so every component references the same state.
         appState = AppState.shared
 

@@ -38,6 +38,18 @@ struct NotesDirectory {
     ///
     /// Folder is created lazily and the call is safe to repeat.
     static func defaultLocation() throws -> NotesDirectory {
+        // Screenshot / UI-test fixture mode: redirect the vault to a temp
+        // directory so seeded note files never land in the user's Documents
+        // folder. Takes precedence over the user preference and the built-in
+        // default. Gated behind the launch flag — a production launch skips
+        // this branch entirely (see `AppLaunchEnvironment`).
+        if let fixtureRoot = AppLaunchEnvironment.fixtureNotesVaultRoot {
+            try FileManager.default.createDirectory(
+                at: fixtureRoot,
+                withIntermediateDirectories: true
+            )
+            return NotesDirectory(root: fixtureRoot)
+        }
         if let override = userOverridePath() {
             try FileManager.default.createDirectory(
                 at: override,
