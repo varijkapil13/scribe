@@ -126,7 +126,7 @@ struct TaskCalendarView: View {
 
             Spacer()
 
-            VStack(spacing: 2) {
+            VStack(spacing: DesignTokens.Spacing.xxs) {
                 Text(viewModel.displayMonth, format: .dateTime.month(.wide).year())
                     .font(.system(.title3, weight: .semibold))
                 let total = viewModel.tasksByDay.values.reduce(0) { $0 + $1.count }
@@ -287,14 +287,14 @@ struct TaskCalendarView: View {
             // Horizontal lines (between rows)
             ForEach(1 ..< rows, id: \.self) { row in
                 Rectangle()
-                    .fill(DesignTokens.Palette.cardBorder)
+                    .fill(DesignTokens.Palette.cardBorder(contrast))
                     .frame(width: size.width, height: 0.5)
                     .offset(y: cellH * CGFloat(row))
             }
             // Vertical lines (between columns)
             ForEach(1 ..< cols, id: \.self) { col in
                 Rectangle()
-                    .fill(DesignTokens.Palette.cardBorder)
+                    .fill(DesignTokens.Palette.cardBorder(contrast))
                     .frame(width: 0.5, height: size.height)
                     .offset(x: colW * CGFloat(col))
             }
@@ -312,7 +312,7 @@ struct TaskCalendarView: View {
             viewModel.selectedDay.map { viewModel.cal.isDate(d, inSameDayAs: $0) } ?? false
         } ?? false
 
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
             if let date {
                 HStack(alignment: .top) {
                     // Day number badge
@@ -324,7 +324,7 @@ struct TaskCalendarView: View {
 
                     Spacer(minLength: 0)
 
-                    HStack(spacing: 3) {
+                    HStack(spacing: DesignTokens.Spacing.xxs) {
                         // Note dot
                         if noteExists {
                             Image(systemName: "note.text")
@@ -341,14 +341,14 @@ struct TaskCalendarView: View {
                                 .background(Capsule().fill(countBadgeColor(for: tasks)))
                         }
                     }
-                    .padding(.top, 4)
-                    .padding(.trailing, 4)
+                    .padding(.top, DesignTokens.Spacing.xs)
+                    .padding(.trailing, DesignTokens.Spacing.xs)
                 }
-                .padding(.horizontal, 6)
-                .padding(.top, 6)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
+                .padding(.top, DesignTokens.Spacing.sm)
 
                 // Task chips (up to visible count)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                     ForEach(tasks.prefix(visibleTaskCount(height: height)), id: \.id) { task in
                         taskChip(task)
                     }
@@ -357,10 +357,10 @@ struct TaskCalendarView: View {
                         Text("+\(overflow) more")
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
+                            .padding(.horizontal, DesignTokens.Spacing.sm)
                     }
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, DesignTokens.Spacing.xs)
 
                 Spacer(minLength: 0)
             }
@@ -461,7 +461,7 @@ struct TaskCalendarView: View {
     // MARK: - Task Chip
 
     private func taskChip(_ task: TodoTask) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
             RoundedRectangle(cornerRadius: 1.5)
                 .fill(priorityColor(task.priority))
                 .frame(width: 3)
@@ -473,11 +473,11 @@ struct TaskCalendarView: View {
                 .foregroundStyle(task.isCompleted ? Color.secondary : .primary)
                 .strikethrough(task.isCompleted)
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 2)
+        .padding(.horizontal, DesignTokens.Spacing.xs)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
                 .fill(priorityColor(task.priority).opacity(0.10))
         )
         .draggable(TaskDragPayload(id: task.id))
@@ -491,11 +491,9 @@ struct TaskCalendarView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             // Header
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text(day, format: .dateTime.weekday(.wide))
-                    .font(.system(.caption, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
+                    .eyebrowStyle()
                 Text(day, format: .dateTime.month(.wide).day())
                     .font(.system(.title3, weight: .semibold))
             }
@@ -509,10 +507,8 @@ struct TaskCalendarView: View {
                     // ── Tasks section ────────────────────────────────────
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                         Text("Tasks")
-                            .font(.system(.caption, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
-                            .padding(.bottom, 2)
+                            .eyebrowStyle()
+                            .padding(.bottom, DesignTokens.Spacing.xxs)
 
                         if tasks.isEmpty {
                             HStack(spacing: DesignTokens.Spacing.sm) {
@@ -538,10 +534,8 @@ struct TaskCalendarView: View {
                     // ── Daily Note section ───────────────────────────────
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                         Text("Daily Note")
-                            .font(.system(.caption, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
-                            .padding(.bottom, 2)
+                            .eyebrowStyle()
+                            .padding(.bottom, DesignTokens.Spacing.xxs)
 
                         if let note = dailyNote {
                             dailyNoteCard(note)
@@ -596,7 +590,7 @@ struct TaskCalendarView: View {
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+                    .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -611,7 +605,7 @@ struct TaskCalendarView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text(task.title)
                     .font(.system(.callout))
                     .strikethrough(task.isCompleted, color: .secondary)
@@ -629,7 +623,7 @@ struct TaskCalendarView: View {
                         Text(priority.rawValue.uppercased())
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(priorityColor(priority))
-                            .padding(.horizontal, 4)
+                            .padding(.horizontal, DesignTokens.Spacing.xs)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(priorityColor(priority).opacity(0.12)))
                     }
@@ -643,7 +637,7 @@ struct TaskCalendarView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
-                    .background(Circle().fill(Color.secondary.opacity(0.08)))
+                    .background(Circle().fill(DesignTokens.Palette.fill(.hover, contrast: contrast)))
             }
             .buttonStyle(.plain)
             .help("Edit task")

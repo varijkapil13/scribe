@@ -134,7 +134,7 @@ struct TaskDetailPanel: View {
     @ViewBuilder
     private var savedBadge: some View {
         if showSavedBadge {
-            HStack(spacing: 3) {
+            HStack(spacing: DesignTokens.Spacing.xxs) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.green)
@@ -217,7 +217,7 @@ struct TaskDetailPanel: View {
             Text("Notes")
                 .font(.system(.caption, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .padding(.bottom, 2)
+                .padding(.bottom, DesignTokens.Spacing.xxs)
 
             MarkdownEditorView(
                 text: $viewModel.notes,
@@ -249,7 +249,7 @@ struct TaskDetailPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             panelRow(icon: "calendar", label: "Due date") {
                 Button { showDueDatePicker.toggle() } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
                         Text(dueDateLabel)
                             .foregroundStyle(viewModel.dueAt != nil ? .primary : .secondary)
                         Image(systemName: "chevron.down")
@@ -263,7 +263,7 @@ struct TaskDetailPanel: View {
                 .accessibilityLabel("Due date: \(dueDateLabel)")
                 .popover(isPresented: $showDueDatePicker, arrowEdge: .trailing) {
                     InlineDatePickerView(selectedDate: $viewModel.dueAt)
-                        .padding(4)
+                        .padding(DesignTokens.Spacing.xs)
                         .scribeGlass(.hud, in: Rectangle())
                 }
             }
@@ -288,7 +288,7 @@ struct TaskDetailPanel: View {
             panelRow(icon: "bell", label: "Reminder") {
                 if hasReminder {
                     Button { showReminderPicker.toggle() } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.xs) {
                             Text(reminderLabel)
                                 .foregroundStyle(.primary)
                             Image(systemName: "chevron.down")
@@ -302,7 +302,7 @@ struct TaskDetailPanel: View {
                     .accessibilityLabel("Reminder: \(reminderLabel)")
                     .popover(isPresented: $showReminderPicker, arrowEdge: .trailing) {
                         InlineDatePickerView(selectedDate: $viewModel.remindAt)
-                            .padding(4)
+                            .padding(DesignTokens.Spacing.xs)
                             .scribeGlass(.hud, in: Rectangle())
                     }
 
@@ -388,7 +388,7 @@ struct TaskDetailPanel: View {
                         viewModel.flush()
                         onOpenRecording(sessionId)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.xs) {
                             Text(title)
                                 .lineLimit(1)
                             Image(systemName: "chevron.right")
@@ -481,7 +481,7 @@ struct TaskDetailPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, DesignTokens.Spacing.lg)
-        .padding(.vertical, 8)
+        .padding(.vertical, DesignTokens.Spacing.sm)
     }
 
     // MARK: - Helpers

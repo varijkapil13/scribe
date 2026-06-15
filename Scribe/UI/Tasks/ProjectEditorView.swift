@@ -41,7 +41,7 @@ struct ProjectEditorView: View {
                     TextField("Project name", text: $name)
                 }
                 Section("Color") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 8), spacing: 12) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DesignTokens.Spacing.md), count: 8), spacing: DesignTokens.Spacing.md) {
                         SwatchCell(color: nil, selected: selectedColor == nil) {
                             selectedColor = nil
                         }
@@ -51,7 +51,7 @@ struct ProjectEditorView: View {
                             }
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, DesignTokens.Spacing.xs)
                 }
                 Section("Icon") {
                     SymbolPickerGrid(selection: $icon)
@@ -115,7 +115,7 @@ private struct SwatchCell: View {
 
     private var swatchFill: Color {
         if let hex = color { return Color(hex: hex) ?? .gray }
-        return Color.secondary.opacity(0.15)
+        return DesignTokens.Palette.fill(.strong)
     }
 }
 

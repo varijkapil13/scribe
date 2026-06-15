@@ -31,17 +31,17 @@ struct InlineDatePickerView: View {
     var body: some View {
         VStack(spacing: 0) {
             shortcutsRow
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, DesignTokens.Spacing.md)
+                .padding(.vertical, DesignTokens.Spacing.sm)
 
             Divider()
 
-            VStack(spacing: 6) {
+            VStack(spacing: DesignTokens.Spacing.sm) {
                 monthHeader
                 dayNamesRow
                 calendarGrid
             }
-            .padding(12)
+            .padding(DesignTokens.Spacing.md)
         }
         .frame(width: 300)
     }
@@ -49,7 +49,7 @@ struct InlineDatePickerView: View {
     // MARK: - Shortcuts
 
     private var shortcutsRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DesignTokens.Spacing.sm) {
             shortcutChip(systemImage: "sun.max.fill",        label: "Today",       date: cal.startOfDay(for: Date()))
             shortcutChip(systemImage: "sunrise.fill",        label: "Tomorrow",    date: dayOffset(1))
             shortcutChip(systemImage: "forward.end.fill",    label: "Weekend",     date: thisWeekend)
@@ -71,18 +71,18 @@ struct InlineDatePickerView: View {
     private func shortcutChip(systemImage: String, label: String, date: Date) -> some View {
         let isActive = selectedDate.map { cal.isDate($0, inSameDayAs: date) } ?? false
         Button { applyDate(date) } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
                 Image(systemName: systemImage)
                     .font(.system(size: 12, weight: .medium))
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
             }
-            .padding(.horizontal, 7)
+            .padding(.horizontal, DesignTokens.Spacing.sm)
             .frame(height: 28)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.10))
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .fill(isActive ? Color.accentColor : DesignTokens.Palette.fill(.selected))
             )
             .foregroundStyle(isActive ? .white : .secondary)
         }
@@ -155,7 +155,7 @@ struct InlineDatePickerView: View {
     private var calendarGrid: some View {
         let days = buildDays()
         let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
-        return LazyVGrid(columns: columns, spacing: 2) {
+        return LazyVGrid(columns: columns, spacing: DesignTokens.Spacing.xxs) {
             ForEach(0..<days.count, id: \.self) { i in
                 dayCell(days[i])
             }
