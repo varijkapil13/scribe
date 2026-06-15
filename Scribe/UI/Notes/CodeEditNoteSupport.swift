@@ -132,26 +132,35 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            return MainActor.assumeIsolated { self.handleKeyDown(event) }
+            // Extract only Sendable value types before hopping to the main
+            // actor — `NSEvent` is not Sendable, so it can't cross the
+            // isolation boundary into `assumeIsolated`. (Local monitors already
+            // fire on the main thread, so the assertion always holds.)
+            let keyCode = event.keyCode
+            let modifiersEmpty = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask).isEmpty
+            let consumed = MainActor.assumeIsolated {
+                self.handleKeyDown(keyCode: keyCode, modifiersEmpty: modifiersEmpty)
+            }
+            return consumed ? nil : event
         }
     }
 
-    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+    /// Returns `true` when the slash menu consumed the key (so the monitor
+    /// should swallow the event), `false` to let it reach the text view.
+    private func handleKeyDown(keyCode: UInt16, modifiersEmpty: Bool) -> Bool {
         guard host.slashMenuActive,
-              let textView, isFirstResponder(textView) else { return event }
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard mods.isEmpty else { return event }
-        switch event.keyCode {
-        case 125: host.onSlashMove?(true);  return nil   // down
-        case 126: host.onSlashMove?(false); return nil   // up
+              let textView, isFirstResponder(textView) else { return false }
+        guard modifiersEmpty else { return false }
+        switch keyCode {
+        case 125: host.onSlashMove?(true);  return true   // down
+        case 126: host.onSlashMove?(false); return true   // up
         case 36, 76, 48:                                  // Return / keypad Enter / Tab
-            if host.onSlashCommit?() == true { return nil }
-            return event
+            return host.onSlashCommit?() == true
         case 53:                                          // Escape
-            if host.onSlashDismiss?() == true { return nil }
-            return event
+            return host.onSlashDismiss?() == true
         default:
-            return event
+            return false
         }
     }
 
