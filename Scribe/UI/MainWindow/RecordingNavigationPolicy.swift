@@ -10,9 +10,11 @@ import Foundation
 ///
 ///   1. If the user is already viewing a Note, the note's inline
 ///      `NoteLiveRecordingPane` handles streaming — don't navigate away.
-///   2. If `AppDelegate` just posted `.scribeRequestNavigateToNote` (auto-
-///      create path), `currentSelection` will be a `.note(id)` by the
-///      time this policy runs, so rule (1) covers that case too.
+///   2. The auto-create path routes the new note through
+///      `autoCreateDestination(noteId:)` as a single atomic transition
+///      (B1.1) — `currentSelection` is the new `.note(id)` before the
+///      recording flip is ever observed, so rule (1) suppresses the flash
+///      regardless of how SwiftUI orders the two observation callbacks.
 ///   3. Recording stopped (`isRecording == false`): no navigation.
 ///   4. Recording started anywhere else: jump to `.live`.
 enum RecordingNavigationPolicy {
@@ -26,6 +28,20 @@ enum RecordingNavigationPolicy {
         guard isRecording else { return nil }
         if case .note = currentSelection { return nil }
         return .live
+    }
+
+    /// Destination for the auto-create-meeting-note path: bind the freshly
+    /// created note as the current detail pane *before* `isTranscribing`
+    /// flips, so the `destination(_:)` rule above can never resolve to
+    /// `.live` for this transition (B1.1).
+    ///
+    /// Returned so the view can apply it as one routed `replaceCurrent`
+    /// transition through `NavigationCoordinator` rather than racing a
+    /// notification against the `isTranscribing` `onChange`. There is no
+    /// intermediate `.live` frame because the note destination is the only
+    /// value `current` ever takes on this path.
+    static func autoCreateDestination(noteId: String) -> MainSelection {
+        .note(noteId)
     }
 
     /// Returns the transcript destination to navigate to when a recording

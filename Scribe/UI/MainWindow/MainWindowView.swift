@@ -249,8 +249,15 @@ struct MainWindowView: View {
             openSettings()
         }
         .onReceive(NotificationCenter.default.publisher(for: .scribeRequestNavigateToNote)) { note in
+            // Auto-create path (B1.1): bind the freshly created meeting note as
+            // the current pane in one atomic routed transition. `replaceCurrent`
+            // (not `navigate`) because the user never explicitly navigated here,
+            // so it shouldn't create a spurious Back entry — and because it
+            // makes `.note(id)` the only value `nav.current` takes on this path,
+            // the `isTranscribing` policy below can never resolve to `.live`
+            // first. No intermediate `.live` frame regardless of callback order.
             if let id = note.userInfo?["noteId"] as? String {
-                nav.navigate(to: .note(id))
+                nav.replaceCurrent(RecordingNavigationPolicy.autoCreateDestination(noteId: id))
             }
         }
         .onChange(of: appState.isTranscribing) { _, isRecording in
