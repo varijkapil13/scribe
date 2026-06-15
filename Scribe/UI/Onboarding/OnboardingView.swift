@@ -98,6 +98,10 @@ struct OnboardingView: View {
         switch step.kind {
         case .surfaces:
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                // A miniature of the sidebar switcher so the three surfaces feel
+                // like one place you move between — "what lives where".
+                surfaceSwitcherPreview
+
                 surfaceRow(symbol: "waveform",
                            name: "Capture",
                            detail: "Record & transcribe conversations")
@@ -165,6 +169,44 @@ struct OnboardingView: View {
         case .welcome:
             EmptyView()
         }
+    }
+
+    /// Non-interactive miniature of the top-level surface switcher. Purely
+    /// illustrative — it shows the three segments the user will move between so
+    /// the rows below read as "what lives where".
+    private var surfaceSwitcherPreview: some View {
+        HStack(spacing: 2) {
+            switcherSegment(symbol: "waveform", title: "Capture", selected: true)
+            switcherSegment(symbol: "doc.text", title: "Notes", selected: false)
+            switcherSegment(symbol: "checklist", title: "Tasks", selected: false)
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Surface switcher: Capture, Notes, Tasks")
+    }
+
+    private func switcherSegment(symbol: String, title: String, selected: Bool) -> some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .medium))
+            Text(title)
+                .font(.system(size: 11, weight: selected ? .semibold : .regular))
+        }
+        .foregroundStyle(selected ? accent : Color.secondary)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, DesignTokens.Spacing.xs)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
+                .fill(selected
+                      ? DesignTokens.Palette.fill(.selected, contrast: contrast)
+                      : Color.clear)
+        )
+        .accessibilityHidden(true)
     }
 
     private func surfaceRow(symbol: String, name: String, detail: String) -> some View {

@@ -13,7 +13,10 @@ import SwiftUI
 struct HighlightingQuickAddField: NSViewRepresentable {
 
     @Binding var text: String
-    var placeholder: String = ""
+    /// Defaults to a syntax-hinting prompt so the quick-add power tokens
+    /// (#tag +project !priority + natural dates) are discoverable without
+    /// opening the help popover.
+    var placeholder: String = "Add a task — #tag +project !priority, “tmr”…"
     var onSubmit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
