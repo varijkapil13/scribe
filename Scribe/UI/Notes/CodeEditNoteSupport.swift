@@ -68,7 +68,7 @@ extension EditorTheme {
 /// snapshot of the callbacks each time the representable rebuilds, so it always
 /// invokes the freshest closures.
 @MainActor
-final class NoteEditorCoordinator: NSObject, TextViewCoordinator {
+final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
 
     /// A value snapshot of everything the wrapper passes down. Replaced on each
     /// SwiftUI update so closures never go stale.
