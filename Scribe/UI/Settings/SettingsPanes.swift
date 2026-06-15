@@ -369,9 +369,16 @@ private struct StorageSettingsPane: View {
     @AppStorage("retainAudio") var retainAudio: Bool = false
     @AppStorage("storageLocation") var storageLocation: String = ""
     @AppStorage(CloudKitSyncService.enabledDefaultsKey) var iCloudSyncEnabled: Bool = false
+    @AppStorage("iCloudNotesEnabled") var iCloudNotesEnabled: Bool = false
+    @State private var notesState: NotesVaultState = .idle
     @State private var showDeleteConfirmation: Bool = false
     @State private var deleteError: String?
     @State private var didDelete: Bool = false
+
+    enum NotesVaultState: Equatable {
+        case idle, migrating, done
+        case failed(String)
+    }
 
     var body: some View {
         Form {
@@ -399,6 +406,33 @@ private struct StorageSettingsPane: View {
                     isOn: $iCloudSyncEnabled,
                     caption: "Keep tasks in sync across your devices. Requires iCloud."
                 )
+                toggleWithCaption(
+                    "Store notes in iCloud Drive",
+                    isOn: Binding(
+                        get: { iCloudNotesEnabled },
+                        set: { setNotesEnabled($0) }
+                    ),
+                    caption: "Copy your notes vault into iCloud Drive so it stays available on every device. Requires iCloud."
+                )
+                switch notesState {
+                case .idle:
+                    EmptyView()
+                case .migrating:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Moving notes to iCloud Drive…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                case .done:
+                    Label("Notes are stored in iCloud Drive.", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                case .failed(let message):
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                }
             }
 
             Section("Data") {
@@ -439,6 +473,30 @@ private struct StorageSettingsPane: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("All sessions, segments, summaries, and action items were removed.")
+        }
+    }
+
+    /// Enables/disables the iCloud Drive notes vault via `ICloudVaultMigrator`.
+    /// ⚠️ DEVICE-VALIDATION-REQUIRED: the live migrate/copy paths need a
+    /// signed-in iCloud account and a provisioned container, so they can only
+    /// be exercised on a real device, not in CI.
+    private func setNotesEnabled(_ enabled: Bool) {
+        if enabled {
+            notesState = .migrating
+            Task {
+                do {
+                    try await ICloudVaultMigrator.enableICloudVault()
+                    iCloudNotesEnabled = true
+                    notesState = .done
+                } catch {
+                    iCloudNotesEnabled = false
+                    notesState = .failed(error.localizedDescription)
+                }
+            }
+        } else {
+            ICloudVaultMigrator.disableICloudVault()
+            iCloudNotesEnabled = false
+            notesState = .idle
         }
     }
 
