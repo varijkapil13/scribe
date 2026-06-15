@@ -10,6 +10,30 @@ struct GraphView: View {
     var onNavigate: (String) -> Void
 
     var body: some View {
+        Group {
+            if vm.nodes.isEmpty {
+                EmptyStateView(
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    title: "No connections yet",
+                    message: "Link two notes to see your graph. Add a [[wiki link]] from one note to another and they'll appear here, connected."
+                )
+            } else {
+                canvas
+            }
+        }
+        .navigationTitle("Graph")
+        .toolbar {
+            ToolbarItem {
+                Button("Reset") {
+                    panOffset = .zero; dragStart = .zero; zoomScale = 1; baseZoom = 1
+                    try? vm.load()
+                }
+            }
+        }
+        .onAppear { try? vm.load() }
+    }
+
+    private var canvas: some View {
         GeometryReader { geo in
             TimelineView(.animation(paused: vm.isSettled)) { timeline in
                 Canvas { ctx, size in
@@ -74,16 +98,6 @@ struct GraphView: View {
                 }
             }
         }
-        .navigationTitle("Graph")
-        .toolbar {
-            ToolbarItem {
-                Button("Reset") {
-                    panOffset = .zero; dragStart = .zero; zoomScale = 1; baseZoom = 1
-                    try? vm.load()
-                }
-            }
-        }
-        .onAppear { try? vm.load() }
     }
 
     private func dist(_ a: CGPoint, _ b: CGPoint) -> CGFloat {

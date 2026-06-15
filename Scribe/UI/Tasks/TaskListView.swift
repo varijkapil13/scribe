@@ -547,7 +547,11 @@ struct TaskListView: View {
             EmptyStateView(
                 systemImage: "checkmark.circle",
                 title: "Nothing here yet",
-                message: emptyMessage
+                message: emptyMessage,
+                actionTitle: "Add a task",
+                action: {
+                    NotificationCenter.default.post(name: .scribeFocusQuickAdd, object: nil)
+                }
             )
         } else {
             ScrollView {

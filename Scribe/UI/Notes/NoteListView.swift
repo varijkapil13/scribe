@@ -45,7 +45,12 @@ struct NoteListView: View {
                     title: vm.searchText.isEmpty ? "No notes yet" : "No results",
                     message: vm.searchText.isEmpty
                         ? "Create a note with ⌘N, or record a meeting to start one automatically."
-                        : "No notes match “\(vm.searchText)”."
+                        : "No notes match “\(vm.searchText)”.",
+                    actionTitle: vm.searchText.isEmpty ? "Create your first note" : nil,
+                    action: vm.searchText.isEmpty ? {
+                        let note = vm.createNote()
+                        selectedNoteId = note?.id
+                    } : nil
                 )
             } else {
                 List(vm.filteredNotes, selection: $selectedNoteId) { note in
