@@ -36,6 +36,12 @@ struct TaskListView: View {
     @Environment(\.scribeAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// First-use coachmark: teach the quick-add power syntax once, inline,
+    /// instead of leaving it hidden behind the "?" popover. Persisted so it's
+    /// shown a single time across launches; dismissed on first task add or via
+    /// the "Got it" button.
+    @AppStorage("tasks.hasSeenQuickAddSyntaxHint") private var hasSeenQuickAddSyntaxHint: Bool = false
+
     /// Per-filter bucket-collapse state. Persisted to `UserDefaults` keyed by
     /// `(filter, bucket)` so collapsing "Completed" under one filter no longer
     /// leaks into every other filter (the old shared local-`Set` bug). Loaded
@@ -194,6 +200,13 @@ struct TaskListView: View {
                     .padding(.top, DesignTokens.Spacing.sm)
                     .padding(.bottom, DesignTokens.Spacing.xs)
                     .background(DesignTokens.Palette.surface)
+
+                if showQuickAddSyntaxHint {
+                    quickAddSyntaxCoachmark
+                        .padding(.horizontal, DesignTokens.Spacing.md)
+                        .padding(.bottom, DesignTokens.Spacing.xs)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
                 listControlsBar
 
@@ -439,6 +452,74 @@ struct TaskListView: View {
 
     // MARK: - Quick add
 
+    /// Whether the one-time quick-add syntax coachmark should be visible. Only
+    /// on the task-entry filters (where the quick-add field is focused), and
+    /// only until the user has seen it once.
+    private var showQuickAddSyntaxHint: Bool {
+        guard !hasSeenQuickAddSyntaxHint else { return false }
+        switch filter {
+        case .today, .inbox, .dueOn: return true
+        default:                     return false
+        }
+    }
+
+    /// Marks the syntax coachmark as seen and animates it away.
+    private func dismissQuickAddSyntaxHint() {
+        guard !hasSeenQuickAddSyntaxHint else { return }
+        withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+            hasSeenQuickAddSyntaxHint = true
+        }
+    }
+
+    /// Inline first-use hint that teaches the power tokens up front. Mirrors the
+    /// "?" popover content but lives in the layout so it's unmissable on first
+    /// run, then dismisses for good.
+    @ViewBuilder
+    private var quickAddSyntaxCoachmark: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.xs) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 11))
+                    .foregroundStyle(accent)
+                    .accessibilityHidden(true)
+                Text("Type as you go — Scribe reads the shorthand")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Got it") { dismissQuickAddSyntaxHint() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(accent)
+                    .accessibilityHint("Dismiss the quick-add syntax hint")
+            }
+            HStack(spacing: DesignTokens.Spacing.md) {
+                coachmarkToken("#tag", color: .purple)
+                coachmarkToken("+project", color: .green)
+                coachmarkToken("!high", color: .red)
+                coachmarkToken("tmr", color: .orange)
+            }
+        }
+        .padding(DesignTokens.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Quick-add syntax tip. Type #tag to tag, +project to file, !high for priority, or a date phrase like tomorrow.")
+    }
+
+    private func coachmarkToken(_ token: String, color: Color) -> some View {
+        Text(token)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(color)
+            .accessibilityHidden(true)
+    }
+
     @ViewBuilder
     private var quickAddBar: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
@@ -449,12 +530,13 @@ struct TaskListView: View {
             MultilineQuickAddField(
                 text: $viewModel.quickAddText,
                 intrinsicHeight: $quickAddFieldHeight,
-                placeholder: "Add a task…",
+                placeholder: "Add a task — #tag +project !priority, “tmr”…",
                 minHeight: 24,
                 maxHeight: 24,
                 onSubmit: {
                     viewModel.commitQuickAdd()
                     quickAddFieldHeight = 24
+                    dismissQuickAddSyntaxHint()
                 }
             )
             .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
