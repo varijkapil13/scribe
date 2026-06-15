@@ -10,6 +10,11 @@ struct TaskCalendarView: View {
     @State private var dropTargetKey: String?
     var onNavigateToNote: ((String) -> Void)?
 
+    /// Shared "one day model" (Slice E1). The calendar's selected day mirrors
+    /// the date the Today home plans against, so jumping between the two
+    /// surfaces keeps the focused day consistent.
+    @Environment(DayPlanningModel.self) private var dayPlanning
+
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scribeAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -72,8 +77,22 @@ struct TaskCalendarView: View {
         .scribeAnimation(.snappy, value: viewModel.selectedDay.map(TaskCalendarViewModel.dayKey))
         .background(DesignTokens.Palette.surface)
         .navigationTitle("Calendar")
-        .onAppear { viewModel.start() }
+        .onAppear {
+            viewModel.start()
+            // Adopt the shared day so we open on whatever the user last planned
+            // (e.g. a non-today date chosen in the Today home).
+            viewModel.focus(on: dayPlanning.selectedDate)
+        }
         .onDisappear { viewModel.stop() }
+        .onChange(of: viewModel.selectedDay) { _, newDay in
+            // Calendar selection → shared model. A nil selection (day panel
+            // dismissed) leaves the shared day untouched.
+            if let newDay { dayPlanning.select(newDay) }
+        }
+        .onChange(of: dayPlanning.selectedDate) { _, newDate in
+            // Shared model → calendar (e.g. changed elsewhere while mounted).
+            viewModel.focus(on: newDate)
+        }
         .sheet(item: $editingTask) { task in
             TaskInspectorSheet(task: task) { editingTask = nil }
         }

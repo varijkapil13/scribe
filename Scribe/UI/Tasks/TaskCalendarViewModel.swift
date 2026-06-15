@@ -95,6 +95,17 @@ final class TaskCalendarViewModel: ObservableObject {
         displayMonth = next
     }
 
+    /// Point the calendar at `date`: select that day and scroll the grid to its
+    /// month. Used to keep the calendar in lock-step with the shared
+    /// ``DayPlanningModel``. No-op when already focused there so the two-way
+    /// sync with the shared model can't loop.
+    func focus(on date: Date) {
+        let day = cal.startOfDay(for: date)
+        guard selectedDay.map({ !cal.isDate($0, inSameDayAs: day) }) ?? true else { return }
+        selectedDay = day
+        displayMonth = cal.startOfMonth(for: day)
+    }
+
     // MARK: - Grid building
 
     /// Re-exposed for view-side convenience. The grid math itself lives in
