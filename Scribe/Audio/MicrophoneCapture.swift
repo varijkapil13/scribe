@@ -1,4 +1,9 @@
-import AVFoundation
+// AVFAudio's converter-input block is annotated `@Sendable`, but
+// `AVAudioConverter.convert` invokes it synchronously on the calling thread —
+// there is no real concurrency. `@preconcurrency` strips those imported
+// Sendable annotations so capturing the (non-Sendable) source buffer in the
+// block is not flagged.
+@preconcurrency import AVFoundation
 import CoreAudio
 
 // MARK: - Errors
@@ -101,12 +106,17 @@ final class MicrophoneCapture: @unchecked Sendable {
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain
             )
-            var nameRef: CFString = "" as CFString
-            var nameSize = UInt32(MemoryLayout<CFString>.size)
+            // CoreAudio returns kAudioObjectPropertyName as a +1-retained
+            // CFStringRef. Reading it into an `Unmanaged<CFString>?` (a trivial
+            // pointer-sized value) avoids forming a raw pointer to a variable
+            // that holds an object reference, and `takeRetainedValue()` balances
+            // the +1 so the string isn't leaked.
+            var nameRef: Unmanaged<CFString>?
+            var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             let nameStatus = AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &nameRef)
-            guard nameStatus == noErr else { continue }
+            guard nameStatus == noErr, let name = nameRef?.takeRetainedValue() else { continue }
 
-            results.append((id: deviceID, name: nameRef as String))
+            results.append((id: deviceID, name: name as String))
         }
         return results
     }

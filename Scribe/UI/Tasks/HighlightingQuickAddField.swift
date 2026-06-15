@@ -72,32 +72,32 @@ struct HighlightingQuickAddField: NSViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate {
 
         var parent: HighlightingQuickAddField
         weak var textField: NSTextField?
-        private var focusObserver: NSObjectProtocol?
 
         init(_ parent: HighlightingQuickAddField) {
             self.parent = parent
         }
 
         func startObservingFocusNotification() {
-            focusObserver = NotificationCenter.default.addObserver(
-                forName: .scribeFocusQuickAdd,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let tf = self?.textField else { return }
-                tf.window?.makeFirstResponder(tf)
-            }
+            // Selector-based (not the closure API) so we don't capture a
+            // non-Sendable Coordinator in NotificationCenter's @Sendable block.
+            // `.scribeFocusQuickAdd` is posted from the UI on the main thread.
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(focusRequested),
+                name: .scribeFocusQuickAdd, object: nil)
+        }
+
+        @objc private func focusRequested() {
+            guard let tf = textField else { return }
+            tf.window?.makeFirstResponder(tf)
         }
 
         func stopObservingFocusNotification() {
-            if let obs = focusObserver {
-                NotificationCenter.default.removeObserver(obs)
-                focusObserver = nil
-            }
+            NotificationCenter.default.removeObserver(self, name: .scribeFocusQuickAdd, object: nil)
         }
 
         // Sync text binding on every keystroke.

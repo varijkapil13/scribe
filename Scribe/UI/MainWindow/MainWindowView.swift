@@ -437,7 +437,7 @@ struct MainWindowView: View {
                             ) {
                                 let name = topNotebookDraftName.trimmingCharacters(in: .whitespaces)
                                 if !name.isEmpty {
-                                    try? NoteStore.shared.createNotebook(name: name)
+                                    _ = try? NoteStore.shared.createNotebook(name: name)
                                 }
                                 isCreatingTopNotebook = false
                                 topNotebookDraftName = ""
