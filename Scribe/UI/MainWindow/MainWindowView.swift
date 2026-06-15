@@ -18,7 +18,6 @@ enum MainSelection: Hashable {
 enum NotesFilter: Hashable {
     case all
     case inbox
-    case today
     case daily
     case notebook(String)   // notebookId
     case tag(String)
@@ -82,6 +81,10 @@ struct MainWindowView: View {
     @StateObject private var projectsViewModel = ProjectsViewModel()
     @State private var searchText: String = ""
     @State private var nav = NavigationCoordinator()
+    /// Shared "one day model" — the date the Today home and Task Calendar both
+    /// plan against. Injected into the detail pane so navigating a day in one
+    /// surface is reflected in the other (Slice E1).
+    @State private var dayPlanning = DayPlanningModel()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openSettings) private var openSettings
     @State private var projectEditorMode: ProjectEditorMode?
@@ -118,6 +121,7 @@ struct MainWindowView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             detail
+                .environment(dayPlanning)
                 .errorBanner(appState)
                 .overlay {
                     // IINA-style floating controller; self-gates on
@@ -660,7 +664,7 @@ struct MainWindowView: View {
     @ViewBuilder
     private func notesDetailView(filter: NotesFilter) -> some View {
         switch filter {
-        case .today, .daily:
+        case .daily:
             StandaloneDailyNoteView(onNavigate: { nav.navigate(to: .note($0)) })
         case .graph:
             GraphView(onNavigate: { nav.navigate(to: .note($0)) })

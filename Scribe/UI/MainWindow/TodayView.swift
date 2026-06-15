@@ -2,6 +2,58 @@
 import Combine
 import SwiftUI
 
+/// Single source of truth for the day the user is planning. Shared between the
+/// unified ``TodayView`` and ``TaskCalendarView`` so navigating to a date in
+/// one surface keeps the other in sync — the "one day model" half of Slice E1.
+///
+/// The date is always normalised to the start of its calendar day, so equality
+/// comparisons and `yyyy-MM-dd` bucketing line up no matter what time-of-day a
+/// caller passes in. Injected via `@Environment`; surfaces that want isolated
+/// state (previews, the legacy standalone daily note) can simply not read it.
+@MainActor
+@Observable
+final class DayPlanningModel {
+
+    /// The currently-planned day, normalised to its start-of-day instant.
+    private(set) var selectedDate: Date
+
+    private let calendar: Calendar
+
+    init(selectedDate: Date = Date(), calendar: Calendar = .current) {
+        self.calendar = calendar
+        self.selectedDate = Self.normalize(selectedDate, calendar: calendar)
+    }
+
+    /// Move the shared day to `date` (normalised). No-op when it already points
+    /// at the same calendar day, so redundant taps don't churn observers.
+    func select(_ date: Date) {
+        let normalised = Self.normalize(date, calendar: calendar)
+        guard normalised != selectedDate else { return }
+        selectedDate = normalised
+    }
+
+    var isToday: Bool { calendar.isDateInToday(selectedDate) }
+
+    // MARK: - Pure helpers (unit-tested in DayPlanningModelTests)
+
+    /// Start-of-day for `date` in `calendar`. Pulled out so the normalisation
+    /// invariant is testable without spinning up the `@Observable`.
+    static func normalize(_ date: Date, calendar: Calendar = .current) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    /// The `TaskStore.Filter` a day-scoped surface should use for `date`:
+    /// `.today` for the current day (keeps overdue tasks visible), the strict
+    /// same-day `.dueOn` window otherwise. The single decision point both the
+    /// Today rail and any day-scoped task list route through.
+    static func taskFilter(for date: Date, calendar: Calendar = .current, now: Date = Date()) -> TaskStore.Filter {
+        if calendar.isDate(date, inSameDayAs: now) {
+            return .today
+        }
+        return .dueOn(normalize(date, calendar: calendar))
+    }
+}
+
 /// Unified "Today" destination: the selected day's daily note on the left,
 /// the same day's tasks on the right rail. Replaces the separate "Today's
 /// Note" and Tasks-"Today" sidebar entries — both used to be one click away
@@ -13,29 +65,44 @@ import SwiftUI
 /// you write into; the tasks rail is a glanceable companion. Both panes
 /// remain user-resizable.
 ///
-/// The selected date is owned here and shared with both panes — when the
-/// user navigates days via the date strip in the note header, the rail
-/// re-filters tasks to that day automatically.
+/// The selected date lives in the shared ``DayPlanningModel`` (injected via the
+/// environment) and is read by both panes — when the user navigates days via the
+/// date strip in the note header, the rail re-filters tasks to that day
+/// automatically, and the Task Calendar opens on the same day.
 struct TodayView: View {
     var onNavigate: (String) -> Void
 
-    @State private var selectedDate: Date = Calendar.current.startOfDay(for: Date())
+    /// Shared day model, injected by `MainWindowView` so the Today home and the
+    /// Task Calendar always plan against the same selected day.
+    @Environment(DayPlanningModel.self) private var dayPlanning
 
     var body: some View {
         HSplitView {
-            DailyNoteView(selectedDate: $selectedDate, onNavigate: onNavigate)
+            DailyNoteView(selectedDate: selectedDateBinding, onNavigate: onNavigate)
                 .frame(minWidth: 380, idealWidth: 600)
                 .layoutPriority(2)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(noteAccessibilityLabel)
 
-            TodayTasksRail(selectedDate: selectedDate)
+            TodayTasksRail(selectedDate: dayPlanning.selectedDate)
                 .frame(minWidth: 280, idealWidth: 360, maxWidth: 520)
                 .layoutPriority(1)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(tasksAccessibilityLabel)
         }
     }
+
+    /// Adapts the shared model's read-only `selectedDate` to the two-way binding
+    /// `DailyNoteView` expects: writes route through `select(_:)` (which
+    /// normalises + de-dupes) rather than mutating the date directly.
+    private var selectedDateBinding: Binding<Date> {
+        Binding(
+            get: { dayPlanning.selectedDate },
+            set: { dayPlanning.select($0) }
+        )
+    }
+
+    private var selectedDate: Date { dayPlanning.selectedDate }
 
     private var noteAccessibilityLabel: String {
         Calendar.current.isDateInToday(selectedDate)
@@ -70,11 +137,10 @@ private struct TodayTasksRail: View {
     @StateObject private var progress = TodayProgressViewModel()
 
     /// `.today` keeps overdue tasks visible alongside today's; non-today
-    /// dates use the strict same-day `.dueOn` window.
+    /// dates use the strict same-day `.dueOn` window. Routed through the shared
+    /// pure helper so the Today rail and any other day-scoped surface agree.
     private var filter: TaskStore.Filter {
-        Calendar.current.isDateInToday(selectedDate)
-            ? .today
-            : .dueOn(Calendar.current.startOfDay(for: selectedDate))
+        DayPlanningModel.taskFilter(for: selectedDate)
     }
 
     var body: some View {
