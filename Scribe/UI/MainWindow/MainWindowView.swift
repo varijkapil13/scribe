@@ -368,6 +368,9 @@ struct MainWindowView: View {
                         NavigationLink(value: MainSelection.notes(.graph)) {
                             Label("Graph", systemImage: "circle.hexagongrid")
                         }
+                        NavigationLink(value: MainSelection.bases) {
+                            Label("Bases", systemImage: "tablecells")
+                        }
                     }
                 } header: {
                     HStack(alignment: .center) {
@@ -681,6 +684,8 @@ struct MainWindowView: View {
                 .id("task-\(id)")
         case .notes(let filter):
             notesDetailView(filter: filter)
+        case .bases:
+            BasesScreen(onNavigate: { nav.navigate(to: .note($0)) })
         case .session(let id):
             Group {
                 if let session = detailSession, session.id == id {

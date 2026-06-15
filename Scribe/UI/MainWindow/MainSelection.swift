@@ -18,6 +18,7 @@ enum MainSelection: Hashable {
     case task(String)           // taskId — command-bar deep-link
     case note(String)           // noteId
     case notes(NotesFilter)
+    case bases                  // cross-note property views (Obsidian-style Bases)
     case session(String)        // sessionId — transcript reader deep-link
 }
 
@@ -72,7 +73,7 @@ extension MainSelection {
     var surface: Surface {
         switch self {
         case .live, .today, .session, .recordings: return .capture
-        case .note, .notes:                        return .notes
+        case .note, .notes, .bases:                return .notes
         case .tasks, .taskCalendar, .task:         return .tasks
         }
     }
