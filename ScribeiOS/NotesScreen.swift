@@ -78,9 +78,10 @@ private struct NoteRow: View {
     }
 }
 
-/// Baseline note editor: title + raw markdown body in a `TextEditor`. Loads the
-/// full body from disk on appear (the list publisher only carries excerpts) and
-/// autosaves on change (debounced) and on disappear.
+/// Baseline note editor: title + raw markdown body in a `MarkdownTextView`
+/// (a `UITextView` with live syntax highlighting). Loads the full body from
+/// disk on appear (the list publisher only carries excerpts) and autosaves on
+/// change (debounced) and on disappear.
 struct NoteEditorScreen: View {
     let noteId: String
 
@@ -103,9 +104,8 @@ struct NoteEditorScreen: View {
             Divider().padding(.top, 8)
             tagsBar
             Divider()
-            TextEditor(text: $model.body)
-                .font(.body)
-                .padding(.horizontal, 12)
+            MarkdownTextView(text: $model.body)
+                .padding(.horizontal, 4)
         }
         .navigationTitle(model.title.isEmpty ? "Untitled" : model.title)
         .navigationBarTitleDisplayMode(.inline)
