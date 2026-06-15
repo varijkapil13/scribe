@@ -355,6 +355,9 @@ struct MainWindowView: View {
                             }
                             .badge(taskBadge(for: item.filter))
                         }
+                        NavigationLink(value: MainSelection.taskCalendar) {
+                            Label("Calendar", systemImage: "calendar")
+                        }
                     }
                 } header: {
                     CollapsibleSectionHeader(title: "Tasks", isExpanded: $tasksExpanded)
@@ -412,6 +415,9 @@ struct MainWindowView: View {
                     if notesExpanded {
                         NavigationLink(value: MainSelection.notes(.all)) {
                             Label("All Notes", systemImage: "doc.on.doc")
+                        }
+                        NavigationLink(value: MainSelection.notes(.graph)) {
+                            Label("Graph", systemImage: "circle.hexagongrid")
                         }
                     }
                 } header: {
@@ -578,20 +584,10 @@ struct MainWindowView: View {
     @ViewBuilder
     private var sidebarFooter: some View {
         HStack(spacing: 0) {
-            footerIcon(systemImage: "calendar",
-                       help: "Task calendar",
-                       isActive: nav.current == .taskCalendar) {
-                nav.navigate(to: .taskCalendar)
-            }
             footerIcon(systemImage: "checkmark.circle",
                        help: "Completed tasks",
                        isActive: nav.current == .tasks(.completed)) {
                 nav.navigate(to: .tasks(.completed))
-            }
-            footerIcon(systemImage: "circle.hexagongrid",
-                       help: "Notes graph",
-                       isActive: nav.current == .notes(.graph)) {
-                nav.navigate(to: .notes(.graph))
             }
             Spacer()
             footerIcon(systemImage: "gearshape",
