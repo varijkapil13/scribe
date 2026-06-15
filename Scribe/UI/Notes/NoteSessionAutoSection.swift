@@ -125,7 +125,12 @@ struct NoteSessionAutoSection: View {
                     .foregroundStyle(.green)
             } else {
                 Button("Convert to task") {
-                    if let created = viewModel.convertActionItemToTask(item) {
+                    // Land the task in the bound note's project (its notebook)
+                    // rather than always Inbox, carrying the source session id.
+                    if let created = viewModel.convertActionItemToTask(
+                        item,
+                        projectId: viewModel.boundProjectId
+                    ) {
                         onConvertActionItem(item, created)
                     }
                 }
