@@ -12,6 +12,7 @@ enum MainSelection: Hashable {
     case task(String)           // taskId — command-bar deep-link
     case note(String)           // noteId
     case notes(NotesFilter)
+    case bases                  // cross-note property views (Obsidian-style Bases)
     case session(String)        // sessionId — transcript reader deep-link
 }
 
@@ -66,7 +67,7 @@ extension MainSelection {
     var surface: Surface {
         switch self {
         case .live, .today, .session, .recordings: return .capture
-        case .note, .notes:                        return .notes
+        case .note, .notes, .bases:                return .notes
         case .tasks, .taskCalendar, .task:         return .tasks
         }
     }
@@ -436,6 +437,9 @@ struct MainWindowView: View {
                         NavigationLink(value: MainSelection.notes(.graph)) {
                             Label("Graph", systemImage: "circle.hexagongrid")
                         }
+                        NavigationLink(value: MainSelection.bases) {
+                            Label("Bases", systemImage: "tablecells")
+                        }
                     }
                 } header: {
                     HStack(alignment: .center) {
@@ -749,6 +753,8 @@ struct MainWindowView: View {
                 .id("task-\(id)")
         case .notes(let filter):
             notesDetailView(filter: filter)
+        case .bases:
+            BasesScreen(onNavigate: { nav.navigate(to: .note($0)) })
         case .session(let id):
             Group {
                 if let session = detailSession, session.id == id {
