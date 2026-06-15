@@ -94,6 +94,12 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
     private var clickRecognizer: NSClickGestureRecognizer?
     private var keyMonitor: Any?
 
+    /// Inline diagram / image rendering. Folds ```mermaid``` / ```plantuml```
+    /// fences and `![alt](path)` embeds into display-only image overlays,
+    /// revealing the source when the caret enters a region. See
+    /// ``DiagramFoldingController``.
+    private let diagramFolding = DiagramFoldingController()
+
     // MARK: TextViewCoordinator
 
     func prepareCoordinator(controller: TextViewController) {
@@ -102,15 +108,19 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
         installClickRecognizer(on: controller.textView)
         installKeyMonitor()
         reinstallActions()
+        diagramFolding.attach(to: controller.textView)
+        refreshDiagramFolding(positions: controller.cursorPositions)
     }
 
     func textViewDidChangeSelection(controller: TextViewController, newPositions: [CursorPosition]) {
         reportSlashAndWiki(positions: newPositions)
         reportSelectionGeometry(positions: newPositions)
+        refreshDiagramFolding(positions: newPositions)
     }
 
     func textViewDidChangeText(controller: TextViewController) {
         reportSlashAndWiki(positions: controller.cursorPositions)
+        refreshDiagramFolding(positions: controller.cursorPositions)
     }
 
     func destroy() {
@@ -118,8 +128,15 @@ final class NoteEditorCoordinator: NSObject, @MainActor TextViewCoordinator {
         clickRecognizer = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        diagramFolding.detach()
         controller = nil
         textView = nil
+    }
+
+    /// Recomputes inline diagram / image overlays for the current selection.
+    private func refreshDiagramFolding(positions: [CursorPosition]) {
+        let selection = positions.first?.range ?? NSRange(location: 0, length: 0)
+        diagramFolding.refresh(selection: selection)
     }
 
     // MARK: - Slash-menu key interception

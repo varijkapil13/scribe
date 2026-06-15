@@ -40,10 +40,14 @@ import CodeEditTextView
 ///     underlying source so the toolbar + format bubble + slash menu reuse a
 ///     single editing path.
 ///
-/// Diagram / image folding (Mermaid, PlantUML, embedded images) is deliberately
-/// NOT yet ported — CodeEditTextView uses a bespoke `TextAttachment` overlay
-/// system rather than NSTextAttachment replacement, so that fold/unfold-on-caret
-/// behaviour is a follow-up. See the PR notes.
+/// Diagram / image folding (Mermaid, PlantUML, embedded images) is rendered
+/// inline via ``DiagramFoldingController``: fenced ```mermaid``` / ```plantuml```
+/// blocks and `![alt](path)` embeds fold into display-only image overlays using
+/// CodeEditTextView's `TextAttachment` overlay manager (the markdown string
+/// stays the source of truth), and placing the caret inside a region reveals
+/// its source for editing. The overlay attachment API is width-only, so the
+/// reserved layout height is one line (see EditorDiagramFolding.swift) — the
+/// image is still drawn at full size into the unclipped context.
 struct CodeEditNoteTextView: View {
 
     /// The Markdown document being edited.
