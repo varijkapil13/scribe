@@ -72,11 +72,17 @@ struct RootTabView: View {
         }
     }
 
+    /// Single-selection sidebar `List` needs a `Binding<Tab?>`; the screen state
+    /// is non-optional, so bridge it (ignore deselection — a tab is always shown).
+    private var sidebarSelection: Binding<Tab?> {
+        Binding(get: { selection }, set: { if let new = $0 { selection = new } })
+    }
+
     /// Regular-width (iPad) layout: a sidebar listing the destinations and a
     /// detail column showing the selected screen.
     private var splitView: some View {
         NavigationSplitView {
-            List(Tab.allCases, selection: $selection) { tab in
+            List(Tab.allCases, selection: sidebarSelection) { tab in
                 Label(tab.title, systemImage: tab.systemImage)
                     .tag(tab)
             }
