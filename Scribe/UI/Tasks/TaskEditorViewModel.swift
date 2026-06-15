@@ -26,9 +26,15 @@ final class TaskEditorViewModel: ObservableObject {
     @Published private(set) var availableProjects: [Project] = []
     @Published private(set) var saveError: String?
     /// Title of the meeting session this task originated from, when the task
-    /// has a `sourceSessionId`. Surfaced as a "From: <title>" link in the
-    /// editor sheet.
+    /// has a `sourceSessionId` AND that session still exists. Surfaced as a
+    /// "From: <title>" link in the editor sheet. Nil when the task has no
+    /// source session, or the source recording was since deleted — callers
+    /// distinguish those two cases via `sourceSessionId`.
     @Published private(set) var sourceSessionTitle: String?
+    /// Identifier of the meeting session this task was converted from, if any.
+    /// Drives the navigable "From: <recording>" affordance: when this is set
+    /// but `sourceSessionTitle` is nil, the source recording was deleted.
+    var sourceSessionId: String? { originalTask.sourceSessionId }
     /// Bumps on every successful (debounced or flushed) save so the inspector
     /// can flash a brief "Saved" confirmation. Driven by `save()`.
     @Published private(set) var lastSavedAt: Date?
