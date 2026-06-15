@@ -1,77 +1,8 @@
 import SwiftUI
 
-/// Destination a user can navigate to from the main window's sidebar. Combines
-/// transcript sessions with settings panes and, while a session is running,
-/// the live-recording view so there's only ever one window to look at.
-enum MainSelection: Hashable {
-    case live
-    case today
-    case recordings             // transcript archive (browsable session library)
-    case tasks(TaskStore.Filter)
-    case taskCalendar
-    case task(String)           // taskId — command-bar deep-link
-    case note(String)           // noteId
-    case notes(NotesFilter)
-    case bases                  // cross-note property views (Obsidian-style Bases)
-    case session(String)        // sessionId — transcript reader deep-link
-}
-
-enum NotesFilter: Hashable {
-    case all
-    case inbox
-    case daily
-    case notebook(String)   // notebookId
-    case tag(String)
-    case graph
-}
-
-/// Top-level product surface — the Arc-style grouping the sidebar filters by
-/// and ⌘1/2/3 jump between. Derived from the active `MainSelection` so the
-/// switcher highlight always follows navigation (no separate state to sync).
-enum Surface: Int, CaseIterable, Identifiable {
-    case capture = 1
-    case notes = 2
-    case tasks = 3
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .capture: return "Capture"
-        case .notes:   return "Notes"
-        case .tasks:   return "Tasks"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .capture: return "waveform"
-        case .notes:   return "doc.text"
-        case .tasks:   return "checklist"
-        }
-    }
-
-    /// The destination ⌘1/2/3 (and the switcher) jump to for this surface.
-    var defaultSelection: MainSelection {
-        switch self {
-        case .capture: return .today
-        case .notes:   return .notes(.all)
-        case .tasks:   return .tasks(.inbox)
-        }
-    }
-}
-
-extension MainSelection {
-    /// The product surface this destination belongs to — drives the sidebar
-    /// switcher highlight and section filtering.
-    var surface: Surface {
-        switch self {
-        case .live, .today, .session, .recordings: return .capture
-        case .note, .notes, .bases:                return .notes
-        case .tasks, .taskCalendar, .task:         return .tasks
-        }
-    }
-}
+// `MainSelection`, `NotesFilter`, and `Surface` live in MainSelection.swift so
+// they stay in the SwiftPM test target while this view file is excluded from it
+// (see the EDITOR EXCLUSION BOUNDARY note in Package.swift).
 
 /// The main window — sidebar of past transcripts + settings panes, detail
 /// pane shows whichever is selected. Primary UI for the app.
@@ -890,48 +821,8 @@ private struct WelcomeView: View {
     }
 }
 
-/// Tiny inline "keyboard key caps" renderer for shortcut hints.
-struct KeyCapGroup: View {
-    let keys: [String]
-
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(keys, id: \.self) { key in
-                Text(key)
-                    .font(.system(.caption, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 18, minHeight: 18)
-                    .padding(.horizontal, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                            .fill(DesignTokens.Palette.surfaceElevated)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                            .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
-                    )
-            }
-        }
-    }
-}
-
-// MARK: - Notification names
-
-extension Notification.Name {
-    static let openScribeSettings = Notification.Name("scribe.openSettings")
-    static let scribeSessionUpdated = Notification.Name("scribe.sessionUpdated")
-    static let scribeRequestNavigateToNote = Notification.Name("scribe.requestNavigateToNote")
-    // Menu-bar command tree → main window. The menu items are the canonical,
-    // VoiceOver-announced home of these shortcuts; MainWindowView observes them.
-    static let scribeToggleCommandBar = Notification.Name("scribe.toggleCommandBar")
-    static let scribeGoBack = Notification.Name("scribe.goBack")
-    static let scribeGoForward = Notification.Name("scribe.goForward")
-    static let scribeToggleSidebar = Notification.Name("scribe.toggleSidebar")
-    static let scribeNewNote = Notification.Name("scribe.newNote")
-    static let scribeNewDailyNote = Notification.Name("scribe.newDailyNote")
-    static let scribeNavigate = Notification.Name("scribe.navigate")  // userInfo["selection"]
-    static let scribeScrollToOffset = Notification.Name("scribe.scrollToOffset")  // userInfo["offset"]
-}
+// `KeyCapGroup` moved to UI/DesignSystem/KeyCapGroup.swift (kept in the SwiftPM
+// target; see Package.swift exclusion note).
 
 // MARK: - Collapsible section header
 
@@ -1019,17 +910,8 @@ struct TaskSidebarItem: Identifiable, Hashable {
 // MARK: - Project sidebar
 
 /// Drives the create/edit sheet for projects from the sidebar.
-enum ProjectEditorMode: Identifiable, Hashable {
-    case create
-    case edit(Project)
-
-    var id: String {
-        switch self {
-        case .create: return "create"
-        case .edit(let project): return "edit-\(project.id)"
-        }
-    }
-}
+// `ProjectEditorMode` moved to ProjectEditorMode.swift (kept in the SwiftPM
+// target; see Package.swift exclusion note).
 
 /// Sidebar row for a single project. Renders the project's icon (if set) in
 /// its custom color, otherwise falls back to a generic folder.
@@ -1051,38 +933,5 @@ struct ProjectSidebarRow: View {
     }
 }
 
-// MARK: - Inline name field
-
-/// Inline editable text field for sidebar rows (notebook create / rename).
-/// Commits on Return, cancels on Escape.
-struct InlineNameField: View {
-    @Binding var text: String
-    let placeholder: String
-    let systemImage: String
-    let onCommit: () -> Void
-    let onCancel: () -> Void
-
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: DesignTokens.Spacing.xs) {
-            Image(systemName: systemImage)
-                .imageScale(.small)
-                .foregroundStyle(Color.accentColor)
-
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-                .font(DesignTokens.Typography.body)
-                .focused($isFocused)
-                .onSubmit { onCommit() }
-                .onExitCommand { onCancel() }
-        }
-        .padding(.vertical, DesignTokens.Spacing.xxs)
-        .listRowBackground(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .fill(Color.accentColor.opacity(0.10))
-                .padding(.horizontal, -DesignTokens.Spacing.xs)
-        )
-        .onAppear { isFocused = true }
-    }
-}
+// `InlineNameField` moved to UI/DesignSystem/InlineNameField.swift (kept in the
+// SwiftPM target; see Package.swift exclusion note).

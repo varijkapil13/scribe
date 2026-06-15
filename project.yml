@@ -16,6 +16,12 @@ targets:
     platform: macOS
     sources:
       - path: Scribe/
+        excludes:
+          # SwiftPM-only `@main` entry (gated on SCRIBE_SPM_ENTRY). The app's
+          # real entry point is ScribeApp (`@main`); compiling the shim here
+          # would be a duplicate top-level entry. See Package.swift's
+          # editor-exclusion-boundary note.
+          - App/SwiftPMEntryShim.swift
     resources:
       - path: Scribe/Resources/
     dependencies:
@@ -31,6 +37,8 @@ targets:
       # swift-custom-dump, SwiftLintPlugin) resolve automatically via SPM.
       - package: CodeEditSourceEditor
         product: CodeEditSourceEditor
+      - package: CodeEditTextView
+        product: CodeEditTextView
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
@@ -154,3 +162,10 @@ packages:
   CodeEditSourceEditor:
     url: https://github.com/CodeEditApp/CodeEditSourceEditor
     exactVersion: "0.15.2"
+  # The underlying TextKit-2 text view. Already pulled in transitively by
+  # CodeEditSourceEditor 0.15.2 (which resolves it to 0.12.1); declared
+  # explicitly so the note-editor wrapper can `import CodeEditTextView` to
+  # name `TextView` / drive its selection + attachment APIs.
+  CodeEditTextView:
+    url: https://github.com/CodeEditApp/CodeEditTextView
+    exactVersion: "0.12.1"
