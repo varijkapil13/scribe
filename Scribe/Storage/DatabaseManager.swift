@@ -40,7 +40,7 @@ final class DatabaseManager: @unchecked Sendable {
     // MARK: - Migrations
 
     private func runMigrations() throws {
-        var migrator = Self.makeMigrator()
+        let migrator = Self.makeMigrator()
         try migrator.migrate(database)
     }
 
@@ -582,7 +582,7 @@ final class DatabaseManager: @unchecked Sendable {
 
     /// Date formatter used inside v13's body-flush step. POSIX local-time
     /// to match `NoteStore.dailyDateFormatter` and `NoteFileStore`.
-    nonisolated(unsafe) private static let v13DailyFormatter: DateFormatter = {
+    nonisolated private static let v13DailyFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
