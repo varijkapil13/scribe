@@ -215,7 +215,7 @@ enum MCPHandler {
         let store = TranscriptStore()
         let sessions = try store.fetchAllSessions().prefix(limit)
         let dicts = sessions.map { s -> [String: Any] in
-            var d: [String: Any] = ["id": s.id, "title": s.title ?? "Untitled"]
+            var d: [String: Any] = ["id": s.id, "title": s.title]
             d["started_at"] = ISO8601DateFormatter().string(from: s.createdAt)
             if let ended = s.endedAt { d["ended_at"] = ISO8601DateFormatter().string(from: ended) }
             if let dur = s.durationSeconds { d["duration_seconds"] = dur }
@@ -242,7 +242,7 @@ enum MCPHandler {
         }
         return toolSuccess([
             "id": session.id,
-            "title": session.title ?? "Untitled",
+            "title": session.title,
             "transcript": text,
             "action_items": actionDicts
         ])
@@ -271,7 +271,7 @@ enum MCPHandler {
                 content = try TaskStore().fetchTasks(filter: .all).map(taskToDict)
             case "transcripts://recent":
                 content = try TranscriptStore().fetchAllSessions().prefix(10).map { s -> [String: Any] in
-                    ["id": s.id, "title": s.title ?? "Untitled"]
+                    ["id": s.id, "title": s.title]
                 }
             default:
                 return err(id: nil, code: -32602, message: "Unknown resource: \(uri)")

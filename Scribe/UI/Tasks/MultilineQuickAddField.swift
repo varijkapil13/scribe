@@ -98,28 +98,27 @@ struct MultilineQuickAddField: NSViewRepresentable {
         var field: MultilineQuickAddField
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
-        private var focusObserver: NSObjectProtocol?
 
         init(_ field: MultilineQuickAddField) {
             self.field = field
         }
 
         func startObservingFocusNotification() {
-            focusObserver = NotificationCenter.default.addObserver(
-                forName: .scribeFocusQuickAdd,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let tv = self?.textView else { return }
-                tv.window?.makeFirstResponder(tv)
-            }
+            // Selector-based (not the closure API) so we don't capture a
+            // non-Sendable Coordinator in NotificationCenter's @Sendable block.
+            // `.scribeFocusQuickAdd` is posted from the UI on the main thread.
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(focusRequested),
+                name: .scribeFocusQuickAdd, object: nil)
+        }
+
+        @objc private func focusRequested() {
+            guard let tv = textView else { return }
+            tv.window?.makeFirstResponder(tv)
         }
 
         func stopObservingFocusNotification() {
-            if let obs = focusObserver {
-                NotificationCenter.default.removeObserver(obs)
-                focusObserver = nil
-            }
+            NotificationCenter.default.removeObserver(self, name: .scribeFocusQuickAdd, object: nil)
         }
 
         // MARK: NSTextViewDelegate
