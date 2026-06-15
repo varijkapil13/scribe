@@ -51,3 +51,6 @@ models/
 
 # Superpowers tool artifacts
 .superpowers/
+
+# Claude Code parallel-agent git worktrees (local scaffolding, never committed)
+.claude/worktrees/
