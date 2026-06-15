@@ -64,16 +64,37 @@ final class BaseDefinitionStore: @unchecked Sendable {
         basesDirectory.appendingPathComponent("\(id.uuidString).json", isDirectory: false)
     }
 
+    /// ISO-8601 with fractional seconds, so two bases created within the same
+    /// second keep a distinct `createdAt` after a disk round-trip (plain
+    /// `.iso8601` truncates to whole seconds, which would collapse creation
+    /// ordering for bases made in quick succession).
+    private static let iso8601: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
-        e.dateEncodingStrategy = .iso8601
+        e.dateEncodingStrategy = .custom { date, enc in
+            var c = enc.singleValueContainer()
+            try c.encode(iso8601.string(from: date))
+        }
         return e
     }()
 
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        d.dateDecodingStrategy = .custom { dec in
+            let s = try dec.singleValueContainer().decode(String.self)
+            // Accept fractional first, then whole-second ISO-8601 (older files).
+            if let date = iso8601.date(from: s) { return date }
+            if let date = ISO8601DateFormatter().date(from: s) { return date }
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: dec.codingPath,
+                debugDescription: "Invalid ISO-8601 date: \(s)"))
+        }
         return d
     }()
 
