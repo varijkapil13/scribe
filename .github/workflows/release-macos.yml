@@ -1,0 +1,115 @@
+name: Release macOS
+
+# Build the shippable macOS app and publish it as a downloadable GitHub Release
+# whenever a version tag (v*) is pushed. Also runnable manually
+# (workflow_dispatch) — a manual run still builds + packages and uploads a
+# workflow artifact, but only a tag push creates a Release.
+#
+# NOTE ON SIGNING: CI has no "Developer ID Application" certificate (see
+# BUILD.md), so the app is ad-hoc signed (CODE_SIGN_IDENTITY="-") and NOT
+# notarized. It runs locally (right-click → Open, or strip the quarantine
+# attribute) but is not Gatekeeper-clean for wide distribution. Wire a
+# Developer-ID cert + notary profile into a secret later to upgrade this.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # create the Release and upload assets
+
+jobs:
+  release:
+    name: build + package macOS app
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build app (Release, ad-hoc signed)
+        # Manual ad-hoc signing ("-") with no team/profile: xcodebuild signs the
+        # app + nested frameworks and embeds the entitlements during the build,
+        # so the result actually runs. CODE_SIGNING_REQUIRED=NO keeps a signing
+        # hiccup from failing the build.
+        run: |
+          xcodebuild \
+            -project Scribe.xcodeproj \
+            -scheme Scribe \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/dd \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+
+      - name: Package app (.zip + .dmg)
+        id: package
+        run: |
+          set -euo pipefail
+          APP="build/dd/Build/Products/Release/Scribe.app"
+          [ -d "$APP" ] || { echo "::error::Scribe.app not found at $APP"; exit 1; }
+
+          # Prefer the pushed tag for naming; fall back to the bundle version.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            NAME="${GITHUB_REF_NAME}"
+          else
+            NAME="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          fi
+          mkdir -p dist
+
+          ditto -c -k --keepParent "$APP" "dist/Scribe-${NAME}.zip"
+
+          STAGE="build/dmg-stage"
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Scribe ${NAME}" -srcfolder "$STAGE" -ov -format UDZO "dist/Scribe-${NAME}.dmg"
+
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          ls -lh dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scribe-macOS-${{ steps.package.outputs.name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > dist/RELEASE_NOTES.md <<'EOF'
+          ## Scribe — macOS build
+
+          > **Not notarized.** This artifact is built and ad-hoc signed by CI; it
+          > has no Apple Developer ID signature. On first launch macOS Gatekeeper
+          > will warn — right-click the app and choose **Open**, or run:
+          >
+          > ```sh
+          > xattr -dr com.apple.quarantine /Applications/Scribe.app
+          > ```
+
+          Apple Silicon, macOS 26+. Download the `.dmg` (drag to Applications) or the `.zip`.
+          EOF
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/Scribe-*.dmg dist/Scribe-*.zip \
+            --title "Scribe ${GITHUB_REF_NAME}" \
+            --notes-file dist/RELEASE_NOTES.md
