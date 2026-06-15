@@ -41,6 +41,17 @@ jobs:
         # (via *.shared stores), which races under multiple test processes
         # (one erases/migrates the DB file while another reads → "no such
         # table: grdb_migrations"). The project runs tests single-process.
+        #
+        # DISABLE_SWIFTLINT: CodeEditSourceEditor attaches the lukepistrol
+        # SwiftLintPlugins *build-tool* plugin to its own targets, which runs
+        # `swiftlint` while compiling them and fails on the runner. The plugin
+        # reads this env var at plan time and emits no build commands when set
+        # (Plugins/SwiftLint/main.swift → returns []), so swiftlint never runs.
+        # We don't lint CodeEdit's vendored sources anyway. Must live in the
+        # process env (not an xcodebuild build setting) so the plugin's
+        # ProcessInfo sees it.
+        env:
+          DISABLE_SWIFTLINT: "YES"
         run: swift test --enable-code-coverage
 
       - name: Coverage summary
@@ -88,6 +99,13 @@ jobs:
         run: xcodegen generate
 
       - name: Build
+        # DISABLE_SWIFTLINT: see the note on the `swift test` step. The
+        # CodeEditSourceEditor SwiftLintPlugins build-tool plugin runs swiftlint
+        # while compiling CodeEdit's targets and fails on the runner;
+        # -skipPackagePluginValidation only skips the trust prompt, not
+        # execution. The plugin emits no commands when this env var is present.
+        env:
+          DISABLE_SWIFTLINT: "YES"
         run: |
           xcodebuild \
             -project Scribe.xcodeproj \
@@ -120,6 +138,11 @@ jobs:
         run: xcodegen generate
 
       - name: Build iOS (simulator, unsigned)
+        # DISABLE_SWIFTLINT: harmless here (the iOS target doesn't depend on
+        # CodeEditSourceEditor) but kept for parity — if the dep ever resolves
+        # for iOS, its build-tool plugin still won't run swiftlint on the runner.
+        env:
+          DISABLE_SWIFTLINT: "YES"
         run: |
           xcodebuild \
             -project Scribe.xcodeproj \
@@ -155,6 +178,11 @@ jobs:
         run: xcodegen generate
 
       - name: Build for testing (compiles app + XCUITest target, unsigned)
+        # DISABLE_SWIFTLINT: see the note on the `swift test` step — stops the
+        # CodeEditSourceEditor build-tool plugin from running swiftlint (and
+        # failing) while compiling CodeEdit's targets on the runner.
+        env:
+          DISABLE_SWIFTLINT: "YES"
         run: |
           xcodebuild build-for-testing \
             -project Scribe.xcodeproj \

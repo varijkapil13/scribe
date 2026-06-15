@@ -85,15 +85,15 @@ extension EditorTheme {
             background: .textBackgroundColor,
             lineHighlight: .unemphasizedSelectedContentBackgroundColor,
             selection: .selectedTextBackgroundColor,
-            keywords: Attribute(color: nsColor(.priorityHigh), bold: true),
-            commands: Attribute(color: nsColor(.speakerYou)),
-            types: Attribute(color: nsColor(.speakerRemote)),
-            attributes: Attribute(color: nsColor(.speakerRemote)),
+            keywords: Attribute(color: nsColor(DesignTokens.Palette.priorityHigh), bold: true),
+            commands: Attribute(color: nsColor(DesignTokens.Palette.speakerYou)),
+            types: Attribute(color: nsColor(DesignTokens.Palette.speakerRemote)),
+            attributes: Attribute(color: nsColor(DesignTokens.Palette.speakerRemote)),
             variables: Attribute(color: .textColor),
-            values: Attribute(color: nsColor(.priorityMedium)),
-            numbers: Attribute(color: nsColor(.priorityMedium)),
-            strings: Attribute(color: nsColor(.priorityLow)),
-            characters: Attribute(color: nsColor(.priorityLow)),
+            values: Attribute(color: nsColor(DesignTokens.Palette.priorityMedium)),
+            numbers: Attribute(color: nsColor(DesignTokens.Palette.priorityMedium)),
+            strings: Attribute(color: nsColor(DesignTokens.Palette.priorityLow)),
+            characters: Attribute(color: nsColor(DesignTokens.Palette.priorityLow)),
             comments: Attribute(color: .secondaryLabelColor, italic: true)
         )
     }
