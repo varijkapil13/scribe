@@ -153,4 +153,4 @@ packages:
     from: "0.6.0"
   CodeEditSourceEditor:
     url: https://github.com/CodeEditApp/CodeEditSourceEditor
-    exact: "0.15.2"
+    exactVersion: "0.15.2"
