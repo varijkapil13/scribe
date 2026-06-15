@@ -368,6 +368,7 @@ private struct IntelligenceSettingsPane: View {
 private struct StorageSettingsPane: View {
     @AppStorage("retainAudio") var retainAudio: Bool = false
     @AppStorage("storageLocation") var storageLocation: String = ""
+    @AppStorage(CloudKitSyncService.enabledDefaultsKey) var iCloudSyncEnabled: Bool = false
     @State private var showDeleteConfirmation: Bool = false
     @State private var deleteError: String?
     @State private var didDelete: Bool = false
@@ -390,6 +391,14 @@ private struct StorageSettingsPane: View {
                         Button("Change…", action: chooseStorageLocation)
                     }
                 }
+            }
+
+            Section("iCloud") {
+                toggleWithCaption(
+                    "Sync tasks with iCloud",
+                    isOn: $iCloudSyncEnabled,
+                    caption: "Keep tasks in sync across your devices. Requires iCloud."
+                )
             }
 
             Section("Data") {
