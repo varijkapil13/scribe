@@ -24,6 +24,13 @@ targets:
       - package: KeyboardShortcuts
       - package: swift-markdown
         product: Markdown
+      # Native source-editor engine (TextKit 2 + tree-sitter). Step 1 of the
+      # editor rewrite — see docs/EDITOR_REWRITE_PLAN.md. macOS-only; the iOS
+      # target deliberately does NOT depend on it. Transitive deps
+      # (CodeEditTextView, CodeEditLanguages, CodeEditSymbols, TextFormation,
+      # swift-custom-dump, SwiftLintPlugin) resolve automatically via SPM.
+      - package: CodeEditSourceEditor
+        product: CodeEditSourceEditor
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
@@ -144,3 +151,6 @@ packages:
   swift-markdown:
     url: https://github.com/apple/swift-markdown.git
     from: "0.6.0"
+  CodeEditSourceEditor:
+    url: https://github.com/CodeEditApp/CodeEditSourceEditor
+    exactVersion: "0.15.2"
