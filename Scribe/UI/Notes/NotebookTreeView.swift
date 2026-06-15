@@ -102,12 +102,12 @@ private struct NotebookTreeRow: View {
                     notes: notes,
                     selection: $selection
                 )
-                .padding(.leading, 16)
+                .padding(.leading, DesignTokens.Spacing.lg)
 
                 // Note leaves
                 ForEach(childNotes) { note in
                     NoteLeafRow(note: note, selection: $selection)
-                        .padding(.leading, 16)
+                        .padding(.leading, DesignTokens.Spacing.lg)
                 }
 
                 // Inline new-note field
@@ -128,7 +128,7 @@ private struct NotebookTreeRow: View {
                     } onCancel: {
                         isCreatingNote = false; noteTitle = ""
                     }
-                    .padding(.leading, 16)
+                    .padding(.leading, DesignTokens.Spacing.lg)
                 }
 
                 // Inline new-subfolder field
@@ -146,7 +146,7 @@ private struct NotebookTreeRow: View {
                     } onCancel: {
                         isCreatingChild = false; childName = ""
                     }
-                    .padding(.leading, 16)
+                    .padding(.leading, DesignTokens.Spacing.lg)
                 }
             }
         }
@@ -180,7 +180,7 @@ private struct NotebookTreeRow: View {
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .contextMenu { contextMenuItems }
@@ -265,10 +265,10 @@ struct NoteLeafRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
-        .padding(.vertical, 2)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
         .padding(.horizontal, 6)
         .background(Color.accentColor.opacity(isSelected ? 0.15 : 0))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
         .contentShape(Rectangle())
         .contextMenu {
             Button {

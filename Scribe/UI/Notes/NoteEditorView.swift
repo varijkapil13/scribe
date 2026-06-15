@@ -132,8 +132,8 @@ struct NoteEditorView: View {
                         },
                         onDismiss: { showPopup = false }
                     )
-                    .padding(.top, 8)
-                    .padding(.leading, 4)
+                    .padding(.top, DesignTokens.Spacing.sm)
+                    .padding(.leading, DesignTokens.Spacing.xs)
                     .zIndex(1)
                 }
 
@@ -389,10 +389,10 @@ private struct WikiLinkPopup: View {
                     onPick(note)
                 } label: {
                     Text(note.title.isEmpty ? "(Untitled)" : note.title)
-                        .font(.callout)
+                        .font(DesignTokens.Typography.callout)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, DesignTokens.Spacing.sm)
+                        .padding(.vertical, DesignTokens.Spacing.xs)
                 }
                 .buttonStyle(.plain)
             }

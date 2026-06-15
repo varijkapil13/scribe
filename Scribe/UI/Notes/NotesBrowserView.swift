@@ -119,7 +119,7 @@ struct NotesBrowserView: View {
     }
 
     private var breadcrumbBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
             Button(action: pop) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
@@ -176,7 +176,7 @@ private struct NotesScopeChipBar: View {
     @Binding var activeScope: NoteListScope
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: DesignTokens.Spacing.xxs) {
             chip(title: "All",     isActive: isAll)     { activeScope = .all }
             chip(title: "Unfiled", isActive: isInbox)   { activeScope = .inbox }
             Spacer()

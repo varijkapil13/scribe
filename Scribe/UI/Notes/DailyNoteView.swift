@@ -231,7 +231,7 @@ private struct DailyNoteHeader: View {
                         .padding(.vertical, 3)
                         .background(
                             RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                                .fill(Color.primary.opacity(0.06))
+                                .fill(DesignTokens.Palette.fill(.hover))
                         )
                 }
                 .buttonStyle(.plain)
@@ -337,7 +337,7 @@ private struct DailyNoteHeader: View {
                 .help("Next month")
                 .accessibilityLabel("Next month")
             }
-            .padding(.top, 2)
+            .padding(.top, DesignTokens.Spacing.xxs)
 
             HStack(spacing: 2) {
                 ForEach(weekdaySymbols, id: \.self) { symbol in
@@ -452,7 +452,7 @@ private struct DayPill: View {
                     Color.clear.frame(width: 3, height: 4)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, DesignTokens.Spacing.xs)
             .frame(maxWidth: .infinity, minHeight: 38)
             .background(background)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous))
@@ -521,7 +521,7 @@ private struct MonthDayCell: View {
                     .frame(height: 12)
             }
             .padding(.vertical, 3)
-            .padding(.horizontal, 2)
+            .padding(.horizontal, DesignTokens.Spacing.xxs)
             .frame(maxWidth: .infinity, minHeight: 42)
             .background(background)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous))
@@ -598,7 +598,7 @@ private struct MonthDayCell: View {
         if isSelected {
             Color.accentColor
         } else if isHovered {
-            Color.primary.opacity(0.07)
+            DesignTokens.Palette.fill(.hover)
         } else {
             Color.clear
         }
