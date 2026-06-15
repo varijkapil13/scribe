@@ -28,5 +28,18 @@
 	  flipped on.
 	-->
 
+	<!--
+	  iCloud (CloudKit + CloudDocuments) is deliberately NOT entitled here.
+	  The signing team is a *personal* (free) Apple team, which Apple blocks
+	  from the iCloud capability — adding the entitlement makes the build fail
+	  to sign. CloudKitSyncService self-gates at runtime (see its availability
+	  check) so the app runs local-only without it. When a paid Developer
+	  Program account is configured, add:
+	    com.apple.developer.icloud-services            = [CloudKit, CloudDocuments]
+	    com.apple.developer.icloud-container-identifiers = [iCloud.com.varij.scribe]
+	    com.apple.developer.ubiquity-container-identifiers = [iCloud.com.varij.scribe]
+	  (mirrors Scribe-iOS.entitlements). See docs/ICLOUD-MULTIPLATFORM-DESIGN.md.
+	-->
+
 </dict>
 </plist>
