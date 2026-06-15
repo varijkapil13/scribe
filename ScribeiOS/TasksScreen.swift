@@ -8,25 +8,28 @@ import SwiftUI
 struct TasksScreen: View {
     @StateObject private var model = TasksViewModel()
     @FocusState private var quickAddFocused: Bool
+    @State private var path: [String] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 ForEach(model.sections) { section in
                     Section(section.title) {
                         ForEach(section.tasks) { task in
-                            TaskRow(task: task) { model.complete(task) }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) { model.delete(task) } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+                            NavigationLink(value: task.id) {
+                                TaskRow(task: task) { model.complete(task) }
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) { model.delete(task) } label: {
+                                    Label("Delete", systemImage: "trash")
                                 }
-                                .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                    Button { model.complete(task) } label: {
-                                        Label("Done", systemImage: "checkmark")
-                                    }
-                                    .tint(.green)
+                            }
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button { model.complete(task) } label: {
+                                    Label("Done", systemImage: "checkmark")
                                 }
+                                .tint(.green)
+                            }
                         }
                     }
                 }
@@ -34,6 +37,7 @@ struct TasksScreen: View {
             .listStyle(.insetGrouped)
             .overlay { if model.isEmpty { emptyState } }
             .navigationTitle("Tasks")
+            .navigationDestination(for: String.self) { TaskDetailScreen(taskId: $0) }
             .safeAreaInset(edge: .bottom) { quickAdd }
         }
     }
