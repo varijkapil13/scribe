@@ -87,6 +87,7 @@ struct BaseFilterControls: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .accessibilityIdentifier("bases-group-menu")
     }
 }
 
