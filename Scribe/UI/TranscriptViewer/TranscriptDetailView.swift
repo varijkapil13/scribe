@@ -137,6 +137,21 @@ struct TranscriptDetailView: View {
                 Text("TRANSCRIPT")
                     .eyebrowStyle()
 
+                // Muted breadcrumb so the user knows where they landed after a
+                // ⌘K / deep-link jump.
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Text("Recordings")
+                    Image(systemName: "chevron.right")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                    Text(session.title.isEmpty ? "Untitled Session" : session.title)
+                        .lineLimit(1)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Location: Recordings, \(session.title.isEmpty ? "Untitled Session" : session.title)")
+
                 HStack(alignment: .firstTextBaseline) {
                     Text(session.title.isEmpty ? "Untitled Session" : session.title)
                         .font(DesignTokens.Typography.title1)
