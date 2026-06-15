@@ -93,6 +93,19 @@ struct NoteDetailView: View {
                             .help("Outline — jump to a heading")
                             .accessibilityLabel("Document outline")
                         }
+
+                        if vm.unresolvedLinkCount > 0 {
+                            HStack(spacing: DesignTokens.Spacing.xs) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .imageScale(.small)
+                                Text("\(vm.unresolvedLinkCount) unresolved link\(vm.unresolvedLinkCount == 1 ? "" : "s")")
+                            }
+                            .font(DesignTokens.Typography.eyebrow)
+                            .foregroundStyle(.tertiary)
+                            .tracking(0.5)
+                            .help("These [[wiki links]] don't match an existing note title")
+                            .accessibilityLabel("\(vm.unresolvedLinkCount) unresolved wiki link\(vm.unresolvedLinkCount == 1 ? "" : "s")")
+                        }
                     }
 
                     // Inline tags — same token field the Tasks inspector uses,
