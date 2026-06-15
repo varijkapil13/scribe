@@ -25,34 +25,44 @@ extension EditorTheme {
     /// system palette) with syntax tints drawn from ``DesignTokens/Palette``.
     static func scribe(for scheme: ColorScheme) -> EditorTheme {
         let isDark = scheme == .dark
+        // CodeEditSourceEditor's minimap themer calls `brightnessComponent` on
+        // theme colors, which throws an NSException for catalog/semantic
+        // NSColors (e.g. `.textColor`, dynamic system colors) that aren't in an
+        // RGB color space — crashing the app when the editor applies its theme.
+        // Resolve every color into sRGB up front so brightness math is always
+        // valid. (The theme is re-derived per color scheme, so flattening the
+        // dynamic colors here is fine.)
+        func rgb(_ color: NSColor) -> NSColor {
+            color.usingColorSpace(.sRGB) ?? color.usingColorSpace(.deviceRGB) ?? color
+        }
         // Code / fences read as monospace strings; emphasis + headings lean on
         // the accent family. We keep body text on the semantic label color so
         // contrast tracks the system.
-        let accent = NSColor(DesignTokens.Palette.speakerYou)
-        let codeTint = NSColor(DesignTokens.Palette.priorityLow)
-        let numberTint = NSColor(DesignTokens.Palette.priorityMedium)
-        let typeTint = NSColor(DesignTokens.Palette.speakerRemote)
+        let accent = rgb(NSColor(DesignTokens.Palette.speakerYou))
+        let codeTint = rgb(NSColor(DesignTokens.Palette.priorityLow))
+        let numberTint = rgb(NSColor(DesignTokens.Palette.priorityMedium))
+        let typeTint = rgb(NSColor(DesignTokens.Palette.speakerRemote))
 
         return EditorTheme(
-            text: Attribute(color: .textColor),
-            insertionPoint: .textColor,
-            invisibles: Attribute(color: .tertiaryLabelColor),
+            text: Attribute(color: rgb(.textColor)),
+            insertionPoint: rgb(.textColor),
+            invisibles: Attribute(color: rgb(.tertiaryLabelColor)),
             // Transparent background is requested via useThemeBackground=false;
             // this value is only used if a caller flips that on.
-            background: isDark ? NSColor(white: 0.11, alpha: 1) : .textBackgroundColor,
-            lineHighlight: .unemphasizedSelectedContentBackgroundColor,
-            selection: .selectedTextBackgroundColor,
+            background: rgb(isDark ? NSColor(white: 0.11, alpha: 1) : .textBackgroundColor),
+            lineHighlight: rgb(.unemphasizedSelectedContentBackgroundColor),
+            selection: rgb(.selectedTextBackgroundColor),
             // Markdown heading / strong markers surface as keywords — bold accent.
             keywords: Attribute(color: accent, bold: true),
             commands: Attribute(color: accent),
             types: Attribute(color: typeTint),
             attributes: Attribute(color: typeTint),
-            variables: Attribute(color: .textColor),
+            variables: Attribute(color: rgb(.textColor)),
             values: Attribute(color: numberTint),
             numbers: Attribute(color: numberTint),
             strings: Attribute(color: codeTint),
             characters: Attribute(color: codeTint),
-            comments: Attribute(color: .secondaryLabelColor, italic: true)
+            comments: Attribute(color: rgb(.secondaryLabelColor), italic: true)
         )
     }
 }
