@@ -32,7 +32,11 @@ final class TaskStore {
         /// the Today destination when the user navigates to a non-today date
         /// via the date strip — strict day window, no overdue inclusion.
         case dueOn(Date)
-        /// Tasks with `dueAt` within the next 7 days (excluding today).
+        /// Dated, incomplete tasks the user should act on soon: everything
+        /// overdue, due today, and due within the next 7 days. The view groups
+        /// these into Overdue / Today / Next-7-days sections so overdue work
+        /// leads rather than vanishing (a task-app should never silently hide
+        /// past-due items).
         case upcoming
         /// Every non-completed task.
         case all
@@ -320,11 +324,15 @@ final class TaskStore {
                         && Column("dueAt") >= startOfDay
                         && Column("dueAt") < startOfNext)
         case .upcoming:
+            // Lead with overdue: include everything dated up to the end of the
+            // next-7-days window (overdue + today + the coming week). The view
+            // buckets these into Overdue / Today / Next 7 days. Undated tasks
+            // are excluded — this is a date-driven view.
             let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
             let endOfWindow = calendar.date(byAdding: .day, value: 7, to: startOfTomorrow)!
             request = request
                 .filter(Column("completedAt") == nil)
-                .filter(Column("dueAt") >= startOfTomorrow && Column("dueAt") < endOfWindow)
+                .filter(Column("dueAt") != nil && Column("dueAt") < endOfWindow)
         case .all:
             request = request.filter(Column("completedAt") == nil)
         case .completed:
