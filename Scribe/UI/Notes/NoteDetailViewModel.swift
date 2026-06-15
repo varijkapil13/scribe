@@ -10,6 +10,10 @@ final class NoteDetailViewModel: ObservableObject {
     @Published var isDirty: Bool = false
     @Published var errorMessage: String? = nil
     @Published var sessions: [Session] = []
+    /// Number of `[[wiki links]]` in the body that don't resolve to an existing
+    /// note title. Recomputed on load and on save (not per keystroke) so the
+    /// editor can surface a subtle "broken link" indicator.
+    @Published var unresolvedLinkCount: Int = 0
 
     private let store: NoteStore
     /// Exposed for view-level features (e.g. Export) that need the same
@@ -59,6 +63,7 @@ final class NoteDetailViewModel: ObservableObject {
         do {
             tags = try store.tags(for: note.id)
             backlinks = try store.backlinks(for: note.id)
+            recomputeUnresolvedLinks()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -68,10 +73,22 @@ final class NoteDetailViewModel: ObservableObject {
         do {
             try store.updateNote(note, tags: tags)
             backlinks = (try? store.backlinks(for: note.id)) ?? []
+            recomputeUnresolvedLinks()
             isDirty = false
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Recomputes `unresolvedLinkCount` from the current body against all
+    /// existing note titles. Called on load and on save (cheap there, not on
+    /// every keystroke).
+    private func recomputeUnresolvedLinks() {
+        let titles = ((try? store.fetchAllNotes()) ?? []).map(\.title)
+        unresolvedLinkCount = WikiLinkResolver.unresolvedAnchors(
+            existingTitles: titles,
+            body: note.body
+        ).count
     }
 
     func handleWikiLinkNavigate(anchor: String) {
