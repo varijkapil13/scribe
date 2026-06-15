@@ -39,6 +39,25 @@ struct TasksScreen: View {
             .navigationTitle("Tasks")
             .navigationDestination(for: String.self) { TaskDetailScreen(taskId: $0) }
             .safeAreaInset(edge: .bottom) { quickAdd }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { filterMenu } }
+        }
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("Filter", selection: $model.selectedFilter) {
+                Label("All", systemImage: "tray.full").tag(TaskStore.Filter.all)
+                Label("Inbox", systemImage: "tray").tag(TaskStore.Filter.inbox)
+                if !model.projects.isEmpty {
+                    Divider()
+                    ForEach(model.projects) { project in
+                        Label(project.name, systemImage: project.icon ?? "folder")
+                            .tag(TaskStore.Filter.project(project.id))
+                    }
+                }
+            }
+        } label: {
+            Label(model.filterTitle, systemImage: "line.3.horizontal.decrease.circle")
         }
     }
 
@@ -124,16 +143,44 @@ final class TasksViewModel: ObservableObject {
     }
 
     @Published private(set) var sections: [Section] = []
+    @Published private(set) var projects: [Project] = []
     @Published var draft: String = ""
+    @Published var selectedFilter: TaskStore.Filter = .all {
+        didSet {
+            guard selectedFilter != oldValue else { return }
+            subscribeTasks()
+        }
+    }
 
     var isEmpty: Bool { sections.isEmpty }
 
+    /// Label for the toolbar filter control, reflecting the active scope.
+    var filterTitle: String {
+        switch selectedFilter {
+        case .inbox: return "Inbox"
+        case .project(let id): return projects.first { $0.id == id }?.name ?? "Project"
+        default: return "All"
+        }
+    }
+
     private let store: TaskStore
-    private var cancellable: AnyCancellable?
+    private var tasksCancellable: AnyCancellable?
+    private var projectsCancellable: AnyCancellable?
 
     init(store: TaskStore = .shared) {
         self.store = store
-        cancellable = store.observeTasks(filter: .all)
+        subscribeTasks()
+        projectsCancellable = store.observeProjects()
+            .receive(on: DispatchQueue.main)
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] projects in
+                self?.projects = projects
+            })
+    }
+
+    /// (Re)builds the task publisher for the current `selectedFilter`. Cancels
+    /// the previous subscription first so only one filter is ever live.
+    private func subscribeTasks() {
+        tasksCancellable = store.observeTasks(filter: selectedFilter)
             .receive(on: DispatchQueue.main)
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] tasks in
                 self?.sections = Self.group(tasks)
