@@ -310,7 +310,8 @@ extension NoteFrontmatter {
         // user properties from the model.
         let reserved = extra.filter { Self.reservedPropertyKeys.contains($0.key) }
         var rebuilt = reserved
-        for property in properties where !property.value.isEmpty {
+        for property in properties
+        where !property.value.isEmpty && !Self.reservedPropertyKeys.contains(property.key) {
             rebuilt.removeAll { $0.key == property.key }
             rebuilt.append(FrontmatterEntry(key: property.key, value: property.value.encoded))
         }
