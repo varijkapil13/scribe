@@ -24,6 +24,16 @@ targets:
           - App/SwiftPMEntryShim.swift
     resources:
       - path: Scribe/Resources/
+        # CodeMirror 6 web editor bundle. Declared as a folder reference (blue
+        # folder) so the Editor/ subdirectory is preserved inside the app
+        # bundle, letting WebMarkdownEditor resolve assets via
+        # Bundle.main.url(forResource:..., subdirectory: "Editor"). A plain
+        # group would flatten the files and break relative <link>/<script> refs.
+        excludes:
+          - "Editor"
+          - "Editor/**"
+      - path: Scribe/Resources/Editor
+        type: folder
     dependencies:
       - package: GRDB.swift
         product: GRDB

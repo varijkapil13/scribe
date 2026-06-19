@@ -68,6 +68,13 @@ let package = Package(
                 "UI/MainWindow/TodayView.swift",
                 "UI/MainWindow/MainWindowView.swift",
                 "App/ScribeApp.swift",
+                // NOTE: UI/Notes/WebMarkdownEditor.swift (the CodeMirror 6
+                // WKWebView host) is deliberately NOT excluded — it imports only
+                // SwiftUI/WebKit/OSLog, never CodeEditSourceEditor, so it
+                // compiles cleanly under SwiftPM. It loads its assets from
+                // Bundle.main at runtime and degrades gracefully when they're
+                // absent (as under `swift test`), so it needs no SwiftPM
+                // resource declaration.
             ],
             swiftSettings: [
                 // Enables the SwiftPM-only `@main` in SwiftPMEntryShim.swift.

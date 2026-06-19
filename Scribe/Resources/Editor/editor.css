@@ -1,0 +1,34 @@
+/*
+ * Scribe editor host-page chrome. The editor's typographic theme (fonts,
+ * column width, colors) is applied from JS via CodeMirror theme extensions
+ * (see editor-web/src/editor.js) so it can react to native light/dark
+ * switches. This file only resets the page and sizes the mount point.
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: #ffffff;
+}
+
+html[data-theme="dark"],
+html[data-theme="dark"] body {
+  background-color: #1e1e1e;
+}
+
+#editor {
+  height: 100%;
+  width: 100%;
+}
+
+/* Make the CodeMirror view fill the host so the prose column can center
+ * itself with full available width (the #1 product complaint was no wrap /
+ * narrow column). */
+.cm-editor {
+  height: 100%;
+  width: 100%;
+}
