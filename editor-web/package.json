@@ -2,9 +2,10 @@
   "name": "scribe-editor-web",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Self-contained CodeMirror 6 markdown editor bundle for Scribe (macOS WKWebView host). Build output is committed to Scribe/Resources/Editor; the app never needs node.",
   "scripts": {
-    "build": "esbuild src/editor.js --bundle --format=iife --global-name=ScribeEditor --outfile=../Scribe/Resources/Editor/editor.bundle.js --minify --target=safari16"
+    "build": "node build.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0"
@@ -15,6 +16,8 @@
     "@codemirror/language": "^6.10.8",
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.36.1",
-    "codemirror": "^6.0.1"
+    "codemirror": "^6.0.1",
+    "katex": "^0.16.11",
+    "mermaid": "^11.4.1"
   }
 }

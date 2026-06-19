@@ -2,7 +2,23 @@
 import AppKit
 import Markdown
 
-// MARK: - Attribute keys (additions; existing keys live in MarkdownEditorView.swift)
+// MARK: - Attribute keys
+//
+// These were historically split between the (now-removed) MarkdownEditorView
+// and this file; they all live here now since MarkdownRenderer is the surviving
+// consumer (used by the task-notes / quick-add preview rendering).
+
+extension NSAttributedString.Key {
+    /// Bool: this run is inside a fenced code block. drawBackground / callers
+    /// read it to draw the code panel and to suppress marker reveal inside code.
+    static let codeBlockLine = NSAttributedString.Key("scribe.codeBlock")
+    /// Bool: this line is part of a blockquote.
+    static let blockquoteLine = NSAttributedString.Key("scribe.blockquote")
+    /// Bool: this line is a horizontal rule.
+    static let horizontalRule = NSAttributedString.Key("scribe.hr")
+    /// String: callout type (note/tip/…) for `> [!type]` blockquote callouts.
+    static let calloutKind = NSAttributedString.Key("scribe.calloutKind")
+}
 
 extension NSAttributedString.Key {
     /// UUID grouping non-adjacent runs that belong to the same fenced code block.
