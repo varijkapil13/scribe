@@ -219,11 +219,24 @@ struct TaskDetailPanel: View {
                 .foregroundStyle(.secondary)
                 .padding(.bottom, DesignTokens.Spacing.xxs)
 
-            MarkdownEditorView(
-                text: $viewModel.notes,
-                placeholder: "Add notes…",
-                font: .systemFont(ofSize: NSFont.systemFontSize)
-            )
+            // Task notes are a short free-text field, so a plain SwiftUI
+            // TextEditor is the right fit (a full WebMarkdownEditor would be
+            // overkill for a side-panel field, and pulls a WKWebView per task
+            // panel). Autosave is unchanged: the binding flows into
+            // TaskEditorViewModel, which debounces + persists on its own.
+            ZStack(alignment: .topLeading) {
+                if viewModel.notes.isEmpty {
+                    Text("Add notes…")
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $viewModel.notes)
+                    .font(.system(size: NSFont.systemFontSize))
+                    .scrollContentBackground(.hidden)
+                    .padding(2)
+            }
             .frame(minHeight: 120)
             .background(DesignTokens.Palette.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))

@@ -13,36 +13,20 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
     ],
     targets: [
-        // The SwiftPM target backs the logic-test job (`swift test`) only. The
-        // native editor engine (CodeEditSourceEditor, TextKit 2 + tree-sitter)
-        // is intentionally NOT a SwiftPM dependency: under `swift test` its
-        // transitive CodeEditSymbols target fails to synthesize `Bundle.module`
-        // for its asset bundle. The editor is built and gated exclusively by
-        // the xcodegen/xcodebuild app build (project.yml), so editor sources
-        // that import it are excluded here. See docs/EDITOR_REWRITE_PLAN.md.
+        // The SwiftPM target backs the logic-test job (`swift test`). The note
+        // editor is now the CodeMirror 6 bundle hosted in a WKWebView
+        // (WebMarkdownEditor + Scribe/Resources/Editor/). With the old native
+        // CodeEditSourceEditor engine removed, NOTHING in the source tree depends
+        // on a package whose asset bundle (CodeEditSymbols) failed to synthesize
+        // `Bundle.module` under `swift test`. So the previous editor-exclusion
+        // boundary — and the SwiftPMEntryShim that restored `@main` after
+        // excluding ScribeApp — are gone: the full view layer (including the real
+        // `@main ScribeApp`) compiles and links here again.
         //
-        // ── EDITOR EXCLUSION BOUNDARY ────────────────────────────────────
-        // `CodeEditNoteTextView` / `CodeEditNoteSupport` import the editor.
-        // Swift resolves every symbol in a module, so any file that *names* a
-        // type defined in an excluded file must itself be excluded — this
-        // cascades up the SwiftUI view tree:
-        //
-        //   CodeEditNoteTextView, CodeEditNoteSupport   (import the editor)
-        //     ← NoteEditorView                          (instantiates the view)
-        //         ← NoteDetailView, DailyNoteView       (instantiate NoteEditorView)
-        //             ← NotesBrowserView, TodayView, MainWindowView
-        //                 ← ScribeApp (@main)           (instantiates MainWindowView)
-        //
-        // The cascade stops at the SwiftUI VIEW layer. Logic the tests depend
-        // on lives in its OWN files and stays in the target: NoteDetailViewModel,
-        // SessionSelectionReducer, RecordingNavigationPolicy, ExportFileName,
-        // NavigationCoordinator (those only NAME the views in comments, never in
-        // code). Verified: no file under ScribeTests/ references an excluded file.
-        //
-        // Excluding `ScribeApp.swift` removes the app's real `@main`, so the
-        // SwiftPM executable would have no entry point. `SwiftPMEntryShim.swift`
-        // (gated on the SCRIBE_SPM_ENTRY define below, and excluded from
-        // xcodebuild in project.yml) restores a trivial `@main` for `swift test`.
+        // WebMarkdownEditor imports only SwiftUI/WebKit/OSLog and loads its
+        // assets from Bundle.main at runtime, degrading gracefully when they're
+        // absent (as under `swift test`), so it needs no SwiftPM resource
+        // declaration.
         .executableTarget(
             name: "Scribe",
             dependencies: [
@@ -50,36 +34,7 @@ let package = Package(
                 "KeyboardShortcuts",
                 .product(name: "Markdown", package: "swift-markdown"),
             ],
-            path: "Scribe",
-            exclude: [
-                // Editor surface (imports CodeEditSourceEditor).
-                "UI/Notes/CodeEditNoteTextView.swift",
-                "UI/Notes/CodeEditNoteSupport.swift",
-                "UI/Notes/EditorDiagramFolding.swift",
-                // Callout panels + focus-mode dimming (imports CodeEditTextView).
-                // The colour/icon mapping lives in EditorCalloutStyle.swift,
-                // which imports only AppKit and stays in the target.
-                "UI/Notes/EditorCalloutDecorations.swift",
-                // SwiftUI views that transitively reference the editor surface.
-                "UI/Notes/NoteEditorView.swift",
-                "UI/Notes/NoteDetailView.swift",
-                "UI/Notes/DailyNoteView.swift",
-                "UI/Notes/NotesBrowserView.swift",
-                "UI/MainWindow/TodayView.swift",
-                "UI/MainWindow/MainWindowView.swift",
-                "App/ScribeApp.swift",
-                // NOTE: UI/Notes/WebMarkdownEditor.swift (the CodeMirror 6
-                // WKWebView host) is deliberately NOT excluded — it imports only
-                // SwiftUI/WebKit/OSLog, never CodeEditSourceEditor, so it
-                // compiles cleanly under SwiftPM. It loads its assets from
-                // Bundle.main at runtime and degrades gracefully when they're
-                // absent (as under `swift test`), so it needs no SwiftPM
-                // resource declaration.
-            ],
-            swiftSettings: [
-                // Enables the SwiftPM-only `@main` in SwiftPMEntryShim.swift.
-                .define("SCRIBE_SPM_ENTRY")
-            ]
+            path: "Scribe"
         ),
         .testTarget(
             name: "ScribeTests",
