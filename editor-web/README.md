@@ -17,7 +17,8 @@ want to **rebuild** the bundle (upgrade CodeMirror, tweak the theme, etc.).
   plus **wiki-links** `[[Title]]` / `[[Title|alias]]`, an in-web **slash command
   menu**, **KaTeX math** (`$…$` / `$$…$$`), fenced **mermaid** + **plantuml**
   diagram rendering, and the JS↔native bridge.
-- `src/diagrams.js` — mermaid (offline) + plantuml (encoded URL via
+- `src/diagrams.js` — mermaid (offline, **lazy-loaded** via dynamic import on
+  first mermaid render) + plantuml (encoded URL via
   `https://www.plantuml.com/plantuml/svg/…`) rendering, cached by source hash.
 - `src/katex-css.js` — injects KaTeX's stylesheet (imported as text; fonts
   inlined as data URLs) so math renders fully offline.
@@ -34,19 +35,27 @@ npm install          # restores node_modules (gitignored)
 npm run build        # node build.mjs -> ../Scribe/Resources/Editor/editor.bundle.js
 ```
 
-The build emits a single self-contained IIFE file (`format: iife`,
-`globalName: ScribeEditor`, `target: safari16`, minified). KaTeX fonts are
-inlined as data URLs and mermaid is bundled inline, so the only runtime network
-use is the PlantUML image fetch (matching the prior native implementation).
-Commit the regenerated `editor.bundle.js`.
+The build emits an **ESM module** entry (`format: esm`, `splitting: true`,
+`target: safari16`, minified) loaded by `index.html` as
+`<script type="module" src="editor.bundle.js">`, plus code-split chunks under
+`chunks/`. The heavy deps — **mermaid** (~1.6 MB) and **KaTeX** (~0.6 MB) — are
+**lazy-loaded** via dynamic `import()` only when a mermaid/plantuml or math node
+actually renders, so the editor paints instantly instead of blocking on those
+modules. KaTeX fonts are still inlined as data URLs. Every emitted chunk is
+self-contained local JS (no CDN), shipped inside `Scribe/Resources/Editor/` and
+loaded over `file://`, so the only runtime network use is the PlantUML image
+fetch (matching the prior native implementation). Output filenames are
+deterministic (no entry hash; chunks use a content hash for uniqueness). Commit
+the regenerated `editor.bundle.js` **and** the `chunks/` directory.
 
 ### Bundle size
 
-The bundle is **~3.6 MB** (was ~496 KB before mermaid + KaTeX). The bulk is
-mermaid's diagram engines (cytoscape, sequence/etc. ~1.6 MB) and KaTeX's JS +
-inlined woff2 fonts (~0.6 MB). This ships once inside the app bundle and is
-loaded from `file://` (no network), so the size is a one-time on-disk cost, not
-a per-load download.
+The primary `editor.bundle.js` is **~0.5 MB** (down from ~3.6 MB when mermaid +
+KaTeX were bundled eagerly). The mermaid diagram engines and KaTeX (JS +
+inlined woff2 fonts) now live in separate `chunks/*.js` files (~3.1 MB total)
+that load lazily on first use. Everything ships once inside the app bundle and
+loads from `file://` (no network), so the on-disk total is unchanged — but cold
+editor paint no longer pays the mermaid/KaTeX parse cost.
 
 ## Bridge contract
 

@@ -1,8 +1,10 @@
 // Scribe CodeMirror 6 markdown editor — bundled for the macOS WKWebView host.
 //
-// This file is bundled (esbuild, IIFE, global name `ScribeEditor`) into
-// ../Scribe/Resources/Editor/editor.bundle.js. The committed bundle is what the
-// app ships; node is only needed to (re)build it, never at app build/run time.
+// This file is bundled (esbuild, ESM module + code-split chunks) into
+// ../Scribe/Resources/Editor/editor.bundle.js (+ chunks/). The committed bundle
+// is what the app ships; node is only needed to (re)build it, never at app
+// build/run time. The heavy deps (mermaid, KaTeX) are split into lazy chunks
+// pulled in via dynamic import only when a diagram/math node renders.
 //
 // It implements an Obsidian-style LIVE PREVIEW: the document stays raw markdown
 // (so saving is unchanged), but CodeMirror decorations render headings, inline
@@ -33,9 +35,37 @@ import {
 } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { tags as t } from "@lezer/highlight";
-import katex from "katex";
-import { injectKatexCSS } from "./katex-css.js";
 import { getDiagram, onDiagramRendered } from "./diagrams.js";
+
+// ── Lazy KaTeX ───────────────────────────────────────────────────────────────
+// KaTeX (the JS engine ~0.6 MB plus its inlined-font CSS) is LAZY-LOADED via a
+// dynamic import the first time a `$…$` / `$$…$$` math node actually needs
+// rendering, so the editor paints instantly. Until KaTeX resolves, math nodes
+// render as raw source; once the chunk loads we nudge a re-decoration so they
+// upgrade to typeset math. The chunk is a local file shipped beside the bundle
+// (no runtime network).
+let katexModule = null; // the resolved katex default export, once loaded
+let katexLoadPromise = null;
+function ensureKatex() {
+  if (katexModule) return true; // already available — render synchronously
+  if (!katexLoadPromise) {
+    katexLoadPromise = Promise.all([import("katex"), import("./katex-css.js")])
+      .then(([katexMod, cssMod]) => {
+        katexModule = katexMod.default || katexMod;
+        cssMod.injectKatexCSS();
+        // Nudge a re-decoration so already-visible math typesets now.
+        try {
+          view.dispatch({ effects: diagramReady.of(null) });
+        } catch (e) {
+          /* view not constructed yet — first decoration pass will pick it up */
+        }
+      })
+      .catch(() => {
+        /* leave math as raw text on load failure */
+      });
+  }
+  return false;
+}
 
 // ── Native bridge helpers ────────────────────────────────────────────────
 function postToNative(message) {
@@ -250,8 +280,15 @@ class MathWidget extends WidgetType {
   toDOM() {
     const span = document.createElement("span");
     span.className = this.display ? "cm-sl-math cm-sl-math-block" : "cm-sl-math";
+    // Trigger the lazy KaTeX load; returns true once the module is available.
+    if (!ensureKatex()) {
+      // Not loaded yet — show raw source; a re-decoration fires when it loads.
+      span.classList.add("cm-sl-math-pending");
+      span.textContent = this.display ? `$$${this.src}$$` : `$${this.src}$`;
+      return span;
+    }
     try {
-      katex.render(this.src, span, {
+      katexModule.render(this.src, span, {
         displayMode: this.display,
         throwOnError: false,
         output: "html",
@@ -941,8 +978,7 @@ function matchMediaDark() {
   }
 }
 
-// KaTeX CSS injected once at startup so math renders offline.
-injectKatexCSS();
+// KaTeX (engine + CSS) is loaded lazily on first math render — see ensureKatex.
 
 // ── native -> JS API ───────────────────────────────────────────────────────
 window.scribeSetDoc = function (text) {
