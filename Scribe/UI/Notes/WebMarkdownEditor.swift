@@ -6,9 +6,10 @@
 // gives us Obsidian-style prose with markdown highlighting, line wrapping, and
 // light/dark theming, all driven from native.
 //
-// FOUNDATION ONLY: this view is not yet wired into NoteDetailView. It proves the
-// bundle loads, edits round-trip through a Binding, and theme follows the native
-// color scheme.
+// This is the LIVE note editor surface, hosted by NoteEditorView (which
+// NoteDetailView / DailyNoteView embed). Edits round-trip through a Binding, the
+// theme follows the native color scheme, and the JS side renders Obsidian-style
+// live preview (decorations are display-only; the bound text stays raw markdown).
 //
 // Assets live in Scribe/Resources/Editor/ (index.html + editor.bundle.js +
 // editor.css), bundled as app resources. The bundle is built offline from
@@ -20,6 +21,8 @@
 //                    {type:"change", text}   debounced doc edit
 //   native -> JS:  window.scribeSetDoc(text)
 //                  window.scribeSetTheme("light"|"dark")
+//                  window.scribeSetFontSize(px)
+//                  window.scribeFocus()
 
 import SwiftUI
 import WebKit
@@ -33,6 +36,9 @@ private let log = Logger(subsystem: "com.varij.scribe", category: "web-markdown-
 struct WebMarkdownEditor: NSViewRepresentable {
     @Binding var text: String
     var colorScheme: ColorScheme
+    /// Optional body font size (points) pushed to the JS editor. When nil the
+    /// editor keeps its built-in default (17px).
+    var fontSize: CGFloat? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -56,6 +62,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.webView = webView
         context.coordinator.pendingText = text
         context.coordinator.pendingTheme = colorScheme
+        context.coordinator.pendingFontSize = fontSize
 
         if let htmlURL = Self.indexURL, let resourceDir = Self.resourceDir {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceDir)
@@ -72,6 +79,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.parentText = $text
         context.coordinator.setDoc(text)
         context.coordinator.setTheme(colorScheme)
+        if let fontSize { context.coordinator.setFontSize(fontSize) }
     }
 
     // MARK: - Bundle lookup
@@ -100,10 +108,12 @@ struct WebMarkdownEditor: NSViewRepresentable {
         /// push triggers no change, but a user edit comes back as a `change`.
         private var lastSentText: String?
         private var lastSentTheme: ColorScheme?
+        private var lastSentFontSize: CGFloat?
 
         /// Held until the editor reports `ready`, then flushed.
         var pendingText: String?
         var pendingTheme: ColorScheme?
+        var pendingFontSize: CGFloat?
 
         init(text: Binding<String>) {
             self.parentText = text
@@ -129,6 +139,10 @@ struct WebMarkdownEditor: NSViewRepresentable {
                 if let theme = pendingTheme {
                     pushTheme(theme)
                     pendingTheme = nil
+                }
+                if let size = pendingFontSize {
+                    pushFontSize(size)
+                    pendingFontSize = nil
                 }
             case "change":
                 guard let text = body["text"] as? String else { return }
@@ -161,10 +175,21 @@ struct WebMarkdownEditor: NSViewRepresentable {
             webView?.evaluateJavaScript("window.scribeSetDoc(\(json));", completionHandler: nil)
         }
 
+        func setFontSize(_ size: CGFloat) {
+            guard isReady else { pendingFontSize = size; return }
+            guard size != lastSentFontSize else { return }
+            pushFontSize(size)
+        }
+
         private func pushTheme(_ scheme: ColorScheme) {
             lastSentTheme = scheme
             let mode = scheme == .dark ? "dark" : "light"
             webView?.evaluateJavaScript("window.scribeSetTheme(\"\(mode)\");", completionHandler: nil)
+        }
+
+        private func pushFontSize(_ size: CGFloat) {
+            lastSentFontSize = size
+            webView?.evaluateJavaScript("window.scribeSetFontSize(\(Int(size.rounded())));", completionHandler: nil)
         }
 
         // MARK: Navigation
