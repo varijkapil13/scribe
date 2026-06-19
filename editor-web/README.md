@@ -11,8 +11,10 @@ want to **rebuild** the bundle (upgrade CodeMirror, tweak the theme, etc.).
 ## Layout
 
 - `src/editor.js` — the editor source: CodeMirror 6 `EditorView` with the
-  markdown language, line wrapping, a prose theme (light/dark), and the
-  JS↔native bridge.
+  markdown language, line wrapping, a prose theme (light/dark), Obsidian-style
+  **live preview** (syntax-tree decorations that render headings / emphasis /
+  lists / task checkboxes / blockquotes and hide markers off the active line),
+  and the JS↔native bridge.
 - `package.json` — pins the CodeMirror packages and the esbuild build script.
 - Output (committed, NOT here): `../Scribe/Resources/Editor/editor.bundle.js`
   plus the hand-written `index.html` and `editor.css` in that same folder.
@@ -38,4 +40,5 @@ Mirrored in `Scribe/UI/Notes/WebMarkdownEditor.swift`:
 - **native → JS**:
   - `window.scribeSetDoc(text)` — replace the whole document (no change echo)
   - `window.scribeSetTheme("light"|"dark")` — swap the theme
+  - `window.scribeSetFontSize(px)` — set the body prose font size (points)
   - `window.scribeFocus()` — focus the editor
