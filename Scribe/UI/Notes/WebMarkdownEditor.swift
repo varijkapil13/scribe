@@ -17,11 +17,13 @@
 //
 // Bridge contract (must match editor-web/src/editor.js):
 //   JS -> native:  window.webkit.messageHandlers.scribe.postMessage(...)
-//                    {type:"ready"}          editor mounted
-//                    {type:"change", text}   debounced doc edit
+//                    {type:"ready"}             editor mounted
+//                    {type:"change", text}      debounced doc edit
+//                    {type:"wikilink", target}  user clicked a [[wiki link]]
 //   native -> JS:  window.scribeSetDoc(text)
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px)
+//                  window.scribeSetKnownTitles([title, …])  resolved-link styling
 //                  window.scribeFocus()
 
 import SwiftUI
@@ -39,9 +41,16 @@ struct WebMarkdownEditor: NSViewRepresentable {
     /// Optional body font size (points) pushed to the JS editor. When nil the
     /// editor keeps its built-in default (17px).
     var fontSize: CGFloat? = nil
+    /// Titles of all known notes (lowercased match) so the JS editor can style
+    /// `[[wiki links]]` as resolved vs broken. Pushed to JS on change.
+    var knownTitles: [String] = []
+    /// Called when the user clicks a rendered `[[wiki link]]`. The argument is
+    /// the lookup target (the text before any `|alias`), to be resolved via the
+    /// note-title resolution and navigated through the app's coordinator.
+    var onWikiLink: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, onWikiLink: onWikiLink)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -63,6 +72,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.pendingText = text
         context.coordinator.pendingTheme = colorScheme
         context.coordinator.pendingFontSize = fontSize
+        context.coordinator.pendingTitles = knownTitles
 
         if let htmlURL = Self.indexURL, let resourceDir = Self.resourceDir {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceDir)
@@ -77,9 +87,11 @@ struct WebMarkdownEditor: NSViewRepresentable {
         // theme changes down to JS. The coordinator no-ops if the editor isn't
         // ready yet; it flushes pending state on `ready`.
         context.coordinator.parentText = $text
+        context.coordinator.onWikiLink = onWikiLink
         context.coordinator.setDoc(text)
         context.coordinator.setTheme(colorScheme)
         if let fontSize { context.coordinator.setFontSize(fontSize) }
+        context.coordinator.setKnownTitles(knownTitles)
     }
 
     // MARK: - Bundle lookup
@@ -101,6 +113,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var parentText: Binding<String>
+        var onWikiLink: ((String) -> Void)?
         weak var webView: WKWebView?
 
         private var isReady = false
@@ -109,14 +122,17 @@ struct WebMarkdownEditor: NSViewRepresentable {
         private var lastSentText: String?
         private var lastSentTheme: ColorScheme?
         private var lastSentFontSize: CGFloat?
+        private var lastSentTitles: [String]?
 
         /// Held until the editor reports `ready`, then flushed.
         var pendingText: String?
         var pendingTheme: ColorScheme?
         var pendingFontSize: CGFloat?
+        var pendingTitles: [String]?
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, onWikiLink: ((String) -> Void)? = nil) {
             self.parentText = text
+            self.onWikiLink = onWikiLink
         }
 
         // MARK: JS -> native
@@ -144,12 +160,21 @@ struct WebMarkdownEditor: NSViewRepresentable {
                     pushFontSize(size)
                     pendingFontSize = nil
                 }
+                if let titles = pendingTitles {
+                    pushKnownTitles(titles)
+                    pendingTitles = nil
+                }
             case "change":
                 guard let text = body["text"] as? String else { return }
                 lastSentText = text
                 if parentText.wrappedValue != text {
                     parentText.wrappedValue = text
                 }
+            case "wikilink":
+                guard let target = body["target"] as? String else { return }
+                let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                onWikiLink?(trimmed)
             default:
                 break
             }
@@ -179,6 +204,24 @@ struct WebMarkdownEditor: NSViewRepresentable {
             guard isReady else { pendingFontSize = size; return }
             guard size != lastSentFontSize else { return }
             pushFontSize(size)
+        }
+
+        func setKnownTitles(_ titles: [String]) {
+            guard isReady else { pendingTitles = titles; return }
+            guard titles != lastSentTitles else { return }
+            pushKnownTitles(titles)
+        }
+
+        private func pushKnownTitles(_ titles: [String]) {
+            lastSentTitles = titles
+            let json: String
+            if let data = try? JSONSerialization.data(withJSONObject: titles, options: []),
+               let str = String(data: data, encoding: .utf8) {
+                json = str
+            } else {
+                json = "[]"
+            }
+            webView?.evaluateJavaScript("window.scribeSetKnownTitles(\(json));", completionHandler: nil)
         }
 
         private func pushTheme(_ scheme: ColorScheme) {

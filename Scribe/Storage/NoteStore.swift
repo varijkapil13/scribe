@@ -280,6 +280,14 @@ final class NoteStore: @unchecked Sendable {
         }
     }
 
+    /// Titles of all notes. Used by the editor to style `[[wiki links]]` as
+    /// resolved vs broken (matched case-insensitively, mirroring `resolveTitle`).
+    func allNoteTitles() throws -> [String] {
+        try db.read { database in
+            try String.fetchAll(database, sql: "SELECT title FROM notes")
+        }
+    }
+
     // MARK: - Links
 
     func fetchAllLinks() throws -> [NoteLinkRow] {

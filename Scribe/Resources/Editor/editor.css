@@ -142,3 +142,117 @@ html[data-theme="dark"] body {
   top: 50%;
   border-top: 1px solid var(--scribe-hr);
 }
+
+/* ── Wiki-links ───────────────────────────────────────────────────────────── */
+
+/* Rendered (inactive-line) wiki-link: a styled, clickable chip. */
+.cm-sl-wikilink {
+  color: var(--scribe-accent);
+  background-color: var(--scribe-accent-soft);
+  border-radius: 4px;
+  padding: 0.02em 0.3em;
+  cursor: pointer;
+  text-decoration: none;
+}
+.cm-sl-wikilink:hover {
+  text-decoration: underline;
+}
+/* Broken link — different colour so it reads as unresolved. */
+.cm-sl-wikilink-unresolved {
+  color: var(--scribe-unresolved);
+  background-color: var(--scribe-unresolved-soft);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+/* Active-line raw `[[...]]` text (still editable) just gets the accent tint. */
+.cm-sl-wikilink-raw {
+  color: var(--scribe-accent);
+}
+.cm-sl-wikilink-raw.cm-sl-wikilink-unresolved {
+  color: var(--scribe-unresolved);
+}
+
+/* ── Slash command menu ──────────────────────────────────────────────────── */
+
+.cm-sl-slashmenu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 16rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  background-color: var(--scribe-menu-bg);
+  border: 1px solid var(--scribe-menu-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: none;
+  font-size: 0.92rem;
+}
+.cm-sl-slashitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.32em 0.6em;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cm-sl-slashitem-sel {
+  background-color: var(--scribe-menu-sel);
+}
+.cm-sl-slashlabel {
+  font-weight: 500;
+}
+.cm-sl-slashhint {
+  color: var(--scribe-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+/* ── Math (KaTeX) ────────────────────────────────────────────────────────── */
+
+.cm-sl-math {
+  display: inline-block;
+}
+.cm-sl-math-block {
+  display: block;
+  text-align: center;
+  margin: 0.4em 0;
+}
+.cm-sl-math-error {
+  color: var(--scribe-unresolved);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Diagrams (mermaid / plantuml) ───────────────────────────────────────── */
+
+.cm-sl-diagram {
+  display: block;
+  margin: 0.6em 0;
+  padding: 0.8em;
+  background-color: var(--scribe-panel-bg);
+  border: 1px solid var(--scribe-panel-border);
+  border-radius: 8px;
+  text-align: center;
+  overflow-x: auto;
+}
+.cm-sl-diagram svg,
+.cm-sl-diagram-img {
+  max-width: 100%;
+  height: auto;
+}
+.cm-sl-diagram-pending {
+  color: var(--scribe-muted);
+  font-style: italic;
+  text-align: left;
+}
+.cm-sl-diagram-error {
+  text-align: left;
+  color: var(--scribe-unresolved);
+}
+.cm-sl-diagram-error pre {
+  white-space: pre-wrap;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}

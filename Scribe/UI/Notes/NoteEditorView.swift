@@ -24,6 +24,10 @@ struct NoteEditorView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Known note titles, refreshed when the editor appears / the note changes,
+    /// so the web editor can style `[[wiki links]]` as resolved vs broken.
+    @State private var knownTitles: [String] = []
+
     private var pageWidth: NotePageWidth {
         NotePageWidth(rawValue: pageWidthRaw) ?? .regular
     }
@@ -45,11 +49,13 @@ struct NoteEditorView: View {
     // NOTE: the live note surface is now the CodeMirror 6 WebView editor
     // (`WebMarkdownEditor`) with Obsidian-style live preview, replacing the
     // rejected CodeEditSourceEditor surface. The slash-command menu, wiki-link
-    // completion popup, and selection-anchored format bubble were driven off the
-    // old AppKit text view's callbacks; they are deferred until the web editor
-    // exposes equivalent caret/selection bridges. Focus-mode per-block dimming
-    // is likewise deferred. `focusModeEnabled` still drives the surrounding
-    // chrome hide in NoteDetailView.
+    // rendering/navigation, fenced mermaid/plantuml diagrams, and KaTeX math are
+    // all handled inside the web editor (see editor-web/src/editor.js). Wiki-link
+    // clicks bridge back via `onWikiLink`, resolved against the note titles and
+    // navigated through `onNavigate` — the same path the rest of the app uses.
+    // Selection-anchored format bubbles and focus-mode per-block dimming remain
+    // deferred; `focusModeEnabled` still drives the surrounding chrome hide in
+    // NoteDetailView.
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,7 +67,9 @@ struct NoteEditorView: View {
                 WebMarkdownEditor(
                     text: $text,
                     colorScheme: colorScheme,
-                    fontSize: bodyFontSize
+                    fontSize: bodyFontSize,
+                    knownTitles: knownTitles,
+                    onWikiLink: { anchor in onNavigate(anchor) }
                 )
                 // Centre the text column at the chosen reading measure
                 // (Craft-style). The web editor also centers its own prose
@@ -77,9 +85,20 @@ struct NoteEditorView: View {
             defaultTypefaceRaw: $defaultTypefaceRaw,
             persistentToolbar: $persistentToolbar
         )
-        .onAppear { loadPerNoteTypeface() }
-        .onChange(of: noteId) { _, _ in loadPerNoteTypeface() }
+        .onAppear {
+            loadPerNoteTypeface()
+            loadKnownTitles()
+        }
+        .onChange(of: noteId) { _, _ in
+            loadPerNoteTypeface()
+            loadKnownTitles()
+        }
         .onChange(of: perNoteTypefaceRaw) { _, newValue in savePerNoteTypeface(newValue) }
+    }
+
+    /// Loads the set of known note titles for wiki-link resolution styling.
+    private func loadKnownTitles() {
+        knownTitles = (try? noteStore.allNoteTitles()) ?? []
     }
 
     // MARK: - Per-note typeface persistence
