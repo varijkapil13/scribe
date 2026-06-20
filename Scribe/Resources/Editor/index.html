@@ -7,13 +7,14 @@
       Scribe CodeMirror 6 markdown editor host page.
       Loaded by WebMarkdownEditor (WKWebView) via loadFileURL from the app
       bundle. All assets are local — no runtime network. The bundle is built
-      from editor-web/ (esbuild, IIFE -> ScribeEditor). See editor.bundle.js.
+      from editor-web/ (esbuild, ESM module with code-split chunks for the
+      lazy-loaded mermaid/KaTeX deps in chunks/). See editor.bundle.js.
     -->
     <title>Scribe Editor</title>
     <link rel="stylesheet" href="editor.css" />
   </head>
   <body>
     <div id="editor"></div>
-    <script src="editor.bundle.js"></script>
+    <script type="module" src="editor.bundle.js"></script>
   </body>
 </html>
