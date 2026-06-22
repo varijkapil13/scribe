@@ -1,45 +1,60 @@
 import SwiftUI
 
+// MARK: - Expansion model
+
+/// Shared, animatable expansion state for the notebook tree. Kept as an
+/// `@Observable` rather than `@AppStorage`: `@AppStorage` writes propagate
+/// out-of-transaction (via UserDefaults), so a toggle inside `withAnimation`
+/// never animates the row insert/remove. A synchronous `@Observable` mutation
+/// does. Still persisted to UserDefaults (same key) for launch-to-launch.
+@MainActor
+@Observable
+final class NotebookExpansion {
+    private static let storageKey = "expandedNotebookIds"
+    private(set) var expanded: Set<String>
+
+    init() {
+        let raw = UserDefaults.standard.string(forKey: Self.storageKey) ?? ""
+        expanded = Set(raw.split(separator: ",").map(String.init))
+    }
+
+    func isExpanded(_ id: String) -> Bool { expanded.contains(id) }
+
+    func setExpanded(_ id: String, _ value: Bool) {
+        if value { expanded.insert(id) } else { expanded.remove(id) }
+        UserDefaults.standard.set(expanded.sorted().joined(separator: ","), forKey: Self.storageKey)
+    }
+}
+
 // MARK: - Root entry point
 
-/// Renders the full notebook hierarchy starting from `parentId` (nil = roots).
-/// Pass the flat notebooks + notes arrays from the sidebar observer so the tree
-/// never makes extra DB calls — all filtering is done in-memory per node.
+/// Renders the notebook hierarchy from `parentId` (nil = roots) using a
+/// precomputed `NotebookTreeIndex`. Rows use the shared `SidebarRow` so folders
+/// and notes look and behave exactly like the rest of the sidebar (full-width
+/// selection + hover, whole-row click). Expansion is persisted and animates.
 struct NotebookTreeView: View {
     let parentId: String?
-    let notebooks: [Notebook]
-    let notes: [Note]
+    let index: NotebookTreeIndex
     @Binding var selection: MainSelection?
-
-    /// IDs of currently expanded notebooks, persisted across launches.
-    @AppStorage("expandedNotebookIds") private var expandedRaw: String = ""
-
-    private var expanded: Set<String> {
-        get { Set(expandedRaw.split(separator: ",").map(String.init)) }
-    }
-
-    private func setExpanded(_ id: String, _ value: Bool) {
-        var s = expanded
-        if value { s.insert(id) } else { s.remove(id) }
-        expandedRaw = s.joined(separator: ",")
-    }
-
-    private var children: [Notebook] {
-        notebooks
-            .filter { $0.parentId == parentId }
-            .sorted { $0.sortOrder < $1.sortOrder }
-    }
+    /// Nesting depth, used to indent rows while keeping highlights full-width.
+    var depth: Int = 0
+    /// Shared, animatable expansion state (see `NotebookExpansion`).
+    let expansion: NotebookExpansion
 
     var body: some View {
-        ForEach(children) { nb in
-            NotebookTreeRow(
-                notebook: nb,
-                notebooks: notebooks,
-                notes: notes,
-                selection: $selection,
-                isExpanded: expanded.contains(nb.id),
-                onToggle: { setExpanded(nb.id, $0) }
-            )
+        // A VStack (not bare List rows): macOS `List` doesn't animate row
+        // insertion, so the whole tree lives in one List cell where
+        // `withAnimation` + `.transition` animate expansion reliably.
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(index.children(of: parentId)) { notebook in
+                NotebookTreeRow(
+                    notebook: notebook,
+                    index: index,
+                    selection: $selection,
+                    depth: depth,
+                    expansion: expansion
+                )
+            }
         }
     }
 }
@@ -48,12 +63,12 @@ struct NotebookTreeView: View {
 
 private struct NotebookTreeRow: View {
     let notebook: Notebook
-    let notebooks: [Notebook]
-    let notes: [Note]
+    let index: NotebookTreeIndex
     @Binding var selection: MainSelection?
-    let isExpanded: Bool
-    let onToggle: (Bool) -> Void
+    let depth: Int
+    let expansion: NotebookExpansion
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRenaming = false
     @State private var renameText = ""
     @State private var isCreatingNote = false
@@ -62,19 +77,14 @@ private struct NotebookTreeRow: View {
     @State private var childName = ""
     @State private var showDeleteFolderConfirm = false
 
-    private var hasChildren: Bool {
-        notebooks.contains { $0.parentId == notebook.id } ||
-        notes.contains { $0.notebookId == notebook.id && !$0.isDailyNote }
-    }
-
-    private var childNotes: [Note] {
-        notes
-            .filter { $0.notebookId == notebook.id && !$0.isDailyNote }
-            .sorted { $0.updatedAt > $1.updatedAt }
-    }
+    private var isExpanded: Bool { expansion.isExpanded(notebook.id) }
+    private var hasChildren: Bool { index.hasChildren(notebook.id) }
+    private var childNotes: [Note] { index.notes(in: notebook.id) }
+    private var indent: CGFloat { CGFloat(depth) * DesignTokens.Spacing.lg }
+    private var childIndent: CGFloat { CGFloat(depth + 1) * DesignTokens.Spacing.lg + DesignTokens.Spacing.sm }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 2) {
             if isRenaming {
                 InlineNameField(
                     text: $renameText,
@@ -90,64 +100,66 @@ private struct NotebookTreeRow: View {
                 } onCancel: {
                     isRenaming = false
                 }
+                .padding(.leading, indent)
             } else {
                 folderRow
             }
 
             if isExpanded {
-                // Sub-notebooks (recursive)
-                NotebookTreeView(
-                    parentId: notebook.id,
-                    notebooks: notebooks,
-                    notes: notes,
-                    selection: $selection
-                )
-                .padding(.leading, DesignTokens.Spacing.lg)
+                // Sub-notebooks (recursive) + note leaves, one level deeper.
+                // Wrapped + transitioned so the whole subtree fades/slides open
+                // under `withAnimation`.
+                VStack(alignment: .leading, spacing: 2) {
+                    NotebookTreeView(
+                        parentId: notebook.id,
+                        index: index,
+                        selection: $selection,
+                        depth: depth + 1,
+                        expansion: expansion
+                    )
 
-                // Note leaves
-                ForEach(childNotes) { note in
-                    NoteLeafRow(note: note, selection: $selection)
-                        .padding(.leading, DesignTokens.Spacing.lg)
-                }
+                    ForEach(childNotes) { note in
+                        NoteLeafRow(note: note, selection: $selection, depth: depth + 1)
+                    }
 
-                // Inline new-note field
-                if isCreatingNote {
-                    InlineNameField(
-                        text: $noteTitle,
-                        placeholder: "New Note",
-                        systemImage: "doc.text"
-                    ) {
-                        let t = noteTitle.trimmingCharacters(in: .whitespaces)
-                        if let created = try? NoteStore.shared.createNote(
-                            title: t.isEmpty ? "Untitled" : t,
-                            notebookId: notebook.id
+                    if isCreatingNote {
+                        InlineNameField(
+                            text: $noteTitle,
+                            placeholder: "New Note",
+                            systemImage: "doc.text"
                         ) {
-                            selection = .note(created.id)
+                            let title = noteTitle.trimmingCharacters(in: .whitespaces)
+                            if let created = try? NoteStore.shared.createNote(
+                                title: title.isEmpty ? "Untitled" : title,
+                                notebookId: notebook.id
+                            ) {
+                                selection = .note(created.id)
+                            }
+                            isCreatingNote = false; noteTitle = ""
+                        } onCancel: {
+                            isCreatingNote = false; noteTitle = ""
                         }
-                        isCreatingNote = false; noteTitle = ""
-                    } onCancel: {
-                        isCreatingNote = false; noteTitle = ""
+                        .padding(.leading, childIndent)
                     }
-                    .padding(.leading, DesignTokens.Spacing.lg)
-                }
 
-                // Inline new-subfolder field
-                if isCreatingChild {
-                    InlineNameField(
-                        text: $childName,
-                        placeholder: "New Folder",
-                        systemImage: "folder"
-                    ) {
-                        let n = childName.trimmingCharacters(in: .whitespaces)
-                        if !n.isEmpty {
-                            _ = try? NoteStore.shared.createNotebook(name: n, parentId: notebook.id)
+                    if isCreatingChild {
+                        InlineNameField(
+                            text: $childName,
+                            placeholder: "New Folder",
+                            systemImage: "folder"
+                        ) {
+                            let name = childName.trimmingCharacters(in: .whitespaces)
+                            if !name.isEmpty {
+                                _ = try? NoteStore.shared.createNotebook(name: name, parentId: notebook.id)
+                            }
+                            isCreatingChild = false; childName = ""
+                        } onCancel: {
+                            isCreatingChild = false; childName = ""
                         }
-                        isCreatingChild = false; childName = ""
-                    } onCancel: {
-                        isCreatingChild = false; childName = ""
+                        .padding(.leading, childIndent)
                     }
-                    .padding(.leading, DesignTokens.Spacing.lg)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -155,34 +167,19 @@ private struct NotebookTreeRow: View {
     // MARK: - Folder label row
 
     private var folderRow: some View {
-        HStack(spacing: 2) {
-            // Disclosure chevron
-            Button {
-                onToggle(!isExpanded)
-            } label: {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+        SidebarRow(isSelected: false, indent: indent, action: { toggleExpansion() }) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .opacity(hasChildren ? 1 : 0)
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            // Folder icon + name — clicking also toggles expansion
-            Button {
-                onToggle(!isExpanded)
-            } label: {
+                    .frame(width: 12)
                 Label(notebook.name, systemImage: isExpanded ? "folder.fill" : "folder")
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, DesignTokens.Spacing.xxs)
-        .padding(.horizontal, 6)
-        .contentShape(Rectangle())
         .contextMenu { contextMenuItems }
         .confirmationDialog(
             "Delete “\(notebook.name)”?",
@@ -191,7 +188,7 @@ private struct NotebookTreeRow: View {
         ) {
             Button("Delete Folder", role: .destructive) {
                 if case .note(let id) = selection,
-                   notes.first(where: { $0.id == id })?.notebookId == notebook.id {
+                   childNotes.contains(where: { $0.id == id }) {
                     selection = .notes(.all)
                 }
                 try? NoteStore.shared.deleteNotebook(id: notebook.id)
@@ -202,17 +199,29 @@ private struct NotebookTreeRow: View {
         }
     }
 
+    /// Toggles expansion inside an animation so the sub-tree slides open and the
+    /// chevron rotates (instant under Reduce Motion).
+    private func toggleExpansion() {
+        if reduceMotion {
+            expansion.setExpanded(notebook.id, !isExpanded)
+        } else {
+            withAnimation(DesignTokens.Motion.gentle) {
+                expansion.setExpanded(notebook.id, !isExpanded)
+            }
+        }
+    }
+
     @ViewBuilder
     private var contextMenuItems: some View {
         Button {
-            onToggle(true)
+            expansion.setExpanded(notebook.id, true)
             isCreatingNote = true
             noteTitle = ""
         } label: {
             Label("New Note Here", systemImage: "square.and.pencil")
         }
         Button {
-            onToggle(true)
+            expansion.setExpanded(notebook.id, true)
             isCreatingChild = true
             childName = ""
         } label: {
@@ -246,6 +255,7 @@ private struct NotebookTreeRow: View {
 struct NoteLeafRow: View {
     let note: Note
     @Binding var selection: MainSelection?
+    var depth: Int = 0
 
     @State private var showDeleteConfirm = false
     @State private var sessionCount = 0
@@ -255,21 +265,15 @@ struct NoteLeafRow: View {
         return false
     }
 
+    /// Indent so a note's icon aligns just past its folder's disclosure chevron.
+    private var indent: CGFloat { CGFloat(depth) * DesignTokens.Spacing.lg + DesignTokens.Spacing.sm }
+
     var body: some View {
-        Button {
-            selection = .note(note.id)
-        } label: {
+        SidebarRow(isSelected: isSelected, indent: indent, action: { selection = .note(note.id) }) {
             Label(note.title.isEmpty ? "Untitled" : note.title, systemImage: "doc.text")
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .padding(.vertical, DesignTokens.Spacing.xxs)
-        .padding(.horizontal, 6)
-        .background(Color.accentColor.opacity(isSelected ? 0.15 : 0))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
-        .contentShape(Rectangle())
         .contextMenu {
             Button {
                 selection = .note(note.id)
