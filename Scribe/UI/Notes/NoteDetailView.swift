@@ -8,13 +8,16 @@ struct NoteDetailView: View {
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
     @State private var backlinksExpanded: Bool = false
-    /// Whether the frontmatter "Properties" block is expanded. Seeded on
-    /// appear: expanded when the note already has properties, collapsed
-    /// (but discoverable) when it has none.
+    /// Whether the frontmatter "Properties" panel is expanded. Collapsed by
+    /// default — the meta-bar chip shows a count; opening reveals a
+    /// content-sized card.
     @State private var propertiesExpanded: Bool = false
-    @State private var didSeedPropertiesExpansion: Bool = false
+    /// Whether the recording summary panel is expanded. Collapsed by default:
+    /// the old layout auto-reserved ~280px even with no summary, leaving a tall
+    /// void above the editor. Now the panel opens on demand, sized to content.
+    @State private var recordingExpanded: Bool = false
+    /// Which session the expanded recording panel shows (defaults to the latest).
     @State private var selectedSessionId: String? = nil
-    @State private var userExplicitlyCollapsed: Bool = false
     @State private var openedTaskFromAction: TodoTask?
     @State private var openedTranscriptSession: Session?
     @FocusState private var titleFocused: Bool
@@ -145,21 +148,15 @@ struct NoteDetailView: View {
                     )
                     .accessibilityLabel("Note tags")
 
-                    // Frontmatter properties — Obsidian-style typed metadata
-                    // block. Reuses the standalone `NotePropertiesView`; the
-                    // VM owns load/save back to the `.md` file's frontmatter.
-                    NotePropertiesSection(
-                        isExpanded: $propertiesExpanded,
-                        count: vm.properties.count,
-                        editor: {
-                            NotePropertiesView(
-                                properties: $vm.properties,
-                                onCommit: { vm.updateProperties($0) },
-                                optionSuggestions: vm.propertyOptionSuggestions
-                            )
-                        }
-                    )
-                    .accessibilityLabel("Note properties")
+                    // Compact meta bar — Properties + Recording disclosure
+                    // chips on a single row, plus "New recording". Replaces the
+                    // old tall stack (a full-width properties section + the
+                    // sessions strip + a 280px auto-reserved summary block).
+                    // The matching panels open below, sized to content.
+                    metaBar
+                        .padding(.top, DesignTokens.Spacing.xxs)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Note properties and recordings")
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.xl)
@@ -167,28 +164,20 @@ struct NoteDetailView: View {
             .padding(.bottom, DesignTokens.Spacing.xs)
 
             if !focusMode {
-                Divider()
-
-                NoteSessionsStrip(
-                    sessions: vm.sessions,
-                    selectedSessionId: $selectedSessionId,
-                    onStartRecording: { vm.startRecording(appDelegate: appDelegate) }
-                )
-                if isRecordingForThisNote {
-                    NoteLiveRecordingPane()
-                }
-                if let selectedId = selectedSessionId,
-                   let session = vm.sessions.first(where: { $0.id == selectedId }) {
-                    ScrollView {
-                        NoteSessionAutoSection(
-                            viewModel: vm.transcriptDetailViewModel(for: session),
-                            onOpenSession: { sess in openedTranscriptSession = sess },
-                            onConvertActionItem: { _, task in
-                                openedTaskFromAction = task
-                            }
-                        )
+                // Expandable panels — opened from the meta bar, sized to their
+                // content. No fixed height is reserved, so an empty or short
+                // summary no longer leaves a tall void above the editor.
+                if propertiesExpanded || recordingExpanded || isRecordingForThisNote {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        if propertiesExpanded { propertiesPanel }
+                        if isRecordingForThisNote { NoteLiveRecordingPane() }
+                        if recordingExpanded, let session = displayedSession {
+                            recordingPanel(session)
+                        }
                     }
-                    .frame(maxHeight: 280)
+                    .padding(.horizontal, DesignTokens.Spacing.xl)
+                    .padding(.bottom, DesignTokens.Spacing.sm)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
                 Divider()
             }
@@ -217,35 +206,10 @@ struct NoteDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .onAppear {
-            // Collapse the properties block by default for notes with none
-            // (it stays discoverable via its disclosure header); expand it
-            // when the note already carries properties. Seed once so a user
-            // toggle isn't overwritten on a later re-appear.
-            if !didSeedPropertiesExpansion {
-                propertiesExpanded = !vm.properties.isEmpty
-                didSeedPropertiesExpansion = true
-            }
-        }
         .onDisappear {
             // Commit any edit still inside the autosave debounce window before
             // this view (and its view model) is torn down on a note switch.
             vm.flushPendingSave()
-        }
-        .onChange(of: selectedSessionId) { _, newValue in
-            if let updated = SessionSelectionReducer.userCollapsedFromTransition(
-                newSelection: newValue,
-                hasSessions: !vm.sessions.isEmpty
-            ) {
-                userExplicitlyCollapsed = updated
-            }
-        }
-        .onChange(of: vm.sessions) { _, newSessions in
-            selectedSessionId = SessionSelectionReducer.selection(
-                forNewSessions: newSessions,
-                currentSelection: selectedSessionId,
-                userExplicitlyCollapsed: userExplicitlyCollapsed
-            )
         }
         // Note save / reload failures are recoverable, background-ish problems
         // (autosave debounce, a backlinks refresh) — they should never block the
@@ -320,82 +284,199 @@ struct NoteDetailView: View {
             fileExtension: "md"
         )
     }
-}
 
-// MARK: - Properties section
+    // MARK: - Meta bar + expandable panels
 
-/// Collapsible disclosure wrapper around `NotePropertiesView` so the
-/// frontmatter properties block sits unobtrusively in the note header.
-///
-/// When collapsed it shows a compact "Properties (count)" disclosure row;
-/// when expanded it hands off to `NotePropertiesView`, which renders its own
-/// "Properties" header (with the add affordance), so the collapsed row stays
-/// out of the way to avoid a duplicated title.
-private struct NotePropertiesSection<Editor: View>: View {
-    @Binding var isExpanded: Bool
-    let count: Int
-    @ViewBuilder var editor: () -> Editor
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isExpanded {
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    collapseButton
-                }
-                editor()
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            } else {
-                collapsedRow
-            }
-        }
+    /// Most recent recording session for this note, if any.
+    private var latestSession: Session? {
+        vm.sessions.max(by: { $0.createdAt < $1.createdAt })
     }
 
-    private var collapsedRow: some View {
-        Button {
-            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                isExpanded = true
-            }
-        } label: {
-            HStack(spacing: DesignTokens.Spacing.xs) {
-                Image(systemName: "list.bullet.rectangle")
-                    .imageScale(.small)
-                Text("Properties")
-                if count > 0 {
-                    Text("\(count)")
-                        .monospacedDigit()
-                        .foregroundStyle(.tertiary)
+    /// The session the expanded recording panel shows — the user's pick, else
+    /// the latest.
+    private var displayedSession: Session? {
+        if let id = selectedSessionId, let s = vm.sessions.first(where: { $0.id == id }) { return s }
+        return latestSession
+    }
+
+    /// One compact row carrying the Properties and Recording disclosure chips
+    /// plus a quiet "New recording" action — the chrome that used to occupy
+    /// several stacked full-width sections.
+    private var metaBar: some View {
+        HStack(spacing: 0) {
+            metaChip(
+                isOpen: propertiesExpanded,
+                systemImage: "list.bullet.rectangle",
+                label: "Properties",
+                trailing: vm.properties.isEmpty ? nil : "\(vm.properties.count)",
+                action: { toggle($propertiesExpanded) }
+            )
+            .accessibilityLabel("Properties, \(vm.properties.count) set")
+
+            if let session = latestSession {
+                barSeparator
+                Button { toggle($recordingExpanded) } label: {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        chevron(recordingExpanded)
+                        sessionDot(session)
+                        Text("Recording").fontWeight(.semibold)
+                        Text(Self.sessionSubtitle(session))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, DesignTokens.Spacing.md)
+                    .padding(.vertical, DesignTokens.Spacing.sm)
+                    .contentShape(Rectangle())
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .imageScale(.small)
-                    .foregroundStyle(.tertiary)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Recording from \(Self.sessionSubtitle(session))")
             }
-            .font(DesignTokens.Typography.eyebrow)
-            .textCase(.uppercase)
-            .tracking(0.5)
-            .foregroundStyle(.secondary)
-            .padding(.vertical, DesignTokens.Spacing.xxs)
+
+            Spacer(minLength: DesignTokens.Spacing.sm)
+
+            barSeparator
+            Button { vm.startRecording(appDelegate: appDelegate) } label: {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Image(systemName: "record.circle")
+                        .imageScale(.small)
+                        .foregroundStyle(Color.accentColor)
+                    Text("New recording")
+                }
+                .padding(.horizontal, DesignTokens.Spacing.md)
+                .padding(.vertical, DesignTokens.Spacing.sm)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Start a new recording for this note")
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .background(DesignTokens.Palette.surfaceSunken,
+                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+        )
+    }
+
+    private func metaChip(isOpen: Bool, systemImage: String, label: String,
+                          trailing: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                chevron(isOpen)
+                Image(systemName: systemImage).imageScale(.small)
+                Text(label).fontWeight(.semibold)
+                if let trailing {
+                    Text(trailing).foregroundStyle(.tertiary).monospacedDigit()
+                }
+            }
+            .padding(.horizontal, DesignTokens.Spacing.md)
+            .padding(.vertical, DesignTokens.Spacing.sm)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show note properties")
     }
 
-    private var collapseButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                isExpanded = false
-            }
-        } label: {
-            Image(systemName: "chevron.up")
+    private func chevron(_ isOpen: Bool) -> some View {
+        Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+            .imageScale(.small)
+            .foregroundStyle(.tertiary)
+            .frame(width: 9)
+    }
+
+    private var barSeparator: some View {
+        Rectangle()
+            .fill(DesignTokens.Palette.divider)
+            .frame(width: 1, height: 18)
+    }
+
+    @ViewBuilder
+    private func sessionDot(_ session: Session) -> some View {
+        if session.endedAt == nil {
+            Circle().fill(DesignTokens.Palette.recording).frame(width: 7, height: 7)
+        } else {
+            Image(systemName: "checkmark.circle.fill")
                 .imageScale(.small)
-                .foregroundStyle(.tertiary)
-                .padding(DesignTokens.Spacing.xxs)
-                .contentShape(Rectangle())
+                .foregroundStyle(.green)
         }
-        .buttonStyle(.plain)
-        .help("Hide note properties")
+    }
+
+    /// Properties editor rendered as a content-sized card (its own header is
+    /// hidden — the meta-bar chip is the label).
+    private var propertiesPanel: some View {
+        NotePropertiesView(
+            properties: $vm.properties,
+            onCommit: { vm.updateProperties($0) },
+            optionSuggestions: vm.propertyOptionSuggestions,
+            showsHeader: false
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignTokens.Palette.surfaceSunken,
+                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+        )
+        .accessibilityLabel("Note properties")
+    }
+
+    /// Recording summary as a content-sized card (no fixed height). When the
+    /// note has more than one session, a slim switcher chooses which to show.
+    private func recordingPanel(_ session: Session) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            if vm.sessions.count > 1 { sessionSwitcher }
+            NoteSessionAutoSection(
+                viewModel: vm.transcriptDetailViewModel(for: session),
+                onOpenSession: { sess in openedTranscriptSession = sess },
+                onConvertActionItem: { _, task in openedTaskFromAction = task }
+            )
+        }
+    }
+
+    /// Horizontal chips to pick which recording the panel shows.
+    private var sessionSwitcher: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                ForEach(vm.sessions) { session in
+                    let isSelected = displayedSession?.id == session.id
+                    Button { selectedSessionId = session.id } label: {
+                        HStack(spacing: DesignTokens.Spacing.xs) {
+                            sessionDot(session)
+                            Text(Self.sessionSubtitle(session)).font(.caption).lineLimit(1)
+                        }
+                        .padding(.horizontal, DesignTokens.Spacing.sm)
+                        .padding(.vertical, DesignTokens.Spacing.xxs)
+                        .background(isSelected ? DesignTokens.Palette.surfaceElevated : .clear,
+                                    in: Capsule())
+                        .overlay(
+                            Capsule().strokeBorder(
+                                isSelected ? Color.accentColor : DesignTokens.Palette.cardBorder,
+                                lineWidth: 1)
+                        )
+                        .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Toggles a disclosure with the standard reduce-motion-aware animation.
+    private func toggle(_ flag: Binding<Bool>) {
+        withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
+            flag.wrappedValue.toggle()
+        }
+    }
+
+    /// "Mon D at H:MM · <duration>" subtitle for a session chip.
+    static func sessionSubtitle(_ session: Session) -> String {
+        let date = session.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        if let secs = session.durationSeconds {
+            let label = secs < 60 ? "<1m" : "\(secs / 60)m"
+            return "\(date) · \(label)"
+        }
+        return date
     }
 }
 

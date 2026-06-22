@@ -18,13 +18,18 @@ struct NotePropertiesView: View {
     /// Distinct existing values per key, used to power `select` suggestions.
     var optionSuggestions: [String: [String]] = [:]
 
+    /// When false the internal "Properties" header is hidden (the host already
+    /// labels the block — e.g. the note meta-bar chip), and a compact "Add
+    /// property" button is shown instead so adding still works.
+    var showsHeader: Bool = true
+
     @State private var isAddingProperty = false
     @State private var newKey = ""
     @State private var newType: PropertyType = .text
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            header
+            if showsHeader { header }
 
             if properties.isEmpty && !isAddingProperty {
                 emptyState
@@ -43,9 +48,32 @@ struct NotePropertiesView: View {
 
             if isAddingProperty {
                 addPropertyForm
+            } else if !showsHeader {
+                addButton
             }
         }
         .padding(DesignTokens.Spacing.md)
+    }
+
+    /// Compact "Add property" affordance shown when the header (which normally
+    /// carries the add control) is hidden — e.g. embedded under the note meta bar.
+    private var addButton: some View {
+        Button {
+            withAnimation(DesignTokens.Motion.snappy) {
+                isAddingProperty = true
+                newKey = ""
+                newType = .text
+            }
+        } label: {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Image(systemName: "plus.circle")
+                Text("Add property")
+            }
+            .font(DesignTokens.Typography.callout)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Header
