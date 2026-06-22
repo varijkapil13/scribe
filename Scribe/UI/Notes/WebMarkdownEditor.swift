@@ -12,8 +12,16 @@
 // live preview (decorations are display-only; the bound text stays raw markdown).
 //
 // Assets live in Scribe/Resources/Editor/ (index.html + editor.bundle.js +
-// editor.css), bundled as app resources. The bundle is built offline from
-// editor-web/ via esbuild; the app never needs node. See editor-web/README.md.
+// editor.css + chunks/), bundled as app resources. The bundle is built offline
+// from editor-web/ via esbuild; the app never needs node. See
+// editor-web/README.md.
+//
+// The page is served over a custom URL scheme (scribe-asset://editor/, via
+// EditorAssetSchemeHandler) rather than loadFileURL. editor.bundle.js is an ES
+// module that statically/dynamically imports chunks/*.js; a file:// document
+// has a null origin and WebKit blocks CORS-fetched module + import() requests,
+// which left the editor a blank white box. A custom scheme gives the document a
+// real same-origin tuple so the module and its lazy chunks load.
 //
 // Bridge contract (must match editor-web/src/editor.js):
 //   JS -> native:  window.webkit.messageHandlers.scribe.postMessage(...)
@@ -31,6 +39,109 @@ import WebKit
 import OSLog
 
 private let log = Logger(subsystem: "com.varij.scribe", category: "web-markdown-editor")
+
+/// Custom URL scheme + host used to serve the bundled CodeMirror editor assets.
+/// See `EditorAssetSchemeHandler` and the file header for why file:// fails.
+private let editorAssetScheme = "scribe-asset"
+private let editorAssetHost = "editor"
+
+/// Serves the bundled `Editor/` directory to the WKWebView for
+/// `scribe-asset://editor/...` requests, mapping each URL path to a file under
+/// the resolved resource directory.
+///
+/// Why this exists: the editor is an ES module (`editor.bundle.js`) whose first
+/// statement is `import "./chunks/chunk-….js"`, and it dynamically `import()`s
+/// mermaid/KaTeX chunks on first use. Module scripts and their imports are
+/// CORS-fetched; a `file://` document is a null origin, so WebKit denies them
+/// and the editor never mounts (blank white view). Serving the identical bytes
+/// over a custom scheme gives the page a real, same-origin tuple, so the module
+/// and all chunks load normally while staying fully offline.
+///
+/// WebKit delivers these callbacks on the main thread (the protocol is
+/// `@MainActor` in this SDK — mirrors `Coordinator`'s `WKScriptMessageHandler`
+/// conformance), so the class is `@MainActor`. All work happens synchronously
+/// inside `start` (reads are small, local bundle files): no thread hop, no
+/// `Sendable` capture across boundaries, and no window for `stop` to race the
+/// response.
+@MainActor
+private final class EditorAssetSchemeHandler: NSObject, WKURLSchemeHandler {
+    /// Absolute URL of the bundled `Editor/` directory. Requests are resolved
+    /// underneath it; paths escaping it are refused.
+    private let rootDir: URL?
+
+    init(rootDir: URL?) {
+        self.rootDir = rootDir
+        super.init()
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        guard let rootDir,
+              let url = urlSchemeTask.request.url,
+              let fileURL = Self.resolve(url, under: rootDir),
+              let data = try? Data(contentsOf: fileURL) else {
+            if let requested = urlSchemeTask.request.url?.absoluteString {
+                log.error("EditorAssetSchemeHandler: no asset for \(requested, privacy: .public)")
+            }
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+
+        let headers = [
+            "Content-Type": Self.mimeType(forExtension: fileURL.pathExtension),
+            "Content-Length": String(data.count),
+            // Same-origin already, but explicit and harmless — keeps module
+            // fetches unambiguous for WebKit.
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-cache",
+        ]
+        guard let response = HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers
+        ) else {
+            urlSchemeTask.didFailWithError(URLError(.cannotParseResponse))
+            return
+        }
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+        // Responses complete synchronously in `start`; nothing to cancel.
+    }
+
+    /// Maps a request URL to a file under `root`, defaulting to `index.html`
+    /// for the bare host. Refuses any path that escapes `root` (traversal).
+    private static func resolve(_ url: URL, under root: URL) -> URL? {
+        var path = url.path
+        if path.hasPrefix("/") { path.removeFirst() }
+        if path.isEmpty { path = "index.html" }
+
+        let candidate = root.appendingPathComponent(path).standardizedFileURL
+        let rootStd = root.standardizedFileURL
+        guard candidate.path == rootStd.path
+                || candidate.path.hasPrefix(rootStd.path + "/") else { return nil }
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return nil }
+        return candidate
+    }
+
+    private static func mimeType(forExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "html", "htm": return "text/html; charset=utf-8"
+        case "js", "mjs": return "text/javascript; charset=utf-8"
+        case "css": return "text/css; charset=utf-8"
+        case "json", "map": return "application/json; charset=utf-8"
+        case "svg": return "image/svg+xml"
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "woff2": return "font/woff2"
+        case "woff": return "font/woff"
+        case "ttf": return "font/ttf"
+        case "wasm": return "application/wasm"
+        default: return "application/octet-stream"
+        }
+    }
+}
 
 /// A SwiftUI wrapper around a `WKWebView` running the bundled CodeMirror 6
 /// markdown editor. Binds to a `String` document and tracks the environment
@@ -58,6 +169,14 @@ struct WebMarkdownEditor: NSViewRepresentable {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: "scribe")
         config.userContentController = controller
+        // Serve the bundled editor assets over a real origin so the ES module
+        // bundle + its lazy chunks load (file:// is a null origin and WebKit
+        // blocks module/import() fetches there). Must be set before the
+        // WKWebView is created. See EditorAssetSchemeHandler.
+        config.setURLSchemeHandler(
+            EditorAssetSchemeHandler(rootDir: Self.resourceDir),
+            forURLScheme: editorAssetScheme
+        )
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -74,10 +193,10 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.pendingFontSize = fontSize
         context.coordinator.pendingTitles = knownTitles
 
-        if let htmlURL = Self.indexURL, let resourceDir = Self.resourceDir {
-            webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceDir)
+        if Self.resourceDir != nil, let entryURL = Self.editorEntryURL {
+            webView.load(URLRequest(url: entryURL))
         } else {
-            log.error("WebMarkdownEditor: editor index.html missing from bundle — editor will not load")
+            log.error("WebMarkdownEditor: editor assets missing from bundle — editor will not load")
         }
         return webView
     }
@@ -96,14 +215,22 @@ struct WebMarkdownEditor: NSViewRepresentable {
 
     // MARK: - Bundle lookup
 
+    /// The custom-scheme entry point loaded into the WebView. Resolves to
+    /// `index.html` under the served `Editor/` directory (see
+    /// `EditorAssetSchemeHandler`).
+    private static let editorEntryURL = URL(string: "\(editorAssetScheme)://\(editorAssetHost)/index.html")
+
     /// Resolves the bundled `Editor/index.html`. The Editor folder is added as a
     /// folder reference in project.yml, so it lands inside the bundle's Editor
-    /// subdirectory.
+    /// subdirectory. Used only to derive `resourceDir` (the scheme handler's
+    /// root); the page itself is loaded via `editorEntryURL`.
     private static var indexURL: URL? {
         Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "Editor")
             ?? Bundle.main.url(forResource: "index", withExtension: "html")
     }
 
+    /// Root directory the scheme handler serves from — the folder containing
+    /// `index.html`, `editor.bundle.js`, `editor.css`, and `chunks/`.
     private static var resourceDir: URL? {
         indexURL?.deletingLastPathComponent()
     }
