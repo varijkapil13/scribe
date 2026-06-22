@@ -102,8 +102,10 @@ const proseBase = EditorView.theme({
     overflow: "auto",
   },
   ".cm-content": {
-    maxWidth: "44rem",
-    margin: "0 auto",
+    // Full available width — no centered fixed-width column. The side padding
+    // keeps a small gutter so prose isn't flush against the window edge; the
+    // editor otherwise fills the whole host width.
+    maxWidth: "none",
     padding: "2.5rem 1.75rem 6rem",
     caretColor: "var(--scribe-caret)",
   },

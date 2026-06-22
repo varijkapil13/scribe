@@ -8,22 +8,29 @@ import SwiftUI
 /// column to one of these widths by growing `textContainerInset` symmetrically
 /// (Craft-style centred measure) instead of letting prose run full-bleed.
 enum NotePageWidth: String, CaseIterable, Identifiable {
+    case full
     case regular
     case wide
 
     var id: String { rawValue }
 
-    /// Target column width in points. Below this the column simply tracks the
-    /// view width (no centring); above it the gutter grows symmetrically.
+    /// Target column width in points. `.full` is unbounded (the editor fills the
+    /// available width); for the finite presets the column tracks the view width
+    /// below `measure` and the gutter grows symmetrically above it.
     var measure: CGFloat {
         switch self {
+        case .full:    return .infinity   // no cap — fill the available width
         case .regular: return 680
         case .wide:    return 920
         }
     }
 
+    /// Whether this preset caps the editor to a centered column. `.full` does not.
+    var capsWidth: Bool { self != .full }
+
     var label: String {
         switch self {
+        case .full:    return "Full Width"
         case .regular: return "Regular Width"
         case .wide:    return "Wide Width"
         }
@@ -31,15 +38,20 @@ enum NotePageWidth: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .full:    return "arrow.left.and.right"
         case .regular: return "rectangle.portrait"
         case .wide:    return "rectangle"
         }
     }
 
-    /// The other option — used by the toggle shortcut so a single keystroke
-    /// flips between the two presets.
+    /// The next option — used by the toggle shortcut so a single keystroke
+    /// cycles through the presets.
     var toggled: NotePageWidth {
-        self == .regular ? .wide : .regular
+        switch self {
+        case .full:    return .regular
+        case .regular: return .wide
+        case .wide:    return .full
+        }
     }
 
     /// AppStorage key shared by the editor and the spine's View-menu hook.
