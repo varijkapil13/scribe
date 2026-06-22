@@ -20,11 +20,27 @@ after pulling or after adding/removing source files.
 
 ```bash
 xcodegen generate
-open Scribe.xcodeproj        # then ⌘R in Xcode
+open Scribe.xcodeproj        # then ⌘R in Xcode (see SwiftLint note below)
 # …or headless:
-xcodebuild -project Scribe.xcodeproj -scheme Scribe -configuration Debug \
-  -destination 'platform=macOS,arch=arm64' build
+DISABLE_SWIFTLINT=YES xcodebuild -project Scribe.xcodeproj -scheme Scribe \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -skipPackagePluginValidation build
 ```
+
+> **Why `DISABLE_SWIFTLINT=YES` and `-skipPackagePluginValidation`?** The
+> `CodeEditSourceEditor` / `CodeEditTextView` dependencies attach the
+> `lukepistrol/SwiftLintPlugins` *build-tool* plugin to their own targets.
+> Xcode (a) refuses to run an untrusted package plugin in a non-interactive
+> build — the bare command above fails with *"Validate plug-in 'SwiftLint'"*
+> — and (b) then runs `swiftlint` against the vendored sources, which errors
+> with *"The folder 'Output' doesn't exist."* `-skipPackagePluginValidation`
+> bypasses the trust gate; `DISABLE_SWIFTLINT=YES` makes the plugin emit no
+> commands at all (it reads the var from its `ProcessInfo` at plan time), so
+> swiftlint never runs. We don't lint dependency sources anyway. CI sets both
+> (`.github/workflows/ci.yml`). **In Xcode (⌘R):** click **Trust & Enable**
+> on the SwiftLint plugin prompt the first time, or skip the prompt machine-wide
+> once with `defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES`
+> (Apple's key is misspelled — copy it verbatim).
 
 On first launch macOS will prompt for **Microphone**, **Screen Recording**
 (system-audio capture via ScreenCaptureKit — audio only, no video), and later
@@ -93,6 +109,11 @@ notarized upload). Then re-run the release script.
 
 ## Troubleshooting
 
+- *Build fails at "Validate plug-in 'SwiftLint'"* (3 failures) or *"The folder
+  'Output' doesn't exist."* → the SwiftLint build-tool plugin from the CodeEdit
+  dependencies. Build with `DISABLE_SWIFTLINT=YES … -skipPackagePluginValidation`
+  (see *Build & run locally*); in Xcode click **Trust & Enable** on the plugin
+  prompt. Your app code is fine — these are not compile errors.
 - *"No signing certificate 'Developer ID Application'"* → see step 1 above.
 - *Archive succeeds but export fails* → you have a development cert but no
   Developer ID cert; the script falls back to copying the archived app.
