@@ -50,9 +50,16 @@ final class TranscriptArchiveViewModel: ObservableObject {
             if let month = cal.dateInterval(of: .month, for: now), month.contains(date) {
                 return (3, "Earlier this month")
             }
+            // Previous months: key grows with how many months back the date
+            // is, so the newest previous month sorts right after the named
+            // buckets and older months follow. (The old `1000 - year*12+month`
+            // formula produced large NEGATIVE keys, which sorted the whole
+            // month range ABOVE Today / this week / this month.)
             let comps = cal.dateComponents([.year, .month], from: date)
-            let key = 1000 - ((comps.year ?? 0) * 12 + (comps.month ?? 0)) // older = larger
-            return (key, Self.monthFormatter.string(from: date))
+            let nowComps = cal.dateComponents([.year, .month], from: now)
+            let monthsAgo = ((nowComps.year ?? 0) * 12 + (nowComps.month ?? 0))
+                          - ((comps.year ?? 0) * 12 + (comps.month ?? 0))
+            return (3 + max(1, monthsAgo), Self.monthFormatter.string(from: date))
         }
         for session in filtered {
             let (key, title) = bucketIndex(for: session.createdAt)
@@ -62,7 +69,11 @@ final class TranscriptArchiveViewModel: ObservableObject {
                 buckets.append((key, title, [session]))
             }
         }
-        return buckets.sorted { $0.key < $1.key }.map { ($0.title, $0.items) }
+        // Groups newest-first (ascending key), and newest-first within each
+        // group regardless of insertion order.
+        return buckets
+            .sorted { $0.key < $1.key }
+            .map { ($0.title, $0.items.sorted { $0.createdAt > $1.createdAt }) }
     }
 
     nonisolated static let monthFormatter: DateFormatter = {
