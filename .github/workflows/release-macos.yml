@@ -28,6 +28,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags, so the changelog step can diff against the previous tag
 
       - name: Select Xcode 26
         run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
@@ -37,6 +39,21 @@ jobs:
 
       - name: Generate project
         run: xcodegen generate
+
+      - name: Stamp version from the tag
+        # CFBundleShortVersionString = the tag without its leading "v";
+        # CFBundleVersion = the run number (monotonic, required to increase for
+        # notarized uploads). So the shipped app's version always matches the
+        # release tag — no manual Info.plist bump. The committed Info.plist keeps
+        # its dev placeholder; this only stamps the CI artifact. (manual_dispatch
+        # runs without a tag keep the committed version.)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PLIST="Scribe/Resources/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST"
+          echo "Stamped $PLIST -> ${VERSION} (build ${GITHUB_RUN_NUMBER})"
 
       - name: Build app (Release, ad-hoc signed)
         # Manual ad-hoc signing ("-") with no team/profile: xcodebuild signs the
@@ -90,26 +107,52 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-      - name: Publish GitHub Release
+      - name: Generate changelog + publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cat > dist/RELEASE_NOTES.md <<'EOF'
-          ## Scribe — macOS build
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="dist/RELEASE_NOTES.md"
 
-          > **Not notarized.** This artifact is built and ad-hoc signed by CI; it
-          > has no Apple Developer ID signature. On first launch macOS Gatekeeper
-          > will warn — right-click the app and choose **Open**, or run:
+          # Download / Gatekeeper blurb (the artifact is not notarized).
+          cat > "$NOTES" <<'EOF'
+          > **Not notarized.** Built and ad-hoc signed by CI (no Apple Developer ID
+          > signature). On first launch macOS Gatekeeper will warn — right-click the
+          > app and choose **Open**, or run:
           >
           > ```sh
           > xattr -dr com.apple.quarantine /Applications/Scribe.app
           > ```
 
           Apple Silicon, macOS 26+. Download the `.dmg` (drag to Applications) or the `.zip`.
+
           EOF
-          gh release create "${GITHUB_REF_NAME}" \
+
+          # Changelog from conventional commits since the previous v* tag.
+          PREV="$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)"
+          RANGE="${PREV:+${PREV}..}${TAG}"
+          section () { # $1 = subject ERE, $2 = heading
+            local items
+            items="$(git log "$RANGE" --no-merges --pretty='%s' \
+                     | grep -E "$1" \
+                     | sed -E 's/^[a-z]+(\([^)]+\))?!?: //; s/ \(#[0-9]+\)$//' \
+                     | sed 's/^/- /' || true)"
+            [ -n "$items" ] && printf '### %s\n%s\n\n' "$2" "$items" >> "$NOTES"
+          }
+          echo "## What's changed" >> "$NOTES"
+          if [ -n "$PREV" ]; then
+            printf '_Since %s._\n\n' "$PREV" >> "$NOTES"
+            section '^feat(\(|!|:)'                  '✨ Features'
+            section '^fix(\(|!|:)'                   '🐛 Fixes'
+            section '^perf(\(|!|:)'                  '⚡ Performance'
+            section '^(refactor|build|docs)(\(|!|:)' '🔧 Maintenance'
+          else
+            printf '_Initial release — see the README for the full feature set._\n\n' >> "$NOTES"
+          fi
+
+          gh release create "${TAG}" \
             dist/Scribe-*.dmg dist/Scribe-*.zip \
-            --title "Scribe ${GITHUB_REF_NAME}" \
-            --notes-file dist/RELEASE_NOTES.md
+            --title "Scribe ${TAG}" \
+            --notes-file "$NOTES"
