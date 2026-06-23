@@ -14,7 +14,7 @@ struct NoteEditorView: View {
     var focusModeEnabled: Bool = false
 
     // Per-note + default typography / measure preferences.
-    @AppStorage(NotePageWidth.storageKey) private var pageWidthRaw: String = NotePageWidth.regular.rawValue
+    @AppStorage(NotePageWidth.storageKey) private var pageWidthRaw: String = NotePageWidth.full.rawValue
     @AppStorage(NoteTypeface.defaultStorageKey) private var defaultTypefaceRaw: String = NoteTypeface.system.rawValue
     /// The persisted per-note typeface override (empty = follow default).
     @State private var perNoteTypefaceRaw: String = ""
@@ -29,7 +29,7 @@ struct NoteEditorView: View {
     @State private var knownTitles: [String] = []
 
     private var pageWidth: NotePageWidth {
-        NotePageWidth(rawValue: pageWidthRaw) ?? .regular
+        NotePageWidth(rawValue: pageWidthRaw) ?? .full
     }
 
     private var typeface: NoteTypeface {
@@ -71,11 +71,12 @@ struct NoteEditorView: View {
                     knownTitles: knownTitles,
                     onWikiLink: { anchor in onNavigate(anchor) }
                 )
-                // Centre the text column at the chosen reading measure
-                // (Craft-style). The web editor also centers its own prose
-                // column; this outer cap keeps the surface from spanning an
-                // ultra-wide window when a narrower measure is selected.
-                .frame(maxWidth: pageWidth.measure + 48)
+                // Full width by default. The finite presets (Regular/Wide)
+                // centre the text column at the chosen reading measure
+                // (Craft-style); `.full` applies no cap so the editor spans the
+                // whole available width. The web editor's own prose column is
+                // uncapped (maxWidth:none), so width is driven entirely here.
+                .frame(maxWidth: pageWidth.capsWidth ? pageWidth.measure + 48 : .infinity)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
@@ -155,7 +156,7 @@ private struct NoteEditorOverflowMenu: View {
     @Binding var defaultTypefaceRaw: String
     @Binding var persistentToolbar: Bool
 
-    private var pageWidth: NotePageWidth { NotePageWidth(rawValue: pageWidthRaw) ?? .regular }
+    private var pageWidth: NotePageWidth { NotePageWidth(rawValue: pageWidthRaw) ?? .full }
     private var defaultTypeface: NoteTypeface { NoteTypeface(rawValue: defaultTypefaceRaw) ?? .system }
 
     var body: some View {

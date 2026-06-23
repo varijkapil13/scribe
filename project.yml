@@ -16,18 +16,28 @@ targets:
     platform: macOS
     sources:
       - path: Scribe/
-    resources:
-      - path: Scribe/Resources/
-        # CodeMirror 6 web editor bundle. Declared as a folder reference (blue
-        # folder) so the Editor/ subdirectory is preserved inside the app
-        # bundle, letting WebMarkdownEditor resolve assets via
-        # Bundle.main.url(forResource:..., subdirectory: "Editor"). A plain
-        # group would flatten the files and break relative <link>/<script> refs.
+        # Editor/ ships as a PRESERVED folder reference (the entry below).
+        # This exclude is REQUIRED: without it, `sources: Scribe/` recursively
+        # auto-classifies Editor/*.js|html|css as resources and adds them as a
+        # FLATTENED group — every chunk lands in Resources/ root (not under
+        # Resources/Editor/chunks/), so the ESM bundle's `./chunks/…` imports
+        # 404 and the editor renders blank.
         excludes:
-          - "Editor"
-          - "Editor/**"
+          - "Resources/Editor"
+          - "Resources/Editor/**"
+      # Folder reference (blue folder) added to the resources build phase:
+      # preserves the Editor/ subtree — crucially Editor/chunks/ — inside the
+      # app bundle, so WebMarkdownEditor resolves index.html via
+      # subdirectory:"Editor" and the editor's relative chunk imports resolve.
+      #
+      # NOTE: xcodegen has NO top-level `resources:` target key — resource
+      # folder references MUST be declared here under `sources` with
+      # `buildPhase: resources`. (A former `resources:` block here was silently
+      # ignored, which is why Editor was only ever bundled flattened by the
+      # recursive entry above.)
       - path: Scribe/Resources/Editor
         type: folder
+        buildPhase: resources
     dependencies:
       - package: GRDB.swift
         product: GRDB

@@ -28,6 +28,8 @@ struct MainWindowView: View {
     @State private var notesTagsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
+    /// Animatable, persisted expansion state for the notebook folder tree.
+    @State private var notebookExpansion = NotebookExpansion()
     @State private var allNotes: [Note] = []
     @State private var taskCounts = SidebarTaskCounts()
     @State private var showUniversalSearch: Bool = false
@@ -40,11 +42,11 @@ struct MainWindowView: View {
     @State private var showOnboarding = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
-    /// Bridges `List(selection:)` and child views (which traffic in
-    /// `MainSelection?`) to the history-backed coordinator. A nil set
-    /// (clicking empty space) is ignored so the detail pane never blanks.
-    private var selectionBinding: Binding<MainSelection?> {
-        Binding(get: { nav.current }, set: { nav.select($0) })
+    /// Selection binding handed to the notebook-tree rows, which set it on tap.
+    /// Drives the history coordinator; reads back `nav.current` so a tree note
+    /// reads as selected. (Top-level rows call `nav.navigate` directly.)
+    private var treeSelection: Binding<MainSelection?> {
+        Binding(get: { nav.current }, set: { if let value = $0 { nav.navigate(to: value) } })
     }
 
     var body: some View {
@@ -263,7 +265,7 @@ struct MainWindowView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        List(selection: selectionBinding) {
+        List {
             if searchText.isEmpty {
                 let surface = nav.current.surface
 
@@ -271,7 +273,8 @@ struct MainWindowView: View {
                 if surface == .capture {
                 if appState.isTranscribing {
                     Section {
-                        NavigationLink(value: MainSelection.live) {
+                        SidebarRow(isSelected: nav.current == .live,
+                                   action: { nav.navigate(to: .live) }) {
                             LiveSidebarRow(
                                 isPaused: appState.audioManager.isPaused,
                                 duration: appState.audioManager.recordingDuration
@@ -284,13 +287,8 @@ struct MainWindowView: View {
                 }
 
                 Section {
-                    NavigationLink(value: MainSelection.today) {
-                        Label("Today", systemImage: "sun.max")
-                    }
-                    .badge(taskCounts.today)
-                    NavigationLink(value: MainSelection.recordings) {
-                        Label("Recordings", systemImage: "waveform")
-                    }
+                    sidebarLink(.today, "Today", systemImage: "sun.max", badge: taskCounts.today)
+                    sidebarLink(.recordings, "Recordings", systemImage: "waveform")
                 }
                 }  // end Capture surface
 
@@ -299,14 +297,11 @@ struct MainWindowView: View {
                 Section {
                     if tasksExpanded {
                         ForEach(TaskSidebarItem.unifiedSidebarFilters) { item in
-                            NavigationLink(value: MainSelection.tasks(item.filter)) {
-                                Label(item.title, systemImage: item.systemImage)
-                            }
-                            .badge(taskBadge(for: item.filter))
+                            sidebarLink(.tasks(item.filter), item.title,
+                                        systemImage: item.systemImage,
+                                        badge: taskBadge(for: item.filter))
                         }
-                        NavigationLink(value: MainSelection.taskCalendar) {
-                            Label("Calendar", systemImage: "calendar")
-                        }
+                        sidebarLink(.taskCalendar, "Calendar", systemImage: "calendar")
                     }
                 } header: {
                     CollapsibleSectionHeader(title: "Tasks", isExpanded: $tasksExpanded)
@@ -315,7 +310,8 @@ struct MainWindowView: View {
                 Section {
                     if projectsExpanded {
                         ForEach(projectsViewModel.projects) { project in
-                            NavigationLink(value: MainSelection.tasks(.project(project.id))) {
+                            SidebarRow(isSelected: nav.current == .tasks(.project(project.id)),
+                                       action: { nav.navigate(to: .tasks(.project(project.id))) }) {
                                 ProjectSidebarRow(project: project)
                             }
                             .contextMenu {
@@ -362,15 +358,9 @@ struct MainWindowView: View {
                 if surface == .notes {
                 Section {
                     if notesExpanded {
-                        NavigationLink(value: MainSelection.notes(.all)) {
-                            Label("All Notes", systemImage: "doc.on.doc")
-                        }
-                        NavigationLink(value: MainSelection.notes(.graph)) {
-                            Label("Graph", systemImage: "circle.hexagongrid")
-                        }
-                        NavigationLink(value: MainSelection.bases) {
-                            Label("Bases", systemImage: "tablecells")
-                        }
+                        sidebarLink(.notes(.all), "All Notes", systemImage: "doc.on.doc")
+                        sidebarLink(.notes(.graph), "Graph", systemImage: "circle.hexagongrid")
+                        sidebarLink(.bases, "Bases", systemImage: "tablecells")
                     }
                 } header: {
                     HStack(alignment: .center) {
@@ -393,10 +383,15 @@ struct MainWindowView: View {
                     if notebooksExpanded {
                         NotebookTreeView(
                             parentId: nil,
-                            notebooks: notebooks,
-                            notes: allNotes,
-                            selection: selectionBinding
+                            index: notebookTreeIndex,
+                            selection: treeSelection,
+                            expansion: notebookExpansion
                         )
+                        // The tree is one List cell (a VStack); inset it to the
+                        // same 8pt margin the other sidebar rows use.
+                        .listRowInsets(EdgeInsets(top: 2, leading: DesignTokens.Spacing.sm,
+                                                  bottom: 2, trailing: DesignTokens.Spacing.sm))
+                        .listRowSeparator(.hidden)
 
                         if isCreatingTopNotebook {
                             InlineNameField(
@@ -437,9 +432,7 @@ struct MainWindowView: View {
                 Section {
                     if notesTagsExpanded {
                         ForEach(unifiedTags, id: \.self) { tag in
-                            NavigationLink(value: MainSelection.notes(.tag(tag))) {
-                                Label(tag, systemImage: "tag")
-                            }
+                            sidebarLink(.notes(.tag(tag)), tag, systemImage: "tag")
                         }
                     }
                 } header: {
@@ -455,7 +448,8 @@ struct MainWindowView: View {
                             .font(DesignTokens.Typography.callout)
                     } else {
                         ForEach(results) { note in
-                            NavigationLink(value: MainSelection.note(note.id)) {
+                            SidebarRow(isSelected: nav.current == .note(note.id),
+                                       action: { nav.navigate(to: .note(note.id)) }) {
                                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                                     Text(note.title.isEmpty ? "Untitled" : note.title)
                                         .font(DesignTokens.Typography.body)
@@ -509,26 +503,19 @@ struct MainWindowView: View {
     /// this via the Go menu). Tapping the already-active surface is a no-op so
     /// it doesn't reset an open note/task back to the default.
     private var surfaceSwitcher: some View {
-        Picker("Surface", selection: Binding(
-            get: { nav.current.surface },
-            set: { newSurface in
-                if newSurface != nav.current.surface {
-                    nav.navigate(to: newSurface.defaultSelection)
-                }
-            }
-        )) {
-            ForEach(Surface.allCases) { surface in
-                Text(surface.title).tag(surface)
+        SidebarSurfaceSwitcher(current: nav.current.surface) { newSurface in
+            if newSurface != nav.current.surface {
+                nav.navigate(to: newSurface.defaultSelection)
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
         .padding(.horizontal, DesignTokens.Spacing.sm)
         .padding(.top, DesignTokens.Spacing.sm)
         .padding(.bottom, DesignTokens.Spacing.xs)
-        .background(.bar)
-        .accessibilityLabel("Surface")
-        .accessibilityHint("Switch between Capture, Notes and Tasks")
+        .frame(maxWidth: .infinity)
+        // Sidebar material (not the toolbar's `.bar`, which read as a chunky
+        // band merging into the titlebar) + a hairline only at the bottom edge.
+        .background(.thinMaterial)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     /// Footer icon strip for rarely-used destinations. Avoids dedicating
@@ -595,6 +582,36 @@ struct MainWindowView: View {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             reloadTags()
+        }
+    }
+
+    /// Precomputed notebook-tree lookups, rebuilt only when the notebooks/notes
+    /// arrays change. Lets the tree resolve children + notes per node in O(1)
+    /// instead of re-filtering the full arrays at every row.
+    private var notebookTreeIndex: NotebookTreeIndex {
+        NotebookTreeIndex(notebooks: notebooks, notes: allNotes)
+    }
+
+    /// A standard sidebar destination row (icon + title + optional count badge),
+    /// rendered with `SidebarRow` so it's reliably clickable with a full-width
+    /// selection + hover highlight.
+    @ViewBuilder
+    private func sidebarLink(_ destination: MainSelection,
+                             _ title: String,
+                             systemImage: String,
+                             badge: Int = 0) -> some View {
+        SidebarRow(isSelected: nav.current == destination,
+                   action: { nav.navigate(to: destination) }) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Label(title, systemImage: systemImage)
+                if badge > 0 {
+                    Spacer(minLength: DesignTokens.Spacing.xs)
+                    Text("\(badge)")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

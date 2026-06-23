@@ -19,6 +19,14 @@
 #
 set -euo pipefail
 
+# CodeEditSourceEditor attaches the lukepistrol SwiftLintPlugins *build-tool*
+# plugin to its own targets; Xcode runs swiftlint while compiling them. The
+# plugin reads DISABLE_SWIFTLINT from its ProcessInfo at plan time and emits no
+# build commands when set, so swiftlint never runs (we don't lint vendored
+# dependency sources). Must be a process env var, not an xcodebuild build
+# setting. See .github/workflows/ci.yml and BUILD.md → Troubleshooting.
+export DISABLE_SWIFTLINT="YES"
+
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 BUILD_DIR="$ROOT/build"
@@ -49,6 +57,7 @@ xcodebuild archive \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
   -destination 'generic/platform=macOS' \
+  -skipPackagePluginValidation \
   -archivePath "$ARCHIVE" | "$PRETTY"
 
 [ -d "$ARCHIVE" ] || die "Archive failed — no $ARCHIVE"

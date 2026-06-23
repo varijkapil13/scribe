@@ -22,9 +22,15 @@ struct NoteSessionAutoSection: View {
             actionItemsBlock
             entitiesBlock
         }
-        .padding(.horizontal, DesignTokens.Spacing.xl)
+        .padding(.horizontal, DesignTokens.Spacing.lg)
         .padding(.vertical, DesignTokens.Spacing.md)
-        .background(DesignTokens.Palette.surfaceSunken)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignTokens.Palette.surfaceSunken,
+                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
+        )
         .onAppear {
             guard !hasLoaded else { return }
             hasLoaded = true
