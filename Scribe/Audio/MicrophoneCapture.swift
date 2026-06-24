@@ -140,8 +140,16 @@ final class MicrophoneCapture: @unchecked Sendable {
         }
 
         let inputNode = audioEngine.inputNode
-        let hardwareFormat = inputNode.outputFormat(forBus: 0)
-        guard hardwareFormat.sampleRate > 0 else {
+
+        // Sanity check that an input is actually available. We deliberately do
+        // NOT reuse this format for the tap: immediately after switching the
+        // CurrentDevice, `outputFormat(forBus:)` can lag the node's real input
+        // format (e.g. report 48 kHz while the new device is natively 32 kHz).
+        // Passing that stale format to `installTap` throws an uncaught
+        // exception and faults the process. Instead we pass `format: nil`
+        // (which always uses the bus's live format) and build the converter
+        // lazily from the first buffer's actual format.
+        guard inputNode.outputFormat(forBus: 0).sampleRate > 0 else {
             throw MicrophoneCaptureError.noInputAvailable
         }
 
@@ -155,11 +163,6 @@ final class MicrophoneCapture: @unchecked Sendable {
             throw MicrophoneCaptureError.noInputAvailable
         }
 
-        // Create a converter from the hardware format to the target format.
-        guard let converter = AVAudioConverter(from: hardwareFormat, to: targetFormat) else {
-            throw MicrophoneCaptureError.noInputAvailable
-        }
-
         let bufferCapacity = AVAudioFrameCount(sampleRate * 0.1) // 100 ms output buffer
 
         // One-shot log of the raw hardware format + first-buffer peak so we
@@ -168,7 +171,11 @@ final class MicrophoneCapture: @unchecked Sendable {
         var diagnosticsPrinted = false
         var rawTapCount = 0
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: hardwareFormat) { [weak self] buffer, time in
+        // Built lazily from the first buffer's real format, and rebuilt if the
+        // input format ever changes mid-session (e.g. the user switches mics).
+        var converter: AVAudioConverter?
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, time in
             guard let self, let callback = self.onAudioBuffer else { return }
 
             // Measure the raw hardware buffer's peak before any conversion.
@@ -186,7 +193,7 @@ final class MicrophoneCapture: @unchecked Sendable {
 
             if !diagnosticsPrinted {
                 diagnosticsPrinted = true
-                Log.audio.info("Mic hardware tap installed — format: \(String(describing: hardwareFormat), privacy: .public); first raw buffer peak: \(String(format: "%.4f", rawPeak), privacy: .public)")
+                Log.audio.info("Mic hardware tap installed — format: \(String(describing: buffer.format), privacy: .public); first raw buffer peak: \(String(format: "%.4f", rawPeak), privacy: .public)")
             }
             rawTapCount += 1
             if rawTapCount % 100 == 0 {
@@ -197,6 +204,13 @@ final class MicrophoneCapture: @unchecked Sendable {
             // smoothed input-level meter. Cheap (a single Float copy) and
             // already computed above — previously this value was only logged.
             self.onLevel?(rawPeak)
+
+            // (Re)build the converter when first seen or when the input format
+            // changes under us, so a mid-session mic switch never crashes.
+            if converter?.inputFormat != buffer.format {
+                converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+            }
+            guard let converter else { return }
 
             guard let convertedBuffer = AVAudioPCMBuffer(
                 pcmFormat: targetFormat,
