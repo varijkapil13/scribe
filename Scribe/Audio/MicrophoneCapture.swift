@@ -42,8 +42,21 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// Whether the engine is currently capturing audio.
     private(set) var isCapturing = false
 
-    /// The CoreAudio device ID to use for capture. `nil` uses the system default.
+    /// The CoreAudio device ID to use for capture. `nil` uses the system
+    /// default (unless ``autoDetectActiveInput`` is set).
     var selectedDeviceID: AudioDeviceID?
+
+    /// When `true` and no device is pinned, capture follows the microphone a
+    /// call/conferencing app (Teams, Zoom, …) is currently using — i.e. the
+    /// input device CoreAudio reports as running somewhere. This is the mic the
+    /// user is actually speaking into, which may differ from the system
+    /// default. Falls back to the system default when nothing else is in use.
+    var autoDetectActiveInput: Bool = false
+
+    /// The CoreAudio device ID the engine is currently capturing from (whatever
+    /// was resolved at the last ``startCapture``). Used to avoid counting our
+    /// own input usage when detecting which mic a call app is using.
+    private(set) var currentCaptureDeviceID: AudioDeviceID?
 
     /// Called on each captured audio buffer (already resampled to the requested format).
     var onAudioBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
@@ -65,6 +78,17 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// Backing handle for the default-input-device CoreAudio listener so it can
     /// be removed again in ``stopObservingDefaultInputDevice()``.
     private var defaultDeviceListener: AudioObjectPropertyListenerBlock?
+
+    /// Called (on the main queue) when the set of in-use input devices changes
+    /// while ``autoDetectActiveInput`` is on, so the owner can re-resolve and
+    /// switch to the mic a call app just started using. Fired on any input
+    /// device's running-state change or when devices are added/removed.
+    var onActiveInputDeviceChanged: (() -> Void)?
+
+    /// Per-device "is running somewhere" listeners, keyed by device ID, plus the
+    /// device-list listener — all removed in ``stopObservingActiveInputDevice()``.
+    private var runningListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+    private var deviceListListener: AudioObjectPropertyListenerBlock?
 
     // MARK: - Device Enumeration
 
@@ -144,18 +168,26 @@ final class MicrophoneCapture: @unchecked Sendable {
     func startCapture(sampleRate: Double = 16000) throws {
         guard !isCapturing else { return }
 
-        // Bind the input device. A user-pinned device is mandatory — failing to
-        // select it is a real error. When following the system default we bind
-        // explicitly to the *current* default instead of relying on the engine,
-        // because the input audio unit latches whatever device was current when
-        // it was first instantiated; restarting capture after the default
-        // changes only re-points the engine if we set the device ourselves.
+        // Resolve and bind the input device. We always set the device
+        // explicitly rather than relying on the engine, because the input audio
+        // unit latches whatever device was current when it was first
+        // instantiated; restarting capture after the device changes only
+        // re-points the engine if we set the device ourselves.
         if let deviceID = selectedDeviceID {
+            // A user-pinned device is mandatory — failing to select it is a
+            // real error.
             try setInputDevice(deviceID)
-        } else if let defaultID = Self.defaultInputDeviceID() {
-            // Best-effort: if the default vanished out from under us, fall back
-            // to whatever input the engine already has rather than failing.
-            try? setInputDevice(defaultID)
+            currentCaptureDeviceID = deviceID
+        } else {
+            // Following either the mic a call app is using (auto-detect) or the
+            // system default. Both are best-effort: if the device vanished out
+            // from under us, fall back to whatever input the engine already has.
+            let resolved = (autoDetectActiveInput ? activeInputDeviceID() : nil)
+                ?? Self.defaultInputDeviceID()
+            if let resolved {
+                try? setInputDevice(resolved)
+            }
+            currentCaptureDeviceID = resolved
         }
 
         let inputNode = audioEngine.inputNode
@@ -256,6 +288,15 @@ final class MicrophoneCapture: @unchecked Sendable {
         isCapturing = true
     }
 
+    /// Clears the record of which device we're capturing, so the next
+    /// ``startCapture`` resolves active-input detection against *all* running
+    /// devices afresh. Call at the start of a new recording session — but NOT on
+    /// a mid-session restart, where the previously-captured device must stay
+    /// excluded so detection picks the *other* (call app's) mic.
+    func resetCaptureBaseline() {
+        currentCaptureDeviceID = nil
+    }
+
     /// Stops capturing and tears down the audio tap.
     func stopCapture() {
         guard isCapturing else { return }
@@ -332,6 +373,134 @@ final class MicrophoneCapture: @unchecked Sendable {
         )
         guard status == noErr, deviceID != 0 else { return nil }
         return deviceID
+    }
+
+    // MARK: - Following the Active Input (mic in use by a call app)
+
+    /// The input device the user is actually speaking into right now: the input
+    /// device that is *running somewhere* (held open by another app such as
+    /// Teams/Zoom) but is **not** the device we are currently capturing — i.e. a
+    /// mic some call app deliberately opened. Returns `nil` when nothing other
+    /// than our own capture is in use (caller should then fall back to the
+    /// system default).
+    ///
+    /// This rule is deliberately stable: we only ever switch *to* a running
+    /// device other than our own, never away when the set is empty. So when a
+    /// call ends (the call app releases its mic) we simply keep recording from
+    /// the device we adopted, and when the call app switches mics we follow.
+    func activeInputDeviceID() -> AudioDeviceID? {
+        let others = runningInputDeviceIDs()
+            .subtracting(currentCaptureDeviceID.map { [$0] } ?? [])
+        guard !others.isEmpty else { return nil }
+
+        // Prefer a running device that isn't the system default — a call app
+        // using the default mic is indistinguishable from "just the default",
+        // whereas a running non-default device is a deliberate selection. If
+        // several qualify, pick deterministically (lowest ID) to avoid churn.
+        let def = Self.defaultInputDeviceID()
+        let sorted = others.sorted()
+        return sorted.first(where: { $0 != def }) ?? sorted.first
+    }
+
+    /// The set of input devices CoreAudio reports as currently running
+    /// somewhere on the system (in use by any process, including us).
+    func runningInputDeviceIDs() -> Set<AudioDeviceID> {
+        var running = Set<AudioDeviceID>()
+        for device in availableInputDevices() where Self.isDeviceRunningSomewhere(device.id) {
+            running.insert(device.id)
+        }
+        return running
+    }
+
+    /// Whether a specific device's IO is running anywhere on the system.
+    private static func isDeviceRunningSomewhere(_ deviceID: AudioDeviceID) -> Bool {
+        var address = runningSomewhereAddress
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &isRunning)
+        return status == noErr && isRunning != 0
+    }
+
+    private static let runningSomewhereAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    private static let devicesAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    /// Starts watching which input devices are in use so we can follow the mic
+    /// a call app starts/stops using. Fires ``onActiveInputDeviceChanged`` on
+    /// any change. Idempotent. Also re-syncs listeners when devices are
+    /// added/removed (e.g. plugging in a headset).
+    func startObservingActiveInputDevice() {
+        guard deviceListListener == nil else { return }
+        installRunningListeners()
+
+        var address = Self.devicesAddress
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self else { return }
+            // A new device may have appeared — make sure it's watched too — and
+            // the in-use set may have changed.
+            self.installRunningListeners()
+            self.onActiveInputDeviceChanged?()
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+        guard status == noErr else {
+            Log.audio.error("Failed to observe device list (status \(status)).")
+            return
+        }
+        deviceListListener = block
+    }
+
+    /// Stops watching in-use input devices and removes every per-device
+    /// listener. Idempotent.
+    func stopObservingActiveInputDevice() {
+        if let block = deviceListListener {
+            var address = Self.devicesAddress
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                DispatchQueue.main,
+                block
+            )
+            deviceListListener = nil
+        }
+        var address = Self.runningSomewhereAddress
+        for (deviceID, block) in runningListeners {
+            AudioObjectRemovePropertyListenerBlock(deviceID, &address, DispatchQueue.main, block)
+        }
+        runningListeners.removeAll()
+    }
+
+    /// Installs an "is running somewhere" listener on each current input device
+    /// that isn't already watched. Called on start and whenever the device list
+    /// changes.
+    private func installRunningListeners() {
+        var address = Self.runningSomewhereAddress
+        for device in availableInputDevices() where runningListeners[device.id] == nil {
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                self?.onActiveInputDeviceChanged?()
+            }
+            let status = AudioObjectAddPropertyListenerBlock(
+                device.id,
+                &address,
+                DispatchQueue.main,
+                block
+            )
+            if status == noErr {
+                runningListeners[device.id] = block
+            }
+        }
     }
 
     // MARK: - Private Helpers

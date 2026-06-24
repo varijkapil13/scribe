@@ -129,24 +129,40 @@ final class AppState: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] stored in
                 guard let self else { return }
-                let deviceID = Self.parseMicDeviceID(stored)
-                let label = stored.isEmpty ? "System Default" : stored
-                Log.audio.info("Microphone preference changed → \(label, privacy: .public).")
-                self.audioManager.setInputDevice(deviceID)
+                let selection = Self.micSelection(from: stored)
+                Log.audio.info("Microphone preference changed → \(Self.label(for: selection), privacy: .public).")
+                self.audioManager.setMicSelection(selection)
             }
             .store(in: &cancellables)
     }
 
     private func applyStoredMicrophoneDevice() {
-        let stored = UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? ""
-        audioManager.setInputDevice(Self.parseMicDeviceID(stored))
+        // Absent preference defaults to automatic — follow the mic actually in
+        // use (e.g. the one a Teams call opened), not the system default.
+        let stored = UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? "auto"
+        audioManager.setMicSelection(Self.micSelection(from: stored))
     }
 
-    /// Parses the string-encoded `selectedMicrophoneID` UserDefault. Empty
-    /// string or unparseable value means "use the system default".
-    private static func parseMicDeviceID(_ stored: String) -> AudioDeviceID? {
-        guard !stored.isEmpty, let id = AudioDeviceID(stored) else { return nil }
-        return id
+    /// Maps the string-encoded `selectedMicrophoneID` UserDefault to a mic
+    /// selection: `"auto"` → automatic (mic in use by a call app), `""` →
+    /// system default, a numeric ID → that pinned device. Anything unparseable
+    /// falls back to automatic.
+    private static func micSelection(from stored: String) -> AudioSessionManager.MicSelection {
+        switch stored {
+        case "auto": return .automatic
+        case "": return .systemDefault
+        default:
+            if let id = AudioDeviceID(stored) { return .device(id) }
+            return .automatic
+        }
+    }
+
+    private static func label(for selection: AudioSessionManager.MicSelection) -> String {
+        switch selection {
+        case .automatic: return "Automatic (mic in use)"
+        case .systemDefault: return "System Default"
+        case .device(let id): return "device \(id)"
+        }
     }
 
     // MARK: - System Audio Preference

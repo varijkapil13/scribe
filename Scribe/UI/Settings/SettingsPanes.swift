@@ -87,7 +87,7 @@ private struct GeneralSettingsPane: View {
     @ObservedObject var audioManager: AudioSessionManager
     @ObservedObject private var vault: VaultCoordinator = .shared
 
-    @AppStorage("selectedMicrophoneID") var selectedMicID: String = ""
+    @AppStorage("selectedMicrophoneID") var selectedMicID: String = "auto"
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
     @AppStorage(NotesDirectory.userPreferenceKey) var notesVaultPath: String = ""
@@ -140,6 +140,7 @@ private struct GeneralSettingsPane: View {
 
             Section("Audio") {
                 Picker("Microphone", selection: $selectedMicID) {
+                    Text("Automatic (mic in use)").tag("auto")
                     Text("System Default").tag("")
                     ForEach(audioManager.availableMicrophones(), id: \.id) { mic in
                         Text(mic.name).tag(String(mic.id))
@@ -154,6 +155,9 @@ private struct GeneralSettingsPane: View {
                         Text("Saved device (unavailable)").tag(selectedMicID)
                     }
                 }
+                Text("Automatic follows the mic you're actually speaking into — the one a call app (Teams, Zoom…) is using — even if it differs from your system default, and switches with you mid-session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 toggleWithCaption(
                     "Capture system audio",
                     isOn: $captureSystemAudio,

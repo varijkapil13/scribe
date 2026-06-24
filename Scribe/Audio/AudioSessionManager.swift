@@ -123,20 +123,22 @@ final class AudioSessionManager: ObservableObject {
         let levelBox = rawLevelBox
         micCapture.onLevel = { peak in levelBox.recordMic(peak) }
 
-        // Follow the system default input device live: when on "System Default",
-        // if the user switches their Mac's input (plugs in a headset, picks a
-        // different mic in Control Center) mid-session, restart the mic tap so
-        // we track it without them having to touch Scribe.
-        micCapture.onDefaultInputDeviceChanged = { [weak self] in
-            Task { @MainActor [weak self] in self?.followDefaultInputDeviceChange() }
-        }
-        micCapture.startObservingDefaultInputDevice()
+        // Fresh session: forget the device captured last time so automatic
+        // detection considers all in-use mics afresh (otherwise re-recording
+        // with the same call mic would exclude it and fall back to default).
+        micCapture.resetCaptureBaseline()
 
         do {
             try micCapture.startCapture()
         } catch {
             throw AudioSessionError.micCaptureFailure(underlying: error)
         }
+
+        // Start following the active input mode live: in automatic mode track
+        // whichever mic a call app is using; in system-default mode track the OS
+        // default. Started after capture so our own device is the baseline that
+        // active-mic detection excludes.
+        startObservingMicForCurrentMode()
 
         // Configure system audio capture.
         if captureSystemAudio {
@@ -173,6 +175,7 @@ final class AudioSessionManager: ObservableObject {
         guard isRecording else { return }
 
         micCapture.stopObservingDefaultInputDevice()
+        micCapture.stopObservingActiveInputDevice()
         micCapture.stopCapture()
         await systemCapture.stopCapture()
 
@@ -206,41 +209,98 @@ final class AudioSessionManager: ObservableObject {
         isPaused = true
     }
 
-    /// Hot-swaps the microphone input device. If a session is in progress the
-    /// mic tap is stopped, reconfigured for the new device, and restarted —
-    /// so the user can switch mics mid-call without losing the session.
-    /// Passing `nil` returns to the system default.
-    func setInputDevice(_ deviceID: AudioDeviceID?) {
-        if let deviceID {
-            micCapture.selectDevice(id: deviceID)
-        } else {
+    /// How the microphone input device is chosen.
+    enum MicSelection: Equatable {
+        /// Follow the mic a call/conferencing app is actively using — the one
+        /// the user is really speaking into. Falls back to the system default
+        /// when nothing else is in use.
+        case automatic
+        /// Follow the system default input device live.
+        case systemDefault
+        /// A specific pinned device.
+        case device(AudioDeviceID)
+    }
+
+    /// Applies a microphone selection. If a session is in progress the mic tap
+    /// is restarted for the new selection and the appropriate live-follow
+    /// observer is (re)installed — so the user can change how the mic is chosen
+    /// mid-call without losing the session.
+    func setMicSelection(_ selection: MicSelection) {
+        switch selection {
+        case .automatic:
             micCapture.selectedDeviceID = nil
+            micCapture.autoDetectActiveInput = true
+        case .systemDefault:
+            micCapture.selectedDeviceID = nil
+            micCapture.autoDetectActiveInput = false
+        case .device(let id):
+            micCapture.selectDevice(id: id)
+            micCapture.autoDetectActiveInput = false
         }
 
         guard isRecording, !isPaused else { return }
+        // onAudioBuffer is a stored property on micCapture so the forwarding
+        // callback survives the restart.
+        restartMicCapture(reason: "selection changed")
+        startObservingMicForCurrentMode()
+    }
 
-        // Mid-session swap: tear down the current tap and restart with the
-        // new device. onAudioBuffer is a stored property on micCapture so the
-        // forwarding callback survives the restart.
-        micCapture.stopCapture()
-        do {
-            try micCapture.startCapture()
-        } catch {
-            Log.audio.error("Failed to switch mic device: \(error.localizedDescription, privacy: .private)")
+    /// Installs the live-follow observer that matches the current mic mode:
+    /// nothing for a pinned device, the in-use-mic watcher for automatic, the
+    /// default-device watcher for system-default. Tears down any previous
+    /// observer first so it's safe to call on every selection/recording change.
+    private func startObservingMicForCurrentMode() {
+        micCapture.stopObservingDefaultInputDevice()
+        micCapture.stopObservingActiveInputDevice()
+
+        if micCapture.selectedDeviceID != nil {
+            return // pinned — nothing to follow
+        }
+
+        if micCapture.autoDetectActiveInput {
+            micCapture.onActiveInputDeviceChanged = { [weak self] in
+                Task { @MainActor [weak self] in self?.followActiveInputDeviceChange() }
+            }
+            micCapture.startObservingActiveInputDevice()
+        } else {
+            micCapture.onDefaultInputDeviceChanged = { [weak self] in
+                Task { @MainActor [weak self] in self?.followDefaultInputDeviceChange() }
+            }
+            micCapture.startObservingDefaultInputDevice()
         }
     }
 
-    /// Reacts to a change of the system default input device while we are
-    /// following the default (no device pinned). Restarts the mic tap so the
-    /// newly-selected input takes effect live, mid-session.
+    /// Reacts to the mic a call app is using changing (automatic mode), e.g. a
+    /// Teams call starting on a different mic than the system default, or the
+    /// call app switching mics mid-session. Switches capture to it live.
+    private func followActiveInputDeviceChange() {
+        guard isRecording, !isPaused,
+              micCapture.selectedDeviceID == nil, micCapture.autoDetectActiveInput else { return }
+        // Only switch when a *different* in-use mic is now available; staying
+        // put when nothing new is in use avoids churn when a call ends.
+        guard let target = micCapture.activeInputDeviceID(),
+              target != micCapture.currentCaptureDeviceID else { return }
+        restartMicCapture(reason: "active input device changed")
+    }
+
+    /// Reacts to a change of the system default input device while following the
+    /// default (system-default mode). Restarts the mic tap so the newly-selected
+    /// input takes effect live, mid-session.
     private func followDefaultInputDeviceChange() {
-        guard isRecording, !isPaused, micCapture.selectedDeviceID == nil else { return }
-        Log.audio.info("System default input device changed — following it live.")
+        guard isRecording, !isPaused,
+              micCapture.selectedDeviceID == nil, !micCapture.autoDetectActiveInput else { return }
+        restartMicCapture(reason: "system default input device changed")
+    }
+
+    /// Tears down and restarts the mic tap in place, preserving the forwarding
+    /// callbacks (they're stored properties on `micCapture`).
+    private func restartMicCapture(reason: String) {
+        Log.audio.info("Restarting mic capture — \(reason, privacy: .public).")
         micCapture.stopCapture()
         do {
             try micCapture.startCapture()
         } catch {
-            Log.audio.error("Failed to follow new default input device: \(error.localizedDescription, privacy: .private)")
+            Log.audio.error("Failed to restart mic capture: \(error.localizedDescription, privacy: .private)")
         }
     }
 

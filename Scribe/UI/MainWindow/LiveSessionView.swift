@@ -18,7 +18,7 @@ struct LiveSessionView: View {
     @EnvironmentObject var appDelegate: AppDelegate
 
     @AppStorage("captureSystemAudio") private var captureSystemAudio: Bool = true
-    @AppStorage("selectedMicrophoneID") private var selectedMicrophoneID: String = ""
+    @AppStorage("selectedMicrophoneID") private var selectedMicrophoneID: String = "auto"
     @AppStorage("selectedLanguage") private var selectedLanguage: String = "auto"
 
     /// Drives `.sensoryFeedback` so start/stop/pause confirm with a haptic.
@@ -215,6 +215,15 @@ struct LiveSessionView: View {
     private var micMenu: some View {
         Menu {
             Button {
+                selectedMicrophoneID = "auto"
+            } label: {
+                if selectedMicrophoneID == "auto" {
+                    Label("Automatic (mic in use)", systemImage: "checkmark")
+                } else {
+                    Text("Automatic (mic in use)")
+                }
+            }
+            Button {
                 selectedMicrophoneID = ""
             } label: {
                 if selectedMicrophoneID.isEmpty {
@@ -347,6 +356,7 @@ struct LiveSessionView: View {
     }
 
     private var currentMicDisplayName: String {
+        if selectedMicrophoneID == "auto" { return "Automatic" }
         if selectedMicrophoneID.isEmpty { return "System Default" }
         return appState.audioManager.availableMicrophones()
             .first(where: { String($0.id) == selectedMicrophoneID })?.name
