@@ -56,6 +56,16 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// own actor before touching UI state.
     var onLevel: ((Float) -> Void)?
 
+    /// Called (on the main queue) when the *system default* input device
+    /// changes while we are following the default — i.e. ``selectedDeviceID``
+    /// is `nil`. The owner should restart capture so the new device is picked
+    /// up live. Not fired when the user has pinned a specific device.
+    var onDefaultInputDeviceChanged: (() -> Void)?
+
+    /// Backing handle for the default-input-device CoreAudio listener so it can
+    /// be removed again in ``stopObservingDefaultInputDevice()``.
+    private var defaultDeviceListener: AudioObjectPropertyListenerBlock?
+
     // MARK: - Device Enumeration
 
     /// Returns the list of available audio input devices via CoreAudio.
@@ -134,9 +144,18 @@ final class MicrophoneCapture: @unchecked Sendable {
     func startCapture(sampleRate: Double = 16000) throws {
         guard !isCapturing else { return }
 
-        // Apply selected device if specified.
+        // Bind the input device. A user-pinned device is mandatory — failing to
+        // select it is a real error. When following the system default we bind
+        // explicitly to the *current* default instead of relying on the engine,
+        // because the input audio unit latches whatever device was current when
+        // it was first instantiated; restarting capture after the default
+        // changes only re-points the engine if we set the device ourselves.
         if let deviceID = selectedDeviceID {
             try setInputDevice(deviceID)
+        } else if let defaultID = Self.defaultInputDeviceID() {
+            // Best-effort: if the default vanished out from under us, fall back
+            // to whatever input the engine already has rather than failing.
+            try? setInputDevice(defaultID)
         }
 
         let inputNode = audioEngine.inputNode
@@ -243,6 +262,76 @@ final class MicrophoneCapture: @unchecked Sendable {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
         isCapturing = false
+    }
+
+    // MARK: - Following the System Default
+
+    /// Starts watching the system default input device. While following the
+    /// default (``selectedDeviceID`` is `nil`), a change fires
+    /// ``onDefaultInputDeviceChanged`` so the owner can restart capture and
+    /// track whatever the user just switched to (e.g. plugging in a headset).
+    /// Idempotent.
+    func startObservingDefaultInputDevice() {
+        guard defaultDeviceListener == nil else { return }
+
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self else { return }
+            // A default change is only relevant when we're actually following
+            // it; if the user pinned a device, leave their choice alone.
+            guard self.selectedDeviceID == nil else { return }
+            self.onDefaultInputDeviceChanged?()
+        }
+
+        var address = Self.defaultInputAddress
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+        guard status == noErr else {
+            Log.audio.error("Failed to observe default input device (status \(status)).")
+            return
+        }
+        defaultDeviceListener = block
+    }
+
+    /// Stops watching the system default input device. Idempotent.
+    func stopObservingDefaultInputDevice() {
+        guard let block = defaultDeviceListener else { return }
+        var address = Self.defaultInputAddress
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+        defaultDeviceListener = nil
+    }
+
+    /// CoreAudio address of the system default input device property.
+    private static let defaultInputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    /// The CoreAudio device ID of the current system default input device, or
+    /// `nil` if none is available.
+    static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = defaultInputAddress
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &size,
+            &deviceID
+        )
+        guard status == noErr, deviceID != 0 else { return nil }
+        return deviceID
     }
 
     // MARK: - Private Helpers

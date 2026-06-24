@@ -123,6 +123,15 @@ final class AudioSessionManager: ObservableObject {
         let levelBox = rawLevelBox
         micCapture.onLevel = { peak in levelBox.recordMic(peak) }
 
+        // Follow the system default input device live: when on "System Default",
+        // if the user switches their Mac's input (plugs in a headset, picks a
+        // different mic in Control Center) mid-session, restart the mic tap so
+        // we track it without them having to touch Scribe.
+        micCapture.onDefaultInputDeviceChanged = { [weak self] in
+            Task { @MainActor [weak self] in self?.followDefaultInputDeviceChange() }
+        }
+        micCapture.startObservingDefaultInputDevice()
+
         do {
             try micCapture.startCapture()
         } catch {
@@ -163,6 +172,7 @@ final class AudioSessionManager: ObservableObject {
     func stopRecording() async {
         guard isRecording else { return }
 
+        micCapture.stopObservingDefaultInputDevice()
         micCapture.stopCapture()
         await systemCapture.stopCapture()
 
@@ -217,6 +227,20 @@ final class AudioSessionManager: ObservableObject {
             try micCapture.startCapture()
         } catch {
             Log.audio.error("Failed to switch mic device: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
+    /// Reacts to a change of the system default input device while we are
+    /// following the default (no device pinned). Restarts the mic tap so the
+    /// newly-selected input takes effect live, mid-session.
+    private func followDefaultInputDeviceChange() {
+        guard isRecording, !isPaused, micCapture.selectedDeviceID == nil else { return }
+        Log.audio.info("System default input device changed — following it live.")
+        micCapture.stopCapture()
+        do {
+            try micCapture.startCapture()
+        } catch {
+            Log.audio.error("Failed to follow new default input device: \(error.localizedDescription, privacy: .private)")
         }
     }
 
