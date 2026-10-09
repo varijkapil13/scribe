@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     # Run on the default branch and on Claude working branches so every push is
-    # compiled + tested on a real macOS 26 toolchain (the dev container has no
+    # compiled + tested on a real macOS 27 SDK toolchain (the dev container has no
     # Swift toolchain and the app is Apple-framework-only, so CI is the only
     # place these actually build).
     branches: [master, "claude/**"]
@@ -23,8 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+      - name: Select Xcode 27
+        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
+        # installed Xcode 27 and fail loudly if the runner image has none.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 27 on this runner image"; exit 1; fi
+          sudo xcode-select -switch "$XC"
+          xcodebuild -version
 
       - name: Show toolchain
         run: swift --version
@@ -89,8 +96,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+      - name: Select Xcode 27
+        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
+        # installed Xcode 27 and fail loudly if the runner image has none.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 27 on this runner image"; exit 1; fi
+          sudo xcode-select -switch "$XC"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -128,8 +142,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+      - name: Select Xcode 27
+        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
+        # installed Xcode 27 and fail loudly if the runner image has none.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 27 on this runner image"; exit 1; fi
+          sudo xcode-select -switch "$XC"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -168,8 +189,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+      - name: Select Xcode 27
+        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
+        # installed Xcode 27 and fail loudly if the runner image has none.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 27 on this runner image"; exit 1; fi
+          sudo xcode-select -switch "$XC"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -215,8 +243,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+      - name: Select Xcode 27
+        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
+        # installed Xcode 27 and fail loudly if the runner image has none.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 27 on this runner image"; exit 1; fi
+          sudo xcode-select -switch "$XC"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen

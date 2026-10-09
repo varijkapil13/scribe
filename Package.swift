@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "Scribe",
     platforms: [
-        .macOS("26.0")
+        .macOS("27.0")
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),

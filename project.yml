@@ -3,7 +3,7 @@ name: Scribe
 options:
   bundleIdPrefix: com.varij
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "27.0"
     # iOS has no transcription (recording is macOS-only), so the iOS-26 /
     # SpeechAnalyzer floor does not apply. 18.0 maximizes device reach and
     # runs on the locally-installed 18.5 simulator. Shared code (@Observable,
@@ -55,7 +55,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Scribe/Resources/Scribe.entitlements
         SWIFT_VERSION: "6.0"
         PRODUCT_NAME: Scribe
-        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        MACOSX_DEPLOYMENT_TARGET: "27.0"
         ARCHS: arm64
         EXCLUDED_ARCHS[sdk=macosx*]: x86_64
         # Stable code signing so macOS TCC remembers granted permissions
@@ -84,7 +84,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe.uitests
         GENERATE_INFOPLIST_FILE: "YES"
         SWIFT_VERSION: "6.0"
-        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        MACOSX_DEPLOYMENT_TARGET: "27.0"
         ARCHS: arm64
         EXCLUDED_ARCHS[sdk=macosx*]: x86_64
         DEVELOPMENT_TEAM: U8A3QH6Y84

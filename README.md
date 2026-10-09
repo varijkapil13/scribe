@@ -10,7 +10,7 @@ Works with any conferencing tool (Teams, Zoom, Google Meet, phone calls, in-pers
 
 | Requirement | Value |
 |-------------|-------|
-| macOS | **26** or later |
+| macOS | **27** or later |
 | Chip | **Apple Silicon** (M1 or later) |
 | Downloads | None — all models are built into macOS |
 
@@ -159,7 +159,7 @@ Scribe needs three macOS permissions across its lifetime:
 ## Architecture
 
 ```
-Scribe.app (Swift 6 / SwiftUI / macOS 26)
+Scribe.app (Swift 6 / SwiftUI / macOS 27)
 ├── Main Window (NavigationSplitView: sidebar + detail)
 │   ├── Live Session view (when recording from no-note contexts)
 │   ├── Note Detail view (freeform editor + Sessions strip + per-session auto-section + inline live pane)
