@@ -42,6 +42,10 @@ final class AppState: ObservableObject {
     /// (see `FeedbackPolicy`). Prefer `report(_:)` over assigning this directly.
     @Published var lastError: String?
 
+    /// Speaker-diarization state for the current recording (nil when
+    /// diarization is off or system audio isn't captured).
+    var diarizationCapture: SpeakerDiarizationCapture?
+
     /// Surfaces a brief success confirmation (e.g. "Moved 12 files") so the UI
     /// can show a success toast. `nil` means "nothing to confirm right now".
     ///
@@ -286,6 +290,9 @@ final class AppState: ObservableObject {
     func ingestTranscribedSegment(_ segment: TranscriptionSegment) {
         let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        if SpeakerNameResolver.canonicalKey(segment.speaker) == SpeakerNameResolver.remoteKey {
+            diarizationCapture?.record(segment, text: text)
+        }
 
         let elapsedSessionMs = segment.sessionOffsetMs
         let segmentLengthMs = max(0, segment.endMs - segment.startMs)
@@ -452,8 +459,16 @@ final class AppState: ObservableObject {
 
         // Start audio capture (writing it to disk too when audio is retained;
         // the manager closes the files on stop or a failed start).
+        // Diarization also needs the system-audio track; with retention off it
+        // goes to a scratch folder that is deleted after diarization.
         if !audioManager.isRecording {
-            audioManager.audioRecorder = audioDirectory.map { SessionAudioRecorder(directory: $0) }
+            diarizationCapture = SpeakerDiarizationCoordinator.makeCapture(
+                sessionId: sessionId,
+                retainedDirectory: audioDirectory,
+                capturesSystemAudio: audioManager.shouldCaptureSystemAudio
+            )
+            let recordingDirectory = audioDirectory ?? diarizationCapture?.audioDirectory
+            audioManager.audioRecorder = recordingDirectory.map { SessionAudioRecorder(directory: $0) }
         }
         try await audioManager.startRecording()
 
@@ -502,6 +517,12 @@ final class AppState: ObservableObject {
 
         if let sessionId = finishedSessionId {
             try? transcriptStore.endSession(id: sessionId)
+            // Split "Remote" into Speaker 1…N in the background (files are
+            // closed by now: audioManager.stopRecording finished the recorder).
+            if let capture = diarizationCapture, capture.sessionId == sessionId {
+                SpeakerDiarizationCoordinator.sessionDidStop(capture, store: transcriptStore)
+            }
+            diarizationCapture = nil
             autoTitleIfNeeded(sessionId: sessionId)
         }
 

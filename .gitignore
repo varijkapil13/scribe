@@ -54,3 +54,6 @@ models/
 
 # Claude Code parallel-agent git worktrees (local scaffolding, never committed)
 .claude/worktrees/
+
+# Speaker-diarization models fetched by scripts/fetch-diarizer-models.sh
+build-resources/

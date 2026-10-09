@@ -108,6 +108,12 @@ struct TranscriptDetailView: View {
             audioPlayer.load(session: viewModel.session)
         }
         .onDisappear { audioPlayer.stop() }
+        // Background diarization finished: segments were split/relabelled.
+        .onReceive(NotificationCenter.default.publisher(for: .scribeSpeakersDidChange)) { note in
+            if (note.object as? String) == viewModel.session.id {
+                viewModel.loadSegments()
+            }
+        }
     }
 
     // MARK: - Header

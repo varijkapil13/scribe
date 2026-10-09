@@ -19,13 +19,14 @@ jobs:
   # the audio/recording stack, so they run headless (see project.yml note).
   test:
     name: swift test + coverage
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode 27
-        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
-        # installed Xcode 27 and fail loudly if the runner image has none.
+        # macOS 27 SDK is required (deployment target 27.0). GitHub ships it on
+        # the Xcode-versioned `xcode-27` image (the `macos-26` image has only
+        # Xcode 26). Pick the newest Xcode 27 there and fail loudly if none.
         run: |
           ls -d /Applications/Xcode*.app || true
           XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
@@ -92,13 +93,14 @@ jobs:
   # authoritative "does it build?" gate.
   build:
     name: build app (unsigned)
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode 27
-        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
-        # installed Xcode 27 and fail loudly if the runner image has none.
+        # macOS 27 SDK is required (deployment target 27.0). GitHub ships it on
+        # the Xcode-versioned `xcode-27` image (the `macos-26` image has only
+        # Xcode 26). Pick the newest Xcode 27 there and fail loudly if none.
         run: |
           ls -d /Applications/Xcode*.app || true
           XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
@@ -111,6 +113,9 @@ jobs:
 
       - name: Generate project
         run: xcodegen generate
+
+      - name: Fetch speaker-diarization models
+        run: scripts/fetch-diarizer-models.sh
 
       - name: Build
         # DISABLE_SWIFTLINT: see the note on the `swift test` step. The
@@ -138,13 +143,14 @@ jobs:
   # M0a stub and grows as portable sources are added to the target.
   build-ios:
     name: build iOS app (unsigned)
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode 27
-        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
-        # installed Xcode 27 and fail loudly if the runner image has none.
+        # macOS 27 SDK is required (deployment target 27.0). GitHub ships it on
+        # the Xcode-versioned `xcode-27` image (the `macos-26` image has only
+        # Xcode 26). Pick the newest Xcode 27 there and fail loudly if none.
         run: |
           ls -d /Applications/Xcode*.app || true
           XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
@@ -184,14 +190,15 @@ jobs:
   # Promote to full `xcodebuild test` once signing is configured.
   ui-test:
     name: compile UI tests (macOS)
-    runs-on: macos-26
+    runs-on: xcode-27
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode 27
-        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
-        # installed Xcode 27 and fail loudly if the runner image has none.
+        # macOS 27 SDK is required (deployment target 27.0). GitHub ships it on
+        # the Xcode-versioned `xcode-27` image (the `macos-26` image has only
+        # Xcode 26). Pick the newest Xcode 27 there and fail loudly if none.
         run: |
           ls -d /Applications/Xcode*.app || true
           XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
@@ -238,14 +245,15 @@ jobs:
   # the test launches, the .xcresult bundle is uploaded for diagnosis.
   ui-screenshots:
     name: ui-screenshots (spike)
-    runs-on: macos-26
+    runs-on: xcode-27
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode 27
-        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
-        # installed Xcode 27 and fail loudly if the runner image has none.
+        # macOS 27 SDK is required (deployment target 27.0). GitHub ships it on
+        # the Xcode-versioned `xcode-27` image (the `macos-26` image has only
+        # Xcode 26). Pick the newest Xcode 27 there and fail loudly if none.
         run: |
           ls -d /Applications/Xcode*.app || true
           XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)

@@ -780,7 +780,7 @@ private struct AboutSettingsPane: View {
             }
 
             Section("Acknowledgements") {
-                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, and FoundationModels.")
+                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, FoundationModels, and FluidAudio. Speaker separation uses the pyannote community-1 models (CC BY 4.0) converted to Core ML by FluidInference.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(copyright)

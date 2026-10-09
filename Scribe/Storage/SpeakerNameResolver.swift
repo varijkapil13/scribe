@@ -2,7 +2,7 @@ import Foundation
 
 /// Resolves the human-readable name shown for a transcript segment's speaker.
 ///
-/// Scribe has no ML diarization: it only knows which *source* produced a
+/// At capture time Scribe only knows which *source* produced a
 /// segment — the microphone (`"you"`) or captured system audio (`"remote"`).
 /// Naming works on top of that:
 ///
@@ -14,10 +14,9 @@ import Foundation
 /// - A global default for `"you"` (Settings → Vocabulary → Speakers, defaults
 ///   to the macOS account's full name).
 ///
-/// Future follow-up: real remote diarization (telling several remote
-/// participants apart within the system-audio stream) would emit additional
-/// speaker keys here; this resolver and the storage already support arbitrary
-/// keys.
+/// On macOS, post-meeting diarization (`Scribe/Diarization/`) splits the
+/// remote stream into "Speaker 1…N" keys stored as segment overrides; this
+/// resolver treats them like any other custom key.
 ///
 /// Pure value type (Foundation only) so it is shared with the iOS target and
 /// pinned by tests.

@@ -298,6 +298,29 @@ Once tasks and notes both exist, wire the joins:
 - [ ] Personal dictionary / custom vocabulary shared with meeting
       transcription; per-app dictation styles; dictation history.
 
+## Competitor-review roadmap (PR #71)
+
+- [x] Calendar (EventKit): note naming, attendees, pre-meeting reminders,
+      detected-call matching. Migration `v17_session_calendar`.
+- [x] Detection refinements: per-app allow/deny, camera+mic signal,
+      consent/disclosure helper.
+- [x] Summary templates + re-summarize, Enhance notes, recipes (vault files
+      under `Templates/`, excluded from note indexing).
+- [x] Ask Scribe (cross-meeting retrieval + on-device answer), People,
+      MCP meeting tools.
+- [x] Vocabulary (contextual strings + corrections), speaker naming
+      (migration `v18_speaker_names`), post-meeting hooks.
+- [x] Retained audio + playback, retention policy, echo cancellation,
+      quit-flush fix, auto-summary on by default. Migration
+      `v19_session_audio`.
+- [x] On-device diarization (FluidAudio offline pyannote) splitting
+      "Remote" into Speaker 1…N after a meeting, with attendee-based name
+      suggestions. Models bundled via `scripts/fetch-diarizer-models.sh`.
+- [x] macOS 27 deployment target; CI on the `xcode-27` runner image.
+- [ ] Live (streaming) diarization during the meeting.
+- [ ] Adopt macOS 27 `CaptureInputSequenceProvider` for mic capture.
+- [ ] In-app template editor; per-person "Ask about …" shortcut.
+
 ## Phase 4 — Polish
 - Global hotkey for **Quick Capture** (use existing `KeyboardShortcuts`
   package). Prompt asks: capture as note, task, or both.

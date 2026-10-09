@@ -90,6 +90,8 @@ struct VocabularySettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            SpeakerDiarizationSettingsSection()
         }
         .formStyle(.grouped)
         .onAppear { vocabulary.reload() }
