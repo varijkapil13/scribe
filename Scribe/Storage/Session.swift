@@ -20,6 +20,10 @@ struct Session: Codable, Identifiable, Equatable {
     var tags: [String]
     /// ID of the Note this session is bound to, or nil if unattached.
     var noteId: String?
+    /// Absolute path of the folder holding this session's retained audio
+    /// (`mic.m4a` / `system.m4a`), or nil when audio wasn't retained or has
+    /// been deleted by the retention policy.
+    var audioDirectory: String?
 
     // MARK: - Initializer
 
@@ -31,7 +35,8 @@ struct Session: Codable, Identifiable, Equatable {
         durationSeconds: Int? = nil,
         language: String? = nil,
         tags: [String] = [],
-        noteId: String? = nil
+        noteId: String? = nil,
+        audioDirectory: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -41,12 +46,13 @@ struct Session: Codable, Identifiable, Equatable {
         self.language = language
         self.tags = tags
         self.noteId = noteId
+        self.audioDirectory = audioDirectory
     }
 
     // MARK: - Codable (custom because tags are stored as JSON text)
 
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, endedAt, durationSeconds, language, tags, noteId
+        case id, title, createdAt, endedAt, durationSeconds, language, tags, noteId, audioDirectory
     }
 
     init(from decoder: Decoder) throws {
@@ -67,6 +73,7 @@ struct Session: Codable, Identifiable, Equatable {
         }
 
         noteId = try container.decodeIfPresent(String.self, forKey: .noteId)
+        audioDirectory = try container.decodeIfPresent(String.self, forKey: .audioDirectory)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -84,6 +91,7 @@ struct Session: Codable, Identifiable, Equatable {
         try container.encode(tagsString, forKey: .tags)
 
         try container.encodeIfPresent(noteId, forKey: .noteId)
+        try container.encodeIfPresent(audioDirectory, forKey: .audioDirectory)
     }
 }
 

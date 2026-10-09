@@ -23,7 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         UserDefaults.standard.register(defaults: [
             "captureSystemAudio": true,
             "selectedLanguage": "auto",
-            MenuBarPreferences.showIconKey: true
+            MenuBarPreferences.showIconKey: true,
+            "autoSummarize": true,
+            "autoExtractActions": true,
+            AudioSessionManager.echoCancellationKey: true
         ])
 
         // Screenshot / UI-test fixture mode: seed a deterministic dataset into
@@ -46,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         } catch {
             Log.app.error("Crash recovery sweep failed: \(error.localizedDescription, privacy: .private)")
+        }
+
+        // Retained audio: apply the retention policy and drop folders of
+        // sessions that no longer exist (background, best-effort).
+        if !AppLaunchEnvironment.isUITesting {
+            AppState.runAudioHousekeeping(store: appState.transcriptStore)
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves
