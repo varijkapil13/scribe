@@ -762,7 +762,7 @@ extension TranscriptStore {
     /// Ids of every session in the database (for orphan-folder detection).
     func fetchAllSessionIds() throws -> Set<String> {
         try db.read { database in
-            Set(try String.fetchAll(database, sql: "SELECT id FROM sessions"))
+            try Set(String.fetchAll(database, sql: "SELECT id FROM sessions"))
         }
     }
 
@@ -805,9 +805,10 @@ extension TranscriptStore {
         let expired = try sweepExpiredAudio(policy: policy, now: now)
         // Folders touched in the last hour are skipped so a recording that
         // starts while this runs can't lose its brand-new folder.
+        let knownIds = try fetchAllSessionIds()
         let orphans = SessionAudioStorage.removeOrphanFolders(
             root: root,
-            knownSessionIds: try fetchAllSessionIds(),
+            knownSessionIds: knownIds,
             untouchedSince: now.addingTimeInterval(-3600)
         )
         return (expired, orphans)
