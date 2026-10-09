@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Settings → Calendar. Calendar access is requested only when the user turns
