@@ -20,6 +20,8 @@ enum MainSelection: Hashable {
     case notes(NotesFilter)
     case bases                  // cross-note property views (Obsidian-style Bases)
     case session(String)        // sessionId — transcript reader deep-link
+    case ask                    // "Ask Scribe" — chat across meetings
+    case people                 // people seen across meetings
 }
 
 enum NotesFilter: Hashable {
@@ -73,6 +75,7 @@ extension MainSelection {
     var surface: Surface {
         switch self {
         case .live, .today, .session, .recordings: return .capture
+        case .ask, .people:                        return .capture
         case .note, .notes, .bases:                return .notes
         case .tasks, .taskCalendar, .task:         return .tasks
         }
