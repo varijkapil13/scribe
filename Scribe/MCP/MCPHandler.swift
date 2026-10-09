@@ -58,7 +58,7 @@ enum MCPHandler {
     // MARK: - Tool definitions
 
     private static var toolDefinitions: [[String: Any]] {
-        [
+        let builtIn: [[String: Any]] = [
             tool("create_task",
                  description: "Create a new task in Scribe.",
                  properties: [
@@ -113,6 +113,7 @@ enum MCPHandler {
                     "id": .init(type: "string", description: "Session ID", required: true)
                  ])
         ]
+        return builtIn + MCPMeetingTools.definitions
     }
 
     // MARK: - Tool dispatch
@@ -128,6 +129,9 @@ enum MCPHandler {
             case "list_transcripts": return try listTranscripts(arguments)
             case "get_transcript": return try getTranscript(arguments)
             default:
+                if let result = try await MCPMeetingTools.call(name: name, arguments: arguments) {
+                    return toolSuccess(result)
+                }
                 return toolError("Unknown tool: \(name)")
             }
         } catch {
