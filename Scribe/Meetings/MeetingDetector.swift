@@ -126,19 +126,28 @@ final class MeetingDetector: ObservableObject {
         let defaults = UserDefaults.standard
         let includeBrowsers = defaults.object(forKey: Self.includeBrowsersKey) as? Bool ?? true
         let includeOthers = defaults.bool(forKey: Self.includeOtherAppsKey)
+        let useCamera = defaults.object(forKey: MeetingSignals.useCameraKey) as? Bool ?? true
 
-        let active = MicrophoneUsageMonitor.activeInputProcesses().compactMap { process in
-            MeetingAppCatalog.match(
+        let samples = MicrophoneUsageMonitor.activeInputProcesses().map { process in
+            MeetingProcessSample(
                 bundleID: process.bundleID,
-                includeBrowsers: includeBrowsers,
-                includeOtherApps: includeOthers,
-                fallbackName: includeOthers
-                    ? NSRunningApplication(processIdentifier: process.pid)?.localizedName
-                    : nil
+                name: NSRunningApplication(processIdentifier: process.pid)?.localizedName
             )
         }
+        // Remember non-catalog mic users so Settings can offer them.
+        MeetingAppHistory.record(samples, in: defaults)
+        // Only ask CoreMediaIO when something holds the mic.
+        let cameraInUse = useCamera && !samples.isEmpty && CameraUsageMonitor.isAnyCameraInUse()
+        let active = MeetingSignals.activeMeetingApps(
+            processes: samples,
+            includeBrowsers: includeBrowsers,
+            includeOtherApps: includeOthers,
+            rules: MeetingAppRules.load(from: defaults),
+            cameraInUse: cameraInUse,
+            currentMeeting: policy.current
+        )
 
-        guard let event = policy.update(active: active, now: Date()) else { return }
+        guard let event = policy.update(active: active, now: Date(), cameraInUse: cameraInUse) else { return }
         switch event {
         case .started(let app):
             currentMeeting = app
