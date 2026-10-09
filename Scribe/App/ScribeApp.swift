@@ -3,7 +3,7 @@ import SwiftUI
 /// Main entry point for the Scribe macOS meeting transcription application.
 ///
 /// A primary window (transcript library + notes + tasks in one
-/// `NavigationSplitView`) plus a native `Settings` scene. The menu-bar command
+/// `NavigationSplitView`), a native `Settings` scene, and a menu-bar item. The menu-bar command
 /// tree is the canonical, VoiceOver-announced home of the app's shortcuts;
 /// items post to the main window, which performs them through its
 /// `NavigationCoordinator` / command palette.
@@ -12,6 +12,7 @@ struct ScribeApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject var appState = AppState.shared
+    @AppStorage(MenuBarPreferences.showIconKey) private var showMenuBarIcon = true
 
     // MARK: - Scene
 
@@ -27,6 +28,16 @@ struct ScribeApp: App {
             SettingsRootView(audioManager: appState.audioManager)
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
+        }
+
+        // Menu-bar item: recording/dictation status and controls. While it's
+        // shown, closing the main window keeps Scribe running.
+        MenuBarExtra(isInserted: $showMenuBarIcon) {
+            MenuBarContent(audioManager: appState.audioManager)
+                .environmentObject(appState)
+                .environmentObject(appDelegate)
+        } label: {
+            MenuBarLabel(appState: appState, audioManager: appState.audioManager)
         }
     }
 

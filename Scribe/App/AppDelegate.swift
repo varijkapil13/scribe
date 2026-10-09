@@ -22,7 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // before the user has visited Settings.
         UserDefaults.standard.register(defaults: [
             "captureSystemAudio": true,
-            "selectedLanguage": "auto"
+            "selectedLanguage": "auto",
+            MenuBarPreferences.showIconKey: true
         ])
 
         // Screenshot / UI-test fixture mode: seed a deterministic dataset into
@@ -154,11 +155,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - Window Close → Quit
 
-    /// The user explicitly asked: closing the main window quits the app. We
-    /// observe ``NSWindow.willCloseNotification`` via Combine and terminate
-    /// when the SwiftUI `Window("Scribe", id: "main")` scene goes away. We
-    /// match on the window's identifier so alert and panel closes don't
-    /// trigger quit.
+    /// Closing the main window quits the app, unless the menu-bar item is
+    /// shown: then Scribe keeps running in the menu bar so meeting detection,
+    /// dictation and reminders keep working. We observe
+    /// ``NSWindow.willCloseNotification`` via Combine and match on the
+    /// window's identifier so alert and panel closes don't trigger quit.
     private func observeMainWindowClose() {
         NotificationCenter.default
             .publisher(for: NSWindow.willCloseNotification)
@@ -166,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             .sink { notification in
                 guard let window = notification.object as? NSWindow else { return }
                 guard window.identifier?.rawValue == "main" else { return }
+                guard !UserDefaults.standard.bool(forKey: MenuBarPreferences.showIconKey) else { return }
                 NSApp.terminate(nil)
             }
             .store(in: &cancellables)
@@ -175,12 +177,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     /// Registers global keyboard shortcuts via ``KeyboardShortcutManager``.
     private func registerKeyboardShortcuts() {
-        KeyboardShortcutManager.registerShortcuts { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                await self.toggleRecording()
+        KeyboardShortcutManager.registerShortcuts(
+            onToggleRecording: { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in
+                    await self.toggleRecording()
+                }
+            },
+            onDictationDown: {
+                Task { @MainActor in DictationController.shared.shortcutPressed() }
+            },
+            onDictationUp: {
+                Task { @MainActor in DictationController.shared.shortcutReleased() }
             }
-        }
+        )
     }
 
     // MARK: - Recording Actions

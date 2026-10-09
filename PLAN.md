@@ -284,6 +284,20 @@ Once tasks and notes both exist, wire the joins:
 - [ ] **Camera+mic as a stronger signal** (CoreMediaIO), per-app allow/deny
       list in Settings.
 
+## Menu bar + dictation
+
+- [~] **Menu bar item.** `MenuBarExtra` (toggleable, default on) with
+      recording transport, detected-meeting shortcut, dictation, and
+      navigation. While shown, closing the main window no longer quits.
+- [~] **System-wide dictation.** `DictationController` runs its own
+      `MicrophoneCapture` + `TranscriptionPipeline`, shows a non-activating
+      `DictationHUD`, cleans text (`DictationTextFormatter` filler removal +
+      optional Foundation Models polish guarded by `isPlausibleEdit`), and
+      inserts via `TextInserter` (pasteboard + synthetic ⌘V; clipboard
+      fallback without Accessibility). Global shortcut ⌥⌘D, toggle or hold.
+- [ ] Personal dictionary / custom vocabulary shared with meeting
+      transcription; per-app dictation styles; dictation history.
+
 ## Phase 4 — Polish
 - Global hotkey for **Quick Capture** (use existing `KeyboardShortcuts`
   package). Prompt asks: capture as note, task, or both.
