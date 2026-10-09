@@ -225,6 +225,9 @@ struct NoteDetailView: View {
                 vm.errorMessage = nil
             }
         }
+        // Notes AI toolbar menu (Enhance notes, recipes) + replay of
+        // template-summary edits written to this note elsewhere.
+        .modifier(NoteAIFeaturesModifier(vm: vm))
         .sheet(item: $openedTaskFromAction) { task in
             TaskInspectorSheet(task: task) { openedTaskFromAction = nil }
         }

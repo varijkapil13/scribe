@@ -9,6 +9,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case intelligence
     case storage
     case shortcuts
+    case templates
     case mcp
     case about
 
@@ -20,6 +21,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "Intelligence"
         case .storage:      return "Storage"
         case .shortcuts:    return "Shortcuts"
+        case .templates:    return "Templates"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
         }
@@ -31,6 +33,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "sparkles"
         case .storage:      return "internaldrive"
         case .shortcuts:    return "keyboard"
+        case .templates:    return "doc.text.magnifyingglass"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
         }
@@ -75,6 +78,7 @@ struct SettingsPaneView: View {
         case .intelligence: IntelligenceSettingsPane()
         case .storage:      StorageSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
+        case .templates:    TemplatesSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
         }

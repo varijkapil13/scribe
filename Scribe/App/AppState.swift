@@ -523,6 +523,8 @@ final class AppState: ObservableObject {
                 ) {
                     try? transcriptStore.saveSummary(summary)
                 }
+                // Optional template summary block in the session's note.
+                await TemplateAutoSummary.runIfEnabled(sessionId: sessionId, title: title, segments: segmentData, transcriptStore: transcriptStore)
             }
         }
 
