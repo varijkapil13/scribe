@@ -94,6 +94,23 @@ final class TranscriptStore: @unchecked Sendable {
         }
     }
 
+    /// Records which calendar event a session belongs to (macOS calendar
+    /// integration). Pass nils / an empty list to clear.
+    func setCalendarEvent(
+        sessionId: String,
+        eventId: String?,
+        eventTitle: String?,
+        attendees: [CalendarAttendee]
+    ) throws {
+        let attendeesJSON = CalendarAttendee.encodeList(attendees)
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE sessions SET calendarEventId = ?, calendarEventTitle = ?, attendees = ? WHERE id = ?",
+                arguments: [eventId, eventTitle, attendeesJSON, sessionId]
+            )
+        }
+    }
+
     #if DEBUG
     /// Test-only escape hatch that detaches a session from any note. Lives
     /// behind `#if DEBUG` so production code can't accidentally produce a

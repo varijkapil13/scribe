@@ -162,7 +162,9 @@ final class MeetingDetector: ObservableObject {
             post(
                 id: Self.startRequestId,
                 category: Self.startCategoryId,
-                title: "\(Self.meetingPhrase(for: app)) detected",
+                // Name the meeting after the calendar event in progress, if
+                // calendar integration is on and one matches.
+                title: "\(CalendarService.shared.matchingEvent()?.displayTitle ?? Self.meetingPhrase(for: app)) detected",
                 body: "\(app.name) is using your microphone. Start transcribing?",
                 app: app
             )
