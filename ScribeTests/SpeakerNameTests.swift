@@ -127,7 +127,7 @@ final class SpeakerNameTests: XCTestCase {
         fetched = try store.fetchSegments(sessionId: session.id)
         XCTAssertEqual(fetched.map(\.speakerOverride), [nil, "Sam"])
 
-        try store.setSpeakerOverride(nil, forSegmentIds: [b.id!])
+        try store.setSpeakerOverride(nil, forSegmentIds: [bId])
         XCTAssertEqual(try store.fetchSegments(sessionId: session.id).map(\.speakerOverride), [nil, nil])
     }
 
