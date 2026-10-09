@@ -189,6 +189,21 @@ struct SmartSearchEngine {
         return try await generateResponse(prompt: prompt)
     }
 
+    // MARK: - Ask Across Meetings
+
+    /// Answers a question from a pre-built, budgeted context block that spans
+    /// several meetings and notes (see `MeetingRetriever`). Unlike
+    /// ``ask(question:session:segments:)`` the caller is responsible for
+    /// keeping `prompt` within the on-device model's context window.
+    ///
+    /// - Parameter prompt: The full prompt, e.g. from
+    ///   `MeetingRetrieval.buildPrompt(question:context:scopeLabel:)`.
+    /// - Returns: The model's answer text.
+    /// - Throws: ``IntelligenceError`` if the model is unavailable or fails.
+    static func answerAcrossMeetings(prompt: String) async throws -> String {
+        try await generateResponse(prompt: prompt)
+    }
+
     // MARK: - Find Related Sessions
 
     /// Find sessions that discuss topics similar to a given session.
