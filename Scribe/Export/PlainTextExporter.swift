@@ -3,7 +3,9 @@ import Foundation
 /// Exports a transcript session as plain text.
 struct PlainTextExporter {
 
-    static func export(session: Session, segments: [Segment]) -> String {
+    /// - Parameter speakerNames: Resolves display names; `nil` keeps raw labels.
+    static func export(session: Session, segments: [Segment],
+                       speakerNames: SpeakerNameResolver? = nil) -> String {
         var lines: [String] = []
 
         // Header
@@ -15,7 +17,8 @@ struct PlainTextExporter {
 
         // One line per segment.
         for segment in segments {
-            lines.append("\(formatTimestamp(segment.startMs)) \(segment.speaker): \(segment.text)")
+            let speaker = speakerNames?.displayName(for: segment) ?? segment.speaker
+            lines.append("\(formatTimestamp(segment.startMs)) \(speaker): \(segment.text)")
         }
 
         // Ensure trailing newline.

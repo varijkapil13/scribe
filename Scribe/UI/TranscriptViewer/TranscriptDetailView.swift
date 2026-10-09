@@ -232,6 +232,7 @@ struct TranscriptDetailView: View {
                     showMoveSheet = true
                 } label: { Label("Move To…", systemImage: "arrow.right.doc.on.clipboard") }
                     .disabled(viewModel.selectedSegmentIds.isEmpty)
+                AssignSpeakerMenu(viewModel: viewModel)
                 Button { viewModel.toggleSelectMode() } label: {
                     Label("Done", systemImage: "xmark.circle")
                 }
@@ -258,11 +259,13 @@ struct TranscriptDetailView: View {
 
                 Spacer()
 
+                SpeakersButton(viewModel: viewModel)
+
                 Button { viewModel.toggleSelectMode() } label: {
                     Label("Select", systemImage: "checklist")
                 }
                 .disabled(viewModel.segments.isEmpty)
-                .help("Select segments to move into another transcript")
+                .help("Select segments to move them or assign a speaker")
 
                 Button { showExportSheet = true } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
@@ -387,7 +390,8 @@ struct TranscriptDetailView: View {
                             }
                         },
                         isCurrent: playingSegmentId != nil && segment.id == playingSegmentId,
-                        onTimestampTap: playAction(for: segment)
+                        onTimestampTap: playAction(for: segment),
+                        speakerName: viewModel.speakerName(for: segment)
                     )
                     .padding(.vertical, DesignTokens.Spacing.xs)
                 }

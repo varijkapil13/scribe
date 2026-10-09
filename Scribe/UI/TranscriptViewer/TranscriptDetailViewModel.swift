@@ -42,9 +42,13 @@ final class TranscriptDetailViewModel: ObservableObject {
     @Published var selectedSegmentIds: Set<Int64> = []
     @Published var moveTargetCandidates: [Session] = []
 
+    /// Speaker display names for this session (see
+    /// `TranscriptDetailViewModel+Speakers.swift`).
+    @Published var speakerResolver = SpeakerNameResolver()
+
     // MARK: - Properties
 
-    private let store: TranscriptStore
+    let store: TranscriptStore
     private let taskStore: TaskStore
     private let noteStore: NoteStore
 
@@ -110,6 +114,7 @@ final class TranscriptDetailViewModel: ObservableObject {
         } catch {
             segments = []
         }
+        loadSpeakers()
     }
 
     /// Updates the session title in the store.
@@ -216,8 +221,9 @@ final class TranscriptDetailViewModel: ObservableObject {
         defer { isGeneratingSummary = false }
         announce("Generating summary with Apple Intelligence")
 
+        let resolver = speakerResolver
         let segmentData = segments.map {
-            (speaker: $0.speaker, text: $0.text, timestamp: $0.formattedTimestamp)
+            (speaker: resolver.displayName(for: $0), text: $0.text, timestamp: $0.formattedTimestamp)
         }
 
         do {

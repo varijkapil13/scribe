@@ -14,6 +14,11 @@ struct SegmentView: View {
     /// When set (the session has audio), the timestamp becomes a button that
     /// plays the recording from this segment.
     var onTimestampTap: (() -> Void)? = nil
+    /// Resolved speaker display name (session rename / reassignment / global
+    /// "you" name). `nil` falls back to the built-in "You" / "Remote".
+    var speakerName: String? = nil
+
+    @State private var showAddToVocabulary = false
 
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
@@ -34,7 +39,7 @@ struct SegmentView: View {
 
             // Vertical accent bar keyed to the speaker.
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(Color.speakerTint(for: segment.speaker))
+                .fill(Color.speakerTint(for: effectiveSpeakerKey))
                 .frame(width: 3)
                 .frame(maxHeight: .infinity)
                 .opacity(0.85)
@@ -44,12 +49,12 @@ struct SegmentView: View {
                     // Non-color speaker cue: a glyph supplements the tinted chip
                     // for users running Differentiate Without Color.
                     if differentiateWithoutColor {
-                        Image(systemName: SpeakerGlyph.symbol(for: segment.speaker))
+                        Image(systemName: SpeakerGlyph.symbol(for: effectiveSpeakerKey))
                             .font(.system(.caption2, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }
-                    SpeakerChip(speaker: segment.speaker)
+                    SpeakerChip(speaker: effectiveSpeakerKey, name: speakerName)
                     timestamp
                     Spacer()
                 }
@@ -69,6 +74,17 @@ struct SegmentView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(speakerDisplayName) at \(segment.formattedTimestamp): \(segment.text)")
+        .contextMenu {
+            Button("Add to Vocabulary…") { showAddToVocabulary = true }
+        }
+        .sheet(isPresented: $showAddToVocabulary) {
+            AddToVocabularySheet(segmentText: segment.text)
+        }
+    }
+
+    /// Speaker key after any per-segment reassignment; drives tint + glyph.
+    private var effectiveSpeakerKey: String {
+        SpeakerNameResolver.effectiveKey(for: segment)
     }
 
     @ViewBuilder
@@ -90,10 +106,11 @@ struct SegmentView: View {
     }
 
     private var speakerDisplayName: String {
-        switch segment.speaker.lowercased() {
+        if let speakerName, !speakerName.isEmpty { return speakerName }
+        switch effectiveSpeakerKey.lowercased() {
         case "you":    return "You"
         case "remote": return "Remote"
-        default:       return segment.speaker
+        default:       return effectiveSpeakerKey
         }
     }
 }

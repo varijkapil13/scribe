@@ -11,6 +11,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case storage
     case dictation
     case calendar
+    case vocabulary
+    case hooks
     case shortcuts
     case templates
     case mcp
@@ -25,6 +27,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .storage:      return "Storage"
         case .dictation:    return "Dictation"
         case .calendar:     return "Calendar"
+        case .vocabulary:   return "Vocabulary"
+        case .hooks:        return "Hooks"
         case .shortcuts:    return "Shortcuts"
         case .templates:    return "Templates"
         case .mcp:          return "MCP Server"
@@ -39,6 +43,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .storage:      return "internaldrive"
         case .dictation:    return "mic.badge.plus"
         case .calendar:     return "calendar"
+        case .vocabulary:   return "character.book.closed"
+        case .hooks:        return "terminal"
         case .shortcuts:    return "keyboard"
         case .templates:    return "doc.text.magnifyingglass"
         case .mcp:          return "server.rack"
@@ -86,6 +92,8 @@ struct SettingsPaneView: View {
         case .storage:      StorageSettingsPane()
         case .dictation:    DictationSettingsPane()
         case .calendar:     CalendarSettingsPane()
+        case .vocabulary:   VocabularySettingsPane()
+        case .hooks:        HooksSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
         case .templates:    TemplatesSettingsPane()
         case .mcp:          MCPSettingsPane()

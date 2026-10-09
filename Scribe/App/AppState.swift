@@ -541,6 +541,9 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Post-meeting hooks (Settings → Hooks); runs in the background.
+        MeetingHooks.sessionDidStop(sessionId: finishedSessionId, appState: self)
+
         // Expose the finished session so the UI can navigate to its transcript
         // once `isTranscribing` flips false. Set before clearing currentSessionId.
         lastFinishedSessionId = finishedSessionId

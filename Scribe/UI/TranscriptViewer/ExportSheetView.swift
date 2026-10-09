@@ -161,7 +161,8 @@ struct ExportSheetView: View {
         preview = ExportManager.export(
             session: session,
             segments: segments,
-            format: selectedFormat
+            format: selectedFormat,
+            speakerNames: TranscriptStore.shared.speakerResolver(sessionId: session.id)
         )
     }
 }

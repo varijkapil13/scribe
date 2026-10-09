@@ -16,6 +16,9 @@ struct Segment: Codable, Identifiable, Equatable {
     var speaker: String
     /// The transcribed text for this segment.
     var text: String
+    /// Speaker key this segment was reassigned to (v18). `nil` = attributed to
+    /// `speaker`. Resolve names via `SpeakerNameResolver`.
+    var speakerOverride: String?
 
     // MARK: - Initializer
 
@@ -25,7 +28,8 @@ struct Segment: Codable, Identifiable, Equatable {
         startMs: Int,
         endMs: Int,
         speaker: String,
-        text: String
+        text: String,
+        speakerOverride: String? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -33,6 +37,7 @@ struct Segment: Codable, Identifiable, Equatable {
         self.endMs = endMs
         self.speaker = speaker
         self.text = text
+        self.speakerOverride = speakerOverride
     }
 
     // MARK: - Computed Properties
