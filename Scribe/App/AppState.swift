@@ -418,7 +418,16 @@ final class AppState: ObservableObject {
         guard let noteId else {
             throw AppStateError.sessionRequiresNoteId
         }
-        let session = try transcriptStore.createSession(title: title, noteId: noteId)
+        // Retained audio: pick the session's folder up front so the row
+        // records it from the start (see SessionAudioStorage).
+        let sessionId = UUID().uuidString
+        let audioDirectory = Self.audioDirectoryForNewSession(sessionId: sessionId)
+        let session = try transcriptStore.createSession(
+            title: title,
+            noteId: noteId,
+            id: sessionId,
+            audioDirectory: audioDirectory?.path
+        )
         currentSessionId = session.id
         // A fresh recording supersedes any prior post-stop destination.
         lastFinishedSessionId = nil
@@ -441,7 +450,11 @@ final class AppState: ObservableObject {
         // installed yet — await handles that.
         await speechEngine.startSession()
 
-        // Start audio capture.
+        // Start audio capture (writing it to disk too when audio is retained;
+        // the manager closes the files on stop or a failed start).
+        if !audioManager.isRecording {
+            audioManager.audioRecorder = audioDirectory.map { SessionAudioRecorder(directory: $0) }
+        }
         try await audioManager.startRecording()
 
         isTranscribing = true

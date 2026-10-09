@@ -598,6 +598,15 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Retained session audio: absolute path of the folder holding the
+        // session's mic/system recordings. Nullable — NULL means no audio was
+        // kept (the default) or the retention policy has since deleted it.
+        migrator.registerMigration("v19_session_audio") { db in
+            try db.alter(table: "sessions") { t in
+                t.add(column: "audioDirectory", .text)
+            }
+        }
+
         return migrator
     }
 

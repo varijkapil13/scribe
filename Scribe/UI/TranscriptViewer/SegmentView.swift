@@ -9,6 +9,11 @@ struct SegmentView: View {
     var isSelecting: Bool = false
     var isSelected: Bool = false
     var onToggleSelection: (() -> Void)? = nil
+    /// Highlights the row as the one currently playing back.
+    var isCurrent: Bool = false
+    /// When set (the session has audio), the timestamp becomes a button that
+    /// plays the recording from this segment.
+    var onTimestampTap: (() -> Void)? = nil
 
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
@@ -45,9 +50,7 @@ struct SegmentView: View {
                             .accessibilityHidden(true)
                     }
                     SpeakerChip(speaker: segment.speaker)
-                    Text(segment.formattedTimestamp)
-                        .font(DesignTokens.Typography.timestamp)
-                        .foregroundStyle(.tertiary)
+                    timestamp
                     Spacer()
                 }
 
@@ -60,8 +63,30 @@ struct SegmentView: View {
             .padding(.vertical, DesignTokens.Spacing.xs)
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(isCurrent ? Color.accentColor.opacity(0.10) : Color.clear)
+        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(speakerDisplayName) at \(segment.formattedTimestamp): \(segment.text)")
+    }
+
+    @ViewBuilder
+    private var timestamp: some View {
+        if let onTimestampTap {
+            Button(action: onTimestampTap) {
+                Text(segment.formattedTimestamp)
+                    .font(DesignTokens.Typography.timestamp)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("Play from here")
+            .accessibilityLabel("Play from \(segment.formattedTimestamp)")
+        } else {
+            Text(segment.formattedTimestamp)
+                .font(DesignTokens.Typography.timestamp)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private var speakerDisplayName: String {

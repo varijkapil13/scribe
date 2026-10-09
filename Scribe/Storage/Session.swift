@@ -28,6 +28,10 @@ struct Session: Codable, Identifiable, Equatable {
     /// The event's attendees, stored as a JSON array of `{name, email}` in the
     /// nullable `attendees` column (NULL when empty).
     var attendees: [CalendarAttendee]
+    /// Absolute path of the folder holding this session's retained audio
+    /// (`mic.m4a` / `system.m4a`), or nil when audio wasn't retained or has
+    /// been deleted by the retention policy.
+    var audioDirectory: String?
 
     // MARK: - Initializer
 
@@ -42,7 +46,8 @@ struct Session: Codable, Identifiable, Equatable {
         noteId: String? = nil,
         calendarEventId: String? = nil,
         calendarEventTitle: String? = nil,
-        attendees: [CalendarAttendee] = []
+        attendees: [CalendarAttendee] = [],
+        audioDirectory: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -55,12 +60,13 @@ struct Session: Codable, Identifiable, Equatable {
         self.calendarEventId = calendarEventId
         self.calendarEventTitle = calendarEventTitle
         self.attendees = attendees
+        self.audioDirectory = audioDirectory
     }
 
     // MARK: - Codable (custom because tags are stored as JSON text)
 
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, endedAt, durationSeconds, language, tags, noteId
+        case id, title, createdAt, endedAt, durationSeconds, language, tags, noteId, audioDirectory
         case calendarEventId, calendarEventTitle, attendees
     }
 
@@ -87,6 +93,7 @@ struct Session: Codable, Identifiable, Equatable {
         attendees = CalendarAttendee.decodeList(
             fromJSON: try container.decodeIfPresent(String.self, forKey: .attendees)
         )
+        audioDirectory = try container.decodeIfPresent(String.self, forKey: .audioDirectory)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -107,6 +114,7 @@ struct Session: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(calendarEventId, forKey: .calendarEventId)
         try container.encodeIfPresent(calendarEventTitle, forKey: .calendarEventTitle)
         try container.encodeIfPresent(CalendarAttendee.encodeList(attendees), forKey: .attendees)
+        try container.encodeIfPresent(audioDirectory, forKey: .audioDirectory)
     }
 }
 

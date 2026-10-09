@@ -13,6 +13,8 @@ struct TranscriptDetailView: View {
     @State var selectedTab: DetailTab = .transcript
     @State var showMoveSheet: Bool = false
     @State var openedTask: TodoTask?
+    /// Playback of the session's retained audio (inert when it has none).
+    @StateObject private var audioPlayer = SessionAudioPlayer()
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -58,6 +60,12 @@ struct TranscriptDetailView: View {
                 .padding(.horizontal, DesignTokens.Spacing.xl)
                 .padding(.vertical, DesignTokens.Spacing.md)
 
+            if audioPlayer.hasAudio {
+                SessionAudioPlayerBar(player: audioPlayer)
+                    .padding(.horizontal, DesignTokens.Spacing.xl)
+                    .padding(.bottom, DesignTokens.Spacing.md)
+            }
+
             ScrollView {
                 Group {
                     switch selectedTab {
@@ -94,7 +102,12 @@ struct TranscriptDetailView: View {
             viewModel.refreshIntelligenceAvailability()
             editedTitle = session.title
             editedTags = session.tags.joined(separator: ", ")
+            // Re-read the row: the session handed in may predate (or, from
+            // search, omit) its audio folder.
+            viewModel.reloadSession()
+            audioPlayer.load(session: viewModel.session)
         }
+        .onDisappear { audioPlayer.stop() }
     }
 
     // MARK: - Header
@@ -360,6 +373,9 @@ struct TranscriptDetailView: View {
             .frame(minHeight: 280)
         } else {
             LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                let playingSegmentId = audioPlayer.isPlaying
+                    ? PlaybackTimeline.currentSegmentId(at: audioPlayer.currentTimeMs, in: viewModel.segments)
+                    : nil
                 ForEach(viewModel.segments) { segment in
                     SegmentView(
                         segment: segment,
@@ -369,12 +385,23 @@ struct TranscriptDetailView: View {
                             if let id = segment.id {
                                 viewModel.toggleSegmentSelection(id)
                             }
-                        }
+                        },
+                        isCurrent: playingSegmentId != nil && segment.id == playingSegmentId,
+                        onTimestampTap: playAction(for: segment)
                     )
                     .padding(.vertical, DesignTokens.Spacing.xs)
                 }
             }
         }
+    }
+
+    /// Seek-and-play action for a segment's timestamp, or nil when the
+    /// session has no audio (the timestamp then stays plain text).
+    private func playAction(for segment: Segment) -> (() -> Void)? {
+        guard audioPlayer.hasAudio else { return nil }
+        let player = audioPlayer
+        let startMs = segment.startMs
+        return { player.playFrom(ms: startMs) }
     }
 
     // MARK: - Summary

@@ -23,7 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         UserDefaults.standard.register(defaults: [
             "captureSystemAudio": true,
             "selectedLanguage": "auto",
-            MenuBarPreferences.showIconKey: true
+            MenuBarPreferences.showIconKey: true,
+            "autoSummarize": true,
+            "autoExtractActions": true,
+            AudioSessionManager.echoCancellationKey: true
         ])
 
         // Screenshot / UI-test fixture mode: seed a deterministic dataset into
@@ -46,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         } catch {
             Log.app.error("Crash recovery sweep failed: \(error.localizedDescription, privacy: .private)")
+        }
+
+        // Retained audio: apply the retention policy and drop folders of
+        // sessions that no longer exist (background, best-effort).
+        if !AppLaunchEnvironment.isUITesting {
+            AppState.runAudioHousekeeping(store: appState.transcriptStore)
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves
@@ -156,17 +165,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        // Make sure an active session is flushed to disk before the process
-        // dies — otherwise the last coalesced segment can be lost.
-        if appState?.isTranscribing == true {
-            let semaphore = DispatchSemaphore(value: 0)
-            Task { @MainActor in
-                await appState.stopSession()
-                semaphore.signal()
-            }
-            _ = semaphore.wait(timeout: .now() + 2)
+    /// Upper bound on how long quitting waits for an active session to stop
+    /// cleanly before terminating anyway.
+    static let terminationStopTimeout: Duration = .seconds(5)
+
+    /// Set while a deferred quit is waiting on `stopSession`, so the reply is
+    /// sent exactly once (by whichever of stop / timeout finishes first).
+    private var pendingTerminationReply = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Quitting mid-recording: stop the session properly first so the last
+        // coalesced segment is persisted, the session is ended and retained
+        // audio files are closed. `stopSession` is async on the main actor,
+        // so it can't be awaited here (blocking the main thread would
+        // deadlock it); defer the quit and reply when it finishes.
+        guard appState?.isTranscribing == true else { return .terminateNow }
+        guard !pendingTerminationReply else { return .terminateLater }
+        pendingTerminationReply = true
+
+        Task { @MainActor [weak self] in
+            await self?.appState?.stopSession()
+            self?.replyToPendingTermination()
         }
+        // Safety net: never hang the quit on a stuck stop.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.terminationStopTimeout)
+            if self?.pendingTerminationReply == true {
+                Log.app.error("Session didn't stop within the quit timeout; quitting anyway.")
+            }
+            self?.replyToPendingTermination()
+        }
+        return .terminateLater
+    }
+
+    private func replyToPendingTermination() {
+        guard pendingTerminationReply else { return }
+        pendingTerminationReply = false
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Nothing blocking here: an active session was already stopped in
+        // `applicationShouldTerminate`. Never wait on the main actor in this
+        // callback — it runs on the main thread, so a Task awaiting it could
+        // never run.
     }
 
     // MARK: - Window Close → Quit

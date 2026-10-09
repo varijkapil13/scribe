@@ -73,6 +73,30 @@ final class AudioSessionManager: ObservableObject {
     private var accumulatedDuration: TimeInterval = 0
     var shouldCaptureSystemAudio: Bool = true
 
+    /// Writes the session's audio to disk when "Retain raw audio recordings"
+    /// is on. Set by ``AppState`` before ``startRecording(micDeviceID:captureSystemAudio:)``;
+    /// finished (files closed) and cleared by ``stopRecording()``, or by a
+    /// failed start.
+    var audioRecorder: SessionAudioRecorder?
+
+    /// UserDefaults key of the "Echo cancellation" setting (registered
+    /// default: on).
+    static let echoCancellationKey = "echoCancellation"
+
+    /// Whether the mic should run Apple's voice processing (echo
+    /// cancellation). It only matters while system audio is captured: then the
+    /// remote side coming out of the speakers would otherwise be picked up by
+    /// the mic and transcribed twice (once as "you").
+    nonisolated static func shouldUseVoiceProcessing(setting: Bool, captureSystemAudio: Bool) -> Bool {
+        setting && captureSystemAudio
+    }
+
+    /// Closes and drops the session recorder, if any. Idempotent.
+    private func finishAudioRecorder() {
+        audioRecorder?.finish()
+        audioRecorder = nil
+    }
+
     // MARK: - Level metering
 
     /// Latest raw peaks reported from the audio render thread(s). Written off
@@ -101,6 +125,20 @@ final class AudioSessionManager: ObservableObject {
         let captureSystemAudio = captureSystemAudio ?? shouldCaptureSystemAudio
         shouldCaptureSystemAudio = captureSystemAudio
 
+        // If starting fails part-way, close any audio files already opened.
+        var didStart = false
+        defer {
+            if !didStart { finishAudioRecorder() }
+        }
+        let recorder = audioRecorder
+
+        // Echo cancellation for the mic (applied on the next startCapture).
+        let echoSetting = UserDefaults.standard.object(forKey: Self.echoCancellationKey) as? Bool ?? true
+        micCapture.voiceProcessing = Self.shouldUseVoiceProcessing(
+            setting: echoSetting,
+            captureSystemAudio: captureSystemAudio
+        )
+
         // Surface an unexpectedly-stopped system-audio stream (e.g. revoked
         // Screen Recording grant) instead of letting remote capture die
         // silently. `systemCapture` is a single long-lived instance, so wiring
@@ -115,6 +153,7 @@ final class AudioSessionManager: ObservableObject {
         }
 
         micCapture.onAudioBuffer = { [weak self] buffer, _ in
+            recorder?.appendMic(buffer)
             self?.onMicBuffer?(buffer)
         }
 
@@ -150,6 +189,7 @@ final class AudioSessionManager: ObservableObject {
 
             systemCapture.onAudioBuffer = { [weak self, levelBox] buffer, _ in
                 levelBox.recordSystem(Self.peak(of: buffer))
+                recorder?.appendSystem(buffer)
                 self?.onSystemBuffer?(buffer)
             }
 
@@ -160,6 +200,8 @@ final class AudioSessionManager: ObservableObject {
                 throw AudioSessionError.systemCaptureFailure(underlying: error)
             }
         }
+
+        didStart = true
 
         currentSessionId = UUID().uuidString
         recordingStartTime = Date()
@@ -178,6 +220,9 @@ final class AudioSessionManager: ObservableObject {
         micCapture.stopObservingActiveInputDevice()
         micCapture.stopCapture()
         await systemCapture.stopCapture()
+        // Both captures are stopped, so no more buffers arrive: flush and
+        // close the retained-audio files.
+        finishAudioRecorder()
 
         stopDurationTimer()
         stopLevelTimer()
@@ -314,8 +359,10 @@ final class AudioSessionManager: ObservableObject {
         if enabled {
             if !systemCapture.isCapturing {
                 let levelBox = rawLevelBox
+                let recorder = audioRecorder
                 systemCapture.onAudioBuffer = { [weak self] buffer, _ in
                     levelBox.recordSystem(Self.peak(of: buffer))
+                    recorder?.appendSystem(buffer)
                     self?.onSystemBuffer?(buffer)
                 }
                 do {
