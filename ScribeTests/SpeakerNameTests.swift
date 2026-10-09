@@ -108,17 +108,21 @@ final class SpeakerNameTests: XCTestCase {
 
     func testSegmentOverridesRoundTrip() throws {
         let (_, store, session) = try makeStore()
-        let a = try store.addSegment(sessionId: session.id, startMs: 0, endMs: 10, speaker: "remote", text: "one")
-        let b = try store.addSegment(sessionId: session.id, startMs: 10, endMs: 20, speaker: "remote", text: "two")
+        try store.addSegment(sessionId: session.id, startMs: 0, endMs: 10, speaker: "remote", text: "one")
+        try store.addSegment(sessionId: session.id, startMs: 10, endMs: 20, speaker: "remote", text: "two")
         XCTAssertFalse(try store.hasCustomSpeakers(sessionId: session.id))
+        // addSegment returns the unsaved value (id nil); read the rowids back.
+        let ids = try store.fetchSegments(sessionId: session.id).compactMap(\.id)
+        XCTAssertEqual(ids.count, 2)
+        let (aId, bId) = (ids[0], ids[1])
 
-        try store.setSpeakerOverride("Sam", forSegmentIds: [a.id!, b.id!])
+        try store.setSpeakerOverride("Sam", forSegmentIds: [aId, bId])
         var fetched = try store.fetchSegments(sessionId: session.id)
         XCTAssertEqual(fetched.map(\.speakerOverride), ["Sam", "Sam"])
         XCTAssertTrue(try store.hasCustomSpeakers(sessionId: session.id))
 
         // Assigning back to the source key clears the override.
-        try store.setSpeakerOverride("REMOTE", forSegmentIds: [a.id!])
+        try store.setSpeakerOverride("REMOTE", forSegmentIds: [aId])
         try store.setSpeakerOverride(nil, forSegmentIds: [])
         fetched = try store.fetchSegments(sessionId: session.id)
         XCTAssertEqual(fetched.map(\.speakerOverride), [nil, "Sam"])
