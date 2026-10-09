@@ -207,6 +207,7 @@ struct LiveSessionView: View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             micMenu
             systemAudioToggle
+            CopyDisclosureButton()
             Spacer()
         }
         .padding(.top, DesignTokens.Spacing.xs)

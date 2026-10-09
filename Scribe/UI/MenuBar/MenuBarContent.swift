@@ -40,6 +40,7 @@ struct MenuBarContent: View {
                 }
             }
             Button("Show Live Transcript") { open(.live) }
+            Button("Copy Disclosure Message") { _ = ConsentDisclosure.copyToPasteboard() }
         } else {
             if let meeting = detector.currentMeeting {
                 Button("Record \(MeetingDetector.meetingPhrase(for: meeting))") {

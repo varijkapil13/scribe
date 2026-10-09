@@ -188,10 +188,13 @@ private struct GeneralSettingsPane: View {
                     .disabled(meetingDetectionMode == .off)
                 Toggle("Include any other app using the microphone", isOn: $detectOtherApps)
                     .disabled(meetingDetectionMode == .off)
+                MeetingDetectionExtraSettings(detectionEnabled: meetingDetectionMode != .off)
                 Text("Scribe notices when Zoom, Teams, Slack, FaceTime, Webex and other call apps start using your microphone. It only checks which app holds the mic and never listens until you record. Detection runs only while Scribe is open, so keep it in the menu bar and open at login to catch every call.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            ConsentDisclosureSettingsSection()
 
             Section("Menu bar & login") {
                 toggleWithCaption(

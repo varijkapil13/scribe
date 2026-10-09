@@ -301,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         do {
             try await appState.startSession(noteId: resolved.noteId)
+            ConsentDisclosure.recordingDidStart()
         } catch {
             showPermissionAlert(
                 title: "Couldn't Start Recording",

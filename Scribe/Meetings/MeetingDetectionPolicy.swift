@@ -70,19 +70,27 @@ struct MeetingDetectionPolicy {
 
     var startDelay: TimeInterval = 3
     var endGrace: TimeInterval = 15
+    /// Start delay while a camera is running: mic + camera together is a
+    /// much stronger "video call" signal, so prompt sooner.
+    var cameraStartDelay: TimeInterval = 1
 
     /// The meeting currently in progress, if any.
     private(set) var current: MeetingApp?
     private var candidate: (app: MeetingApp, since: Date)?
     private var lastSeen: Date?
 
-    init(startDelay: TimeInterval = 3, endGrace: TimeInterval = 15) {
+    init(startDelay: TimeInterval = 3, endGrace: TimeInterval = 15, cameraStartDelay: TimeInterval = 1) {
         self.startDelay = startDelay
         self.endGrace = endGrace
+        self.cameraStartDelay = cameraStartDelay
     }
 
     /// Feeds one sample. Returns at most one event.
-    mutating func update(active: [MeetingApp], now: Date) -> Event? {
+    ///
+    /// - Parameter cameraInUse: Whether any camera is running right now; when
+    ///   it is, the meeting starts after `cameraStartDelay` instead of
+    ///   `startDelay` (whichever is shorter).
+    mutating func update(active: [MeetingApp], now: Date, cameraInUse: Bool = false) -> Event? {
         guard let primary = Self.primary(of: active) else {
             candidate = nil
             if let meeting = current, let lastSeen, now.timeIntervalSince(lastSeen) >= endGrace {
@@ -100,7 +108,8 @@ struct MeetingDetectionPolicy {
         if candidate.map({ !active.contains($0.app) }) ?? true {
             candidate = (primary, now)
         }
-        guard let candidate, now.timeIntervalSince(candidate.since) >= startDelay else { return nil }
+        let delay = cameraInUse ? min(startDelay, cameraStartDelay) : startDelay
+        guard let candidate, now.timeIntervalSince(candidate.since) >= delay else { return nil }
         current = candidate.app
         self.candidate = nil
         return .started(candidate.app)
