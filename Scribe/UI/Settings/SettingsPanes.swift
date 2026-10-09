@@ -1,6 +1,7 @@
 import SwiftUI
 import KeyboardShortcuts
 import AppKit
+import ServiceManagement
 
 /// One of the four settings screens shown in the combined main window. Each
 /// pane is a standalone `View`, chosen from the sidebar.
@@ -91,7 +92,12 @@ private struct GeneralSettingsPane: View {
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
     @AppStorage(NotesDirectory.userPreferenceKey) var notesVaultPath: String = ""
+    @AppStorage(MeetingDetectionMode.defaultsKey) var meetingDetectionMode: MeetingDetectionMode = MeetingDetectionMode.defaultValue
+    @AppStorage(MeetingEndAction.defaultsKey) var meetingEndAction: MeetingEndAction = MeetingEndAction.defaultValue
+    @AppStorage(MeetingDetector.includeBrowsersKey) var detectBrowserMeetings: Bool = true
+    @AppStorage(MeetingDetector.includeOtherAppsKey) var detectOtherApps: Bool = false
 
+    @State private var openAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var openConfirm: OpenConfirm?
     @State private var moveConfirm: MoveConfirm?
 
@@ -165,6 +171,25 @@ private struct GeneralSettingsPane: View {
                 )
             }
 
+            Section("Meeting detection") {
+                Picker("When a meeting starts", selection: $meetingDetectionMode) {
+                    ForEach(MeetingDetectionMode.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("When it ends", selection: $meetingEndAction) {
+                    ForEach(MeetingEndAction.allCases) { Text($0.title).tag($0) }
+                }
+                .disabled(meetingDetectionMode == .off)
+                Toggle("Include calls in web browsers (Google Meet…)", isOn: $detectBrowserMeetings)
+                    .disabled(meetingDetectionMode == .off)
+                Toggle("Include any other app using the microphone", isOn: $detectOtherApps)
+                    .disabled(meetingDetectionMode == .off)
+                Toggle("Open Scribe at login", isOn: $openAtLogin)
+                    .onChange(of: openAtLogin) { _, enabled in setOpenAtLogin(enabled) }
+                Text("Scribe notices when Zoom, Teams, Slack, FaceTime, Webex and other call apps start using your microphone. It only checks which app holds the mic and never listens until you record. Detection runs only while Scribe is open, so turn on Open at login to catch every call.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Transcription") {
                 Picker("Language", selection: $selectedLanguage) {
                     ForEach(LanguageOptions.supported, id: \.code) { option in
@@ -219,6 +244,25 @@ private struct GeneralSettingsPane: View {
             ].compactMap { $0 }
             Text(parts.joined(separator: "\n\n"))
         }
+    }
+
+    // MARK: - Open at login
+
+    private func setOpenAtLogin(_ enabled: Bool) {
+        // Also absorbs the onChange echo from the write-back below.
+        guard enabled != (SMAppService.mainApp.status == .enabled) else { return }
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            AppState.shared.report("Couldn't change Open at login: \(error.localizedDescription)")
+        }
+        // Reflect what actually happened (registration can need approval in
+        // System Settings → General → Login Items).
+        openAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     // MARK: - Notes vault — Move / Open

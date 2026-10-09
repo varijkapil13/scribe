@@ -27,6 +27,14 @@ No model downloads, no accounts, no subscriptions, no API keys.
 - Auto-detect language or pin to a specific one (English, German, French, and more)
 - Pause / resume mid-session; crash-recovery sweep finalises any sessions left dangling
 
+### Meeting Auto-Detection
+- Notices when Zoom, Teams, Slack huddles, FaceTime, Webex, Discord, Google Meet (in a browser) and other call apps start using the microphone
+- **Ask me** (default): a notification with **Start Recording** appears; or choose **Start recording automatically**, which records into a new "Zoom meeting on …" note
+- When the call releases the mic, Scribe can **ask** to stop (default), **stop automatically**, or keep recording
+- Debounced (mic held ≥ 3 s to start, released ≥ 15 s to end) so brief mic probes and device switches don't trigger it
+- Only checks *which app* holds the mic (CoreAudio process list) and never listens until you record
+- Settings → General → Meeting detection, which also has **Open Scribe at login** so detection is always on
+
 ### Meeting Notes (notes own transcripts)
 - Every recording lives inside a Note — there is no standalone "transcript" surface
 - Press Record with a note open → the new session binds to that note
