@@ -587,6 +587,21 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Speaker naming: per-session display names for speaker keys ("you",
+        // "remote", or custom names) plus a per-segment reassignment. Additive.
+        migrator.registerMigration("v18_speaker_names") { db in
+            try db.create(table: "session_speakers") { t in
+                t.column("sessionId", .text).notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("speakerKey", .text).notNull()
+                t.column("displayName", .text).notNull()
+                t.primaryKey(["sessionId", "speakerKey"])
+            }
+            try db.alter(table: "segments") { t in
+                t.add(column: "speakerOverride", .text)
+            }
+        }
+
         return migrator
     }
 

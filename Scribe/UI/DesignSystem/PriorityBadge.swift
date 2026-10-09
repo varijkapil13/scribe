@@ -53,6 +53,8 @@ struct TagChip: View {
 /// A compact capsule showing which speaker produced a segment.
 struct SpeakerChip: View {
     let speaker: String
+    /// Resolved display name (e.g. "Priya"); `nil` shows the built-in label.
+    var name: String? = nil
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
@@ -68,6 +70,7 @@ struct SpeakerChip: View {
     }
 
     private var displayName: String {
+        if let name, !name.isEmpty { return name }
         switch speaker.lowercased() {
         case "you":    return "You"
         case "remote": return "Remote"

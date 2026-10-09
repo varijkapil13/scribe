@@ -11,7 +11,9 @@ final class TranscriptStore: @unchecked Sendable {
 
     nonisolated static let shared = TranscriptStore()
 
-    private let dbManager: DatabaseManager
+    /// Internal (not private) so feature extensions in other files
+    /// (e.g. `TranscriptStore+Speakers.swift`) can reach the database.
+    let dbManager: DatabaseManager
 
     /// Convenience accessor for the underlying database queue.
     private var db: DatabaseQueue { dbManager.database }
