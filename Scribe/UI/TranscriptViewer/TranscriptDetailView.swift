@@ -240,6 +240,9 @@ struct TranscriptDetailView: View {
                 .disabled(viewModel.isAnalyzing || viewModel.segments.isEmpty)
                 .help("Extract entities, topics, and sentiment")
 
+                SessionTemplateActionsMenu(session: viewModel.session)
+                    .disabled(viewModel.segments.isEmpty)
+
                 Spacer()
 
                 Button { viewModel.toggleSelectMode() } label: {

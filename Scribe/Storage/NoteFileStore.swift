@@ -56,6 +56,10 @@ struct NoteFileStore {
         }
         var out: [NoteFile] = []
         for case let url as URL in enumerator {
+            if Self.isInExcludedFolder(url, root: directory.root) {
+                enumerator.skipDescendants()
+                continue
+            }
             guard url.pathExtension.lowercased() == "md" else { continue }
             guard let isRegular = (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile,
                   isRegular else { continue }
@@ -103,6 +107,28 @@ struct NoteFileStore {
         return nil
     }
 
+    // MARK: - Excluded folders
+
+    /// Top-level vault folders that hold non-note markdown (summary templates
+    /// and recipes under `Templates/`). Never listed or indexed as notes.
+    static let excludedTopLevelFolders: Set<String> = ["Templates"]
+
+    /// True when `url` is (inside) one of `excludedTopLevelFolders` directly
+    /// under `root`. Tolerates the macOS `/private` path alias on either side.
+    static func isInExcludedFolder(_ url: URL, root: URL) -> Bool {
+        func normalized(_ path: String) -> String {
+            path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+        }
+        var rootPath = normalized(root.path)
+        while rootPath.count > 1 && rootPath.hasSuffix("/") { rootPath.removeLast() }
+        let path = normalized(url.path)
+        let prefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard path.hasPrefix(prefix) else { return false }
+        let relative = path.dropFirst(prefix.count)
+        guard let first = relative.split(separator: "/").first else { return false }
+        return excludedTopLevelFolders.contains(String(first))
+    }
+
     // MARK: - URL resolution
 
     /// Returns the URL currently backing `id`, by scanning all `.md` files
@@ -119,6 +145,10 @@ struct NoteFileStore {
             return nil
         }
         for case let url as URL in enumerator {
+            if Self.isInExcludedFolder(url, root: directory.root) {
+                enumerator.skipDescendants()
+                continue
+            }
             guard url.pathExtension.lowercased() == "md" else { continue }
             if let parsed = try? read(at: url), parsed.id == id {
                 return url
