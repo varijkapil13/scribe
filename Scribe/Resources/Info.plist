@@ -39,6 +39,8 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Scribe reads your calendar to name meeting notes after the event, list attendees and the agenda, and remind you to record before meetings start. Calendar data stays on your Mac.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Varij. All rights reserved.</string>
 	<key>NSMicrophoneUsageDescription</key>

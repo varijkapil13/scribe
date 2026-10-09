@@ -91,12 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Reminder category + delegate. Authorization is requested lazily the
         // first time a task with `remindAt` is saved, not here — that keeps
         // first-launch silent for users who don't use the task layer.
-        TaskReminderScheduler.shared.additionalCategories = MeetingDetector.notificationCategories
-        TaskReminderScheduler.shared.externalResponseHandler = { categoryId, actionId, userInfo in
+        // Other features' notification categories share the scheduler's
+        // delegate through NotificationRouter (one handler per category).
+        NotificationRouter.shared.register(categories: MeetingDetector.notificationCategories) { categoryId, actionId, userInfo in
             MeetingDetector.shared.handleNotificationResponse(
                 categoryId: categoryId, actionId: actionId, userInfo: userInfo
             )
         }
+        NotificationRouter.shared.register(categories: CalendarReminderScheduler.notificationCategories) { categoryId, actionId, userInfo in
+            CalendarReminderScheduler.shared.handleNotificationResponse(
+                categoryId: categoryId, actionId: actionId, userInfo: userInfo
+            )
+        }
+        NotificationRouter.shared.install(on: TaskReminderScheduler.shared)
         TaskReminderScheduler.shared.registerCategory()
         TaskReminderScheduler.shared.installDelegate()
 
@@ -111,6 +118,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 },
                 stopRecording: { [weak self] in await self?.stopRecording() }
             )
+        }
+
+        // Calendar integration: off until enabled in Settings → Calendar (no
+        // permission prompt here). Refreshes events + pre-meeting reminders.
+        if !AppLaunchEnvironment.isUITesting {
+            CalendarReminderScheduler.shared.configure { [weak self] event in
+                await self?.startRecording(calendarEvent: event)
+            }
+            CalendarService.shared.start()
         }
 
         // Proactively request microphone and speech-recognition authorization
@@ -211,7 +227,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     ///     names an auto-created note after the meeting app.
     ///   - forceNewNote: Always create a fresh meeting note instead of binding
     ///     to the open one (auto-record, where nobody chose the context).
-    func startRecording(detectedMeeting: MeetingApp? = nil, forceNewNote: Bool = false) async {
+    ///   - calendarEvent: The calendar event to record (menu-bar "Upcoming",
+    ///     reminder actions). Always gets a fresh note named after it. When
+    ///     nil and calendar integration is on, the event in progress is used.
+    func startRecording(
+        detectedMeeting: MeetingApp? = nil,
+        forceNewNote: Bool = false,
+        calendarEvent: CalendarEventInfo? = nil
+    ) async {
         guard !appState.isTranscribing else { return }
         // Verify permissions before touching audio hardware so we can show the
         // user a clear alert instead of silently failing.
@@ -262,13 +285,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         appState.audioManager.shouldCaptureSystemAudio = captureSystemAudio
 
+        let now = Date()
+        let event = calendarEvent ?? CalendarService.shared.matchingEvent(at: now)
+        // Name/seed the note after the event when the user picked the event
+        // explicitly, or when "Name notes after calendar events" is on.
+        let namesNote = event != nil && (calendarEvent != nil || CalendarService.nameNotesEnabled)
         let resolved: ResolvedNoteContext
         do {
             resolved = try Self.resolveNoteContext(
-                selection: forceNewNote ? nil : appState.currentSelection,
+                selection: (forceNewNote || calendarEvent != nil) ? nil : appState.currentSelection,
                 noteStore: .shared,
-                now: Date(),
-                meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:))
+                now: now,
+                meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:)),
+                explicitTitle: namesNote ? event.map { CalendarNoteFormatter.noteTitle(for: $0, date: now) } : nil,
+                initialBody: namesNote ? (event.map(CalendarNoteFormatter.noteHeader(for:)) ?? "") : ""
             )
         } catch {
             // Surface the underlying createNote error to the user instead of
@@ -300,7 +330,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         do {
-            try await appState.startSession(noteId: resolved.noteId)
+            if let event {
+                try await appState.startSession(title: event.displayTitle, noteId: resolved.noteId)
+                if let sessionId = appState.currentSessionId {
+                    do {
+                        try appState.transcriptStore.setCalendarEvent(
+                            sessionId: sessionId,
+                            eventId: event.id,
+                            eventTitle: event.title,
+                            attendees: event.attendees
+                        )
+                    } catch {
+                        Log.app.error("Failed to link session to calendar event: \(error.localizedDescription, privacy: .private)")
+                    }
+                }
+            } else {
+                try await appState.startSession(noteId: resolved.noteId)
+            }
             ConsentDisclosure.recordingDidStart()
         } catch {
             showPermissionAlert(
@@ -479,21 +525,32 @@ extension AppDelegate {
     /// generic "A note must exist before starting a recording."
     /// Extracted as a static helper so it's unit-testable without booting
     /// audio.
+    ///
+    /// `explicitTitle` / `initialBody` (calendar integration) override the
+    /// generated title and seed the new note's body; they're ignored when an
+    /// open note is reused.
     static func resolveNoteContext(
         selection: MainSelection?,
         noteStore: NoteStore,
         now: Date,
-        meetingName: String? = nil
+        meetingName: String? = nil,
+        explicitTitle: String? = nil,
+        initialBody: String = ""
     ) throws -> ResolvedNoteContext {
         if case .note(let noteId)? = selection {
             return ResolvedNoteContext(noteId: noteId, didCreateNote: false)
         }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        let title = "\(meetingName ?? "Meeting") on \(formatter.string(from: now))"
+        let title: String
+        if let explicitTitle, !explicitTitle.isEmpty {
+            title = explicitTitle
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            title = "\(meetingName ?? "Meeting") on \(formatter.string(from: now))"
+        }
         do {
-            let created = try noteStore.createNote(title: title, body: "")
+            let created = try noteStore.createNote(title: title, body: initialBody)
             return ResolvedNoteContext(noteId: created.id, didCreateNote: true)
         } catch {
             Log.app.error("Failed to auto-create meeting note: \(error.localizedDescription, privacy: .private)")

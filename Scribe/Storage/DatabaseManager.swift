@@ -587,6 +587,17 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Calendar integration (macOS): the event a recording belongs to.
+        // Additive, all nullable — existing rows read as "no event".
+        // `attendees` holds a JSON array of {name, email}.
+        migrator.registerMigration("v17_session_calendar") { db in
+            try db.alter(table: "sessions") { t in
+                t.add(column: "calendarEventId", .text)
+                t.add(column: "calendarEventTitle", .text)
+                t.add(column: "attendees", .text)
+            }
+        }
+
         return migrator
     }
 
