@@ -30,7 +30,13 @@ final class NoteDetailViewModel: ObservableObject {
     /// overwritten blindly.
     private(set) var loadedFingerprint: NoteFileFingerprint?
 
-    private let store: NoteStore
+    /// Locked-note state (NoteDetailViewModel+Locking.swift). While
+    /// `.unlocked`, `note.body` is plaintext held in memory only and every
+    /// save writes it sealed.
+    @Published var lockPhase: LockedNotePhase = .notLocked
+    let lockState = LockedNoteEditorState()
+
+    let store: NoteStore
     /// Exposed for view-level features (e.g. Export) that need the same
     /// `TranscriptStore` instance the VM observes from, so DI is preserved
     /// end-to-end and tests can swap in an in-memory store.
@@ -80,6 +86,7 @@ final class NoteDetailViewModel: ObservableObject {
             loadedFingerprint = entry.fingerprint
         }
         reload()
+        installLocking()
         refreshConflicts(announce: true)
         vaultChangeCancellable = NotificationCenter.default
             .publisher(for: .noteVaultFilesChanged)
@@ -194,6 +201,7 @@ final class NoteDetailViewModel: ObservableObject {
                 // Disk had an external edit and the editor has nothing
                 // unsaved: adopt the disk body we just wrote back.
                 note.body = file.body
+                adoptLoadedBodyForLocking()
                 loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id)
             }
             // else: unsaved in-app edits on top of a stale base — leave
@@ -261,9 +269,12 @@ final class NoteDetailViewModel: ObservableObject {
             }
         }
         do {
+            // A locked note is written sealed; its plaintext never hits disk.
             // Overwriting an external edit (kept as a conflict copy) always
             // snapshots the disk version first; ordinary saves are throttled.
-            try store.updateNote(note, tags: tags,
+            var stored = note
+            stored.body = try bodyForStorage()
+            try store.updateNote(stored, tags: tags,
                                  versionReason: keptConflictCopy ? .externalChange : .edit)
             loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
             peerSavedSinceLoad = false
@@ -338,6 +349,7 @@ final class NoteDetailViewModel: ObservableObject {
         guard let entry = store.diskEntry(forNoteId: note.id) else { return }
         let file = entry.file
         note.body = file.body
+        adoptLoadedBodyForLocking()
         note.title = file.frontmatter.title
         note.notebookId = file.frontmatter.notebookId
         note.updatedAt = file.frontmatter.updatedAt
@@ -411,6 +423,12 @@ final class NoteDetailViewModel: ObservableObject {
     }
 
     func markDirty() { isDirty = true }
+
+    /// Re-bases the editor on Scribe's own latest write of this note (after
+    /// a frontmatter-only write such as the locked-note flag).
+    func rebaseOnOwnLatestWrite() {
+        loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
+    }
 
     // MARK: - Tags
 

@@ -341,7 +341,10 @@ final class SpotlightIndexer {
             let tasks = try TodoTask.fetchAll(database)
             return (notes, tasks)
         }
-        let noteRecords = rows.0.map { SpotlightIndexPlanner.noteRecord(for: $0) }
+        // Locked notes stay out of Spotlight entirely.
+        let noteRecords = rows.0
+            .filter { $0.bodyExcerpt != LockedNoteEnvelope.excerptPlaceholder }
+            .map { SpotlightIndexPlanner.noteRecord(for: $0) }
         let taskRecords = rows.1.compactMap { SpotlightIndexPlanner.taskRecord(for: $0) }
         return noteRecords + taskRecords
     }

@@ -720,6 +720,7 @@ final class DatabaseManager: @unchecked Sendable {
         }
         // On-device semantic search index (see SemanticEmbeddingStore.swift).
         SemanticEmbeddingSchema.register(in: &migrator)
+        registerAttachmentTextMigration(in: &migrator)
 
         return migrator
     }

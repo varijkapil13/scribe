@@ -82,6 +82,10 @@ enum ScribeIntentsBridge {
         if current.body.isEmpty, !(current.bodyExcerpt ?? "").isEmpty {
             throw ScribeIntentError.noteUnreadable
         }
+        // A locked note's body is ciphertext: appending would corrupt it.
+        if LockedNoteEnvelope.isLocked(current.body) {
+            throw ScribeIntentError.noteUnreadable
+        }
         try NoteAIEditWriter.apply(.appendText(text), toNoteId: noteId, noteStore: store)
         guard let updated = try ScribeIntentsData.live.notes(ids: [noteId]).first else {
             throw ScribeIntentError.noteNotFound

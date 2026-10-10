@@ -475,15 +475,37 @@ final class NoteStore: @unchecked Sendable {
         guard !q.isEmpty else { return try fetchAllNotes() }
         let sanitized = Self.ftsQuery(from: q)
         guard !sanitized.isEmpty else { return [] }
-        return try db.read { database in
-            try Note.fetchAll(database, sql: """
+        return try db.read { database -> [Note] in
+            let notes = try Note.fetchAll(database, sql: """
                 SELECT notes.* FROM notes
                 JOIN notes_fts ON notes.id = notes_fts.noteId
                 WHERE notes_fts MATCH ?
                 ORDER BY bm25(notes_fts)
                 LIMIT 100
                 """, arguments: [sanitized])
+            // Then notes whose images / scanned PDFs contain the text.
+            return try Self.appendingAttachmentMatches(to: notes, ftsQuery: sanitized, limit: 100, in: database)
         }
+    }
+
+    /// `notes` followed by notes matched only through recognized attachment
+    /// text (`AttachmentTextStore`), skipping duplicates and locked notes.
+    static func appendingAttachmentMatches(
+        to notes: [Note],
+        ftsQuery: String,
+        limit: Int,
+        in database: Database
+    ) throws -> [Note] {
+        guard notes.count < limit else { return notes }
+        let seen = Set(notes.map(\.id))
+        let ids = try AttachmentTextStore.matchingNoteIds(database, ftsQuery: ftsQuery, limit: limit)
+            .filter { !seen.contains($0) }
+        guard !ids.isEmpty else { return notes }
+        let fetched = try Note.filter(keys: ids).fetchAll(database)
+        let byId = Dictionary(fetched.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let extra = ids.compactMap { byId[$0] }
+            .filter { $0.bodyExcerpt != LockedNoteEnvelope.excerptPlaceholder }
+        return Array((notes + extra).prefix(limit))
     }
 
     /// Thin wrapper kept for source-compatibility. Real logic lives in
@@ -605,9 +627,12 @@ final class NoteStore: @unchecked Sendable {
     /// disk-side body.
     static func upsertFTS(_ db: Database, noteId: String, title: String, body: String) throws {
         try db.execute(sql: "DELETE FROM notes_fts WHERE noteId = ?", arguments: [noteId])
+        // Locked notes are searchable by their (clear) title only — the body
+        // is ciphertext, and its plaintext never reaches the index.
+        let indexedBody = LockedNoteEnvelope.isLocked(body) ? "" : body
         try db.execute(
             sql: "INSERT INTO notes_fts(noteId, title, body) VALUES (?, ?, ?)",
-            arguments: [noteId, title, body]
+            arguments: [noteId, title, indexedBody]
         )
     }
 

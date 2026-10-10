@@ -36,6 +36,14 @@ extension NoteStore {
     func recordVersionBeforeSave(of note: Note, reason: NoteVersionReason) {
         guard let versionStore, let fileStore,
               let entry = try? fileStore.locate(id: note.id) else { return }
+        // Locking a note: its earlier plaintext versions must not outlive
+        // the lock in the version store, so drop them instead of adding one.
+        if LockedNoteEnvelope.isLocked(note.body) && !LockedNoteEnvelope.isLocked(entry.file.body) {
+            do { try versionStore.deleteVersions(noteId: note.id) } catch {
+                Log.storage.error("NoteStore: purging versions of newly locked note \(note.id, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+            return
+        }
         do {
             try versionStore.recordSnapshotIfNeeded(
                 noteId: note.id,
@@ -54,6 +62,13 @@ extension NoteStore {
     /// before the editor adopts an external change. Best-effort.
     func snapshotVersion(noteId: String, title: String, body: String, reason: NoteVersionReason) {
         guard let versionStore else { return }
+        // An unlocked locked note's in-memory body is plaintext; never
+        // snapshot it (only sealed content may be stored).
+        if !LockedNoteEnvelope.isLocked(body),
+           let entry = try? fileStore?.locate(id: noteId),
+           LockedNoteEnvelope.isLocked(entry.file.body) {
+            return
+        }
         do {
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             try versionStore.snapshot(noteId: noteId, title: title, body: body, reason: reason)
