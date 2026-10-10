@@ -144,11 +144,13 @@ enum ColumnVisibilityCodec {
     }
 
     /// Only the two states the main window toggles between are restored.
+    /// For this two-column split, `.doubleColumn` (which View › Show Sidebar
+    /// may report) is the same as `.all`.
     static func decode(_ string: String) -> NavigationSplitViewVisibility? {
         switch string {
-        case "detailOnly": return .detailOnly
-        case "all":        return .all
-        default:           return nil
+        case "detailOnly":          return .detailOnly
+        case "all", "doubleColumn": return .all
+        default:                    return nil
         }
     }
 }
@@ -168,6 +170,10 @@ struct MainWindowRestorationModifier: ViewModifier {
             .onAppear {
                 guard !didRestore else { return }
                 didRestore = true
+                // UI tests expect every launch to start from the default
+                // destination, whatever a previous run left in scene storage.
+                guard !AppLaunchEnvironment.isUITesting,
+                      !AppLaunchEnvironment.usesUITestFixtures else { return }
                 if let selection = MainSelectionCodec.restoredSelection(from: storedSelection,
                                                                         isRecording: isRecording) {
                     // No Back entry: the user didn't navigate, the window did.

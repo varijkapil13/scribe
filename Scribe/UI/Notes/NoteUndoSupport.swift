@@ -12,6 +12,9 @@ enum NoteUndo {
     struct Snapshot {
         let note: Note
         let tags: [String]
+        /// The file's other frontmatter keys (typed properties, `font:`, …),
+        /// which exist only on disk.
+        var extra: [FrontmatterEntry] = []
     }
 
     /// Pure policy: only notes without recordings or attachments come back.
@@ -36,7 +39,8 @@ enum NoteUndo {
         let attachments = hasAttachments(noteId: noteId, root: attachmentsRoot)
         guard canUndoDelete(sessionCount: sessions, hasAttachments: attachments) else { return nil }
         let tags = (try? store.tags(for: noteId)) ?? []
-        return Snapshot(note: note, tags: tags)
+        let extra = store.diskEntry(forNoteId: noteId)?.file.frontmatter.extra ?? []
+        return Snapshot(note: note, tags: tags, extra: extra)
     }
 
     /// Deletes the note and, when that is safely reversible, registers
@@ -54,7 +58,7 @@ enum NoteUndo {
             actionName: "Delete Note",
             undo: {
                 do {
-                    try store.restoreDeletedNote(snapshot.note, tags: snapshot.tags)
+                    try store.restoreDeletedNote(snapshot.note, tags: snapshot.tags, extra: snapshot.extra)
                 } catch {
                     AppState.shared.report("Couldn't restore the note: \(error.localizedDescription)")
                 }

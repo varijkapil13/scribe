@@ -79,6 +79,7 @@ struct NoteInspectorModifier: ViewModifier {
 struct NoteInspectorView: View {
     @ObservedObject var vm: NoteDetailViewModel
     let onNavigate: (String) -> Void
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let stats = NoteStatistics.compute(body: vm.note.body)
@@ -110,6 +111,10 @@ struct NoteInspectorView: View {
                 } else {
                     ForEach(vm.sessions) { session in
                         Button {
+                            // From a note window the main window may be in
+                            // the background (or closed): bring it forward
+                            // first — it observes the navigation request.
+                            openWindow(id: "main")
                             NotificationCenter.default.post(name: .scribeNavigate,
                                                             object: MainSelection.session(session.id))
                         } label: {

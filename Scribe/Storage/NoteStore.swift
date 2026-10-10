@@ -168,12 +168,21 @@ final class NoteStore: @unchecked Sendable {
     /// file back into the vault. Callers must only offer this for notes that
     /// had no recordings or attachments — `deleteNote` destroys those and
     /// they can't come back. `note.body` must hold the real body (from
-    /// `fetchNote` before the delete). Outgoing wiki-links are rebuilt here;
-    /// links *into* the note are rebuilt as the linking notes are next saved.
-    func restoreDeletedNote(_ note: Note, tags: [String]) throws {
+    /// `fetchNote` before the delete). `extra` carries the file's other
+    /// frontmatter keys (typed properties, `font:`, external tools' keys) —
+    /// they live only on disk, so the caller snapshots them before the delete.
+    /// Outgoing wiki-links are rebuilt here; links *into* the note are rebuilt
+    /// as the linking notes are next saved.
+    func restoreDeletedNote(_ note: Note, tags: [String], extra: [FrontmatterEntry] = []) throws {
         try db.write { database in
             var restored = note
             restored.bodyExcerpt = Note.makeExcerpt(from: note.body)
+            // The notebook may have been deleted since; notebookId has no FK,
+            // so drop a dangling reference rather than restore into nowhere.
+            if let notebookId = restored.notebookId,
+               try Notebook.fetchOne(database, key: notebookId) == nil {
+                restored.notebookId = nil
+            }
             try restored.insert(database)
             for tag in Self.normalizeTags(tags) {
                 try NoteTagRow(noteId: note.id, tag: tag).insert(database)
@@ -190,7 +199,7 @@ final class NoteStore: @unchecked Sendable {
             }
             try Self.upsertFTS(database, noteId: note.id, title: note.title, body: note.body)
             // Inside the transaction — see `createNote`.
-            try mirrorToDisk(note: restored, tags: tags)
+            try mirrorToDisk(note: restored, tags: tags, extra: extra)
         }
     }
 
@@ -602,13 +611,15 @@ final class NoteStore: @unchecked Sendable {
     /// user) rather than swallowed. Callers MUST pass a `note` whose `.body`
     /// holds the real body (e.g. from `fetchNote`), never a bare DB-decoded
     /// note whose `.body` is the empty placeholder.
-    private func mirrorToDisk(note: Note, tags: [String]) throws {
+    private func mirrorToDisk(note: Note, tags: [String], extra: [FrontmatterEntry]? = nil) throws {
         guard let fileStore else { return }
         // Preserve any unknown frontmatter keys already on disk (per-note
         // `font:`, external tools' `aliases:`/`cover:`, …). We rebuild the
         // typed fields from the DB, so without this merge a DB-driven write
-        // would silently drop them.
-        let existingExtra: [FrontmatterEntry] = (try? fileStore.locate(id: note.id))?.file.frontmatter.extra ?? []
+        // would silently drop them. (`extra` overrides this for a restore,
+        // when there is no file on disk to read them from.)
+        let existingExtra: [FrontmatterEntry] = extra
+            ?? (try? fileStore.locate(id: note.id))?.file.frontmatter.extra ?? []
         let file = NoteFile(
             id: note.id,
             frontmatter: NoteFrontmatter(

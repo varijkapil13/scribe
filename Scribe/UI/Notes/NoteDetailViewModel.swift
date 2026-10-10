@@ -40,6 +40,17 @@ final class NoteDetailViewModel: ObservableObject {
     private var autosaveCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
     private var vaultChangeCancellable: AnyCancellable?
+    private var peerSaveCancellable: AnyCancellable?
+    /// Another in-app editor of this note (the same note open in the main
+    /// window and a note window) saved since this editor's content was
+    /// loaded. Its write descends from our base, so the "Scribe wrote it"
+    /// exemption must not apply: our next save keeps both versions instead of
+    /// silently overwriting the other window's edits.
+    private var peerSavedSinceLoad = false
+    private struct PeerSave: Sendable {
+        let sender: ObjectIdentifier?
+        let noteId: String
+    }
 
     /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
     /// across chip selections so analysis state survives expansion-collapse
@@ -74,6 +85,18 @@ final class NoteDetailViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] ids in
                 self?.handleExternalVaultChange(noteIds: ids)
+            }
+        peerSaveCancellable = NotificationCenter.default
+            .publisher(for: .scribeNoteEditorDidSave)
+            .compactMap { notification -> PeerSave? in
+                guard let noteId = notification.userInfo?["noteId"] as? String else { return nil }
+                let sender = notification.object.map { ObjectIdentifier($0 as AnyObject) }
+                return PeerSave(sender: sender, noteId: noteId)
+            }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] save in
+                guard let self, save.sender != ObjectIdentifier(self), save.noteId == self.note.id else { return }
+                self.handlePeerSave()
             }
         autosaveCancellable = $isDirty
             .filter { $0 }
@@ -136,7 +159,7 @@ final class NoteDetailViewModel: ObservableObject {
         // This is a read-modify-write of the *current* file, so it never
         // drops an external body edit. Whether the editor is still in sync
         // with disk decides what happens to the editor afterwards.
-        let lastOwn = store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loadedFingerprint)
+        let lastOwn = lastOwnWrite()
         let wasInSync = NoteExternalEditPolicy.isUnchanged(loaded: loadedFingerprint, current: entry.fingerprint)
             || (lastOwn.map { entry.fingerprint.describesSameContent(as: $0) } ?? false)
         var file = entry.file
@@ -193,7 +216,7 @@ final class NoteDetailViewModel: ObservableObject {
             switch NoteExternalEditPolicy.decide(
                 loaded: loaded,
                 current: current,
-                lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
+                lastWrittenByScribe: lastOwnWrite(),
                 hasUnsavedChanges: isDirty
             ) {
             case .write:
@@ -219,9 +242,12 @@ final class NoteDetailViewModel: ObservableObject {
         do {
             try store.updateNote(note, tags: tags)
             loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
+            peerSavedSinceLoad = false
             backlinks = (try? store.backlinks(for: note.id)) ?? []
             recomputeUnresolvedLinks()
             isDirty = false
+            NotificationCenter.default.post(name: .scribeNoteEditorDidSave, object: self,
+                                            userInfo: ["noteId": note.id])
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -242,12 +268,30 @@ final class NoteDetailViewModel: ObservableObject {
         let decision = NoteExternalEditPolicy.decide(
             loaded: loaded,
             current: current,
-            lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
+            lastWrittenByScribe: lastOwnWrite(),
             hasUnsavedChanges: false
         )
         if decision == .reloadFromDisk {
             reloadFromDisk()
         }
+    }
+
+    /// Another editor of this note saved. Without unsaved edits, adopt its
+    /// version now; with them, remember it so the next save keeps both.
+    private func handlePeerSave() {
+        if isDirty {
+            peerSavedSinceLoad = true
+        } else {
+            reloadFromDisk()
+        }
+    }
+
+    /// The last version Scribe itself wrote on top of the loaded base — nil
+    /// once another in-app editor of this note has saved (that write is not
+    /// one this editor's content includes).
+    private func lastOwnWrite() -> NoteFileFingerprint? {
+        guard !peerSavedSinceLoad else { return nil }
+        return store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loadedFingerprint)
     }
 
     /// Replaces the editor content with the file as it is on disk now.
@@ -261,6 +305,7 @@ final class NoteDetailViewModel: ObservableObject {
         tags = NoteStore.normalizeTags(file.frontmatter.tags)
         properties = file.frontmatter.properties()
         loadedFingerprint = entry.fingerprint
+        peerSavedSinceLoad = false
         isDirty = false
         backlinks = (try? store.backlinks(for: note.id)) ?? []
         recomputeUnresolvedLinks()

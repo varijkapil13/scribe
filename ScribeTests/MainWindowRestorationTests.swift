@@ -61,6 +61,7 @@ final class MainWindowRestorationTests: XCTestCase {
         XCTAssertEqual(ColumnVisibilityCodec.encode(.all), "all")
         XCTAssertEqual(ColumnVisibilityCodec.decode("detailOnly"), .detailOnly)
         XCTAssertEqual(ColumnVisibilityCodec.decode("all"), .all)
+        XCTAssertEqual(ColumnVisibilityCodec.decode("doubleColumn"), .all)
         XCTAssertNil(ColumnVisibilityCodec.decode(""))
         XCTAssertNil(ColumnVisibilityCodec.decode("garbage"))
     }

@@ -67,6 +67,31 @@ final class NoteUndoTests: XCTestCase {
                        "Full-text index is rebuilt")
     }
 
+    func testRestoreKeepsDiskOnlyFrontmatter() throws {
+        let created = try store.createNote(title: "Styled", body: "body")
+        store.setNoteFont(id: created.id, "Georgia")
+        XCTAssertEqual(store.noteFont(id: created.id), "Georgia")
+        let snapshot = try XCTUnwrap(NoteUndo.restorableSnapshot(noteId: created.id, store: store,
+                                                                 attachmentsRoot: tempRoot))
+        try store.deleteNote(id: created.id)
+
+        try store.restoreDeletedNote(snapshot.note, tags: snapshot.tags, extra: snapshot.extra)
+        XCTAssertEqual(store.noteFont(id: created.id), "Georgia",
+                       "Frontmatter keys that live only on disk come back too")
+    }
+
+    func testRestoreDropsADeletedNotebook() throws {
+        let notebook = try store.createNotebook(name: "Gone soon")
+        let created = try store.createNote(title: "Orphan", body: "x", notebookId: notebook.id)
+        let snapshot = try XCTUnwrap(NoteUndo.restorableSnapshot(noteId: created.id, store: store,
+                                                                 attachmentsRoot: tempRoot))
+        try store.deleteNote(id: created.id)
+        try store.deleteNotebook(id: notebook.id)
+
+        try store.restoreDeletedNote(snapshot.note, tags: snapshot.tags, extra: snapshot.extra)
+        XCTAssertNil(try XCTUnwrap(store.fetchNote(id: created.id)).notebookId)
+    }
+
     func testRestoreRebuildsOutgoingLinks() throws {
         let target = try store.createNote(title: "Target", body: "")
         let source = try store.createNote(title: "Source", body: "")

@@ -172,7 +172,10 @@ final class NotePrintRenderer: NSObject, WKNavigationDelegate {
     private func load(html: String) {
         // The vault root as base URL so relative attachment paths
         // (`attachments/<note>/<file>`) resolve for images.
-        webView.loadHTMLString(html, baseURL: AttachmentsDirectory.defaultRoot())
+        // Directory URL (trailing slash), or relative paths would resolve
+        // against the vault's parent.
+        let root = URL(fileURLWithPath: AttachmentsDirectory.defaultRoot().path, isDirectory: true)
+        webView.loadHTMLString(html, baseURL: root)
     }
 
     private func finish() {
