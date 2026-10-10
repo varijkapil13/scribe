@@ -20,6 +20,7 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section { NavigationLink { TasksSettingsScreen() } label: { Label("Tasks", systemImage: "checklist") } } // ios-tasks
                 Section {
                     Toggle("Sync tasks with iCloud", isOn: $iCloudSyncEnabled)
                     Toggle("Store notes in iCloud Drive", isOn: Binding(

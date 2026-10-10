@@ -1,9 +1,10 @@
-#if os(macOS)
+#if canImport(EventKit)
 import EventKit
 import Foundation
 import GRDB
 
-/// Kicks automatic Apple Reminders sync rounds on the Mac. Triggers: launch,
+/// Kicks automatic Apple Reminders sync rounds (Mac and iPhone / iPad; the
+/// iOS app starts it from `TasksIOSBootstrap`). Triggers: launch,
 /// the sync being enabled (or its settings changing), the app becoming active
 /// (throttled), Reminders changing (`EKEventStoreChanged`, debounced) and local
 /// task edits (GRDB observation, debounced). Every trigger self-gates on the

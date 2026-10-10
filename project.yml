@@ -220,6 +220,14 @@ targets:
       - path: Scribe/Intelligence/MeetingModels.swift
       - path: Scribe/Intelligence/TranscriptAnalyzer.swift   # ExtractedEntity + NaturalLanguage (iOS-ok)
       - path: Scribe/App/AppLaunchEnvironment.swift
+      # ios-tasks: the Mac's pure board / planner / calendar-event logic, shared
+      # (not duplicated) by ScribeiOS/Tasks. All Foundation-only.
+      - path: Scribe/UI/Tasks/Board/TaskBoardModel.swift
+      - path: Scribe/UI/Tasks/Planner/TimeGridLayout.swift
+      - path: Scribe/UI/Tasks/Planner/PlannerScheduling.swift
+      - path: Scribe/UI/Tasks/Planner/PlannerMirroredEventFilter.swift
+      - path: Scribe/Calendar/CalendarEventMatcher.swift
+      - path: Scribe/Calendar/TaskCalendarMirrorPlanner.swift
     dependencies:
       - package: GRDB.swift
         product: GRDB
@@ -234,6 +242,13 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: U8A3QH6Y84
         CODE_SIGN_STYLE: Automatic
+        # ios-tasks: Apple Reminders two-way sync + calendar events in Today /
+        # the day planner. Access is only requested when the user turns these
+        # on under Settings → Tasks.
+        INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: "Scribe keeps your tasks and Apple Reminders in sync when you turn on Reminders sync."
+        INFOPLIST_KEY_NSRemindersUsageDescription: "Scribe keeps your tasks and Apple Reminders in sync when you turn on Reminders sync."
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner."
+        INFOPLIST_KEY_NSCalendarsUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner."
 
 schemes:
   Scribe:

@@ -8,6 +8,7 @@ import SwiftUI
 
 @main
 struct ScribeiOSApp: App {
+    init() { TasksIOSBootstrap.start() } // ios-tasks: reminder actions, badge, Reminders sync
     var body: some Scene {
         WindowGroup {
             RootTabView()
