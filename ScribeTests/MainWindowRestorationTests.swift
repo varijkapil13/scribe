@@ -32,7 +32,7 @@ final class MainWindowRestorationTests: XCTestCase {
     }
 
     func testEncodingIsStableAndReadable() {
-        XCTAssertEqual(MainSelectionCodec.encode(.today), "today")
+        XCTAssertEqual(MainSelectionCodec.encode(MainSelection.today), "today")
         XCTAssertEqual(MainSelectionCodec.encode(.note("abc")), "note/abc")
         XCTAssertEqual(MainSelectionCodec.encode(.tasks(.project("p"))), "tasks/project/p")
         XCTAssertEqual(MainSelectionCodec.encode(.notes(.tag("x"))), "notes/tag/x")
