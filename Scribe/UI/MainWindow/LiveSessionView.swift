@@ -39,6 +39,11 @@ struct LiveSessionView: View {
                 .padding(.top, DesignTokens.Spacing.xl)
                 .padding(.bottom, DesignTokens.Spacing.lg)
 
+            // Meeting copilot: rolling summary, Ask now, bookmarks.
+            LiveCopilotPanel(controller: LiveCopilotController.shared)
+                .padding(.horizontal, DesignTokens.Spacing.xl)
+                .padding(.bottom, DesignTokens.Spacing.md)
+
             Divider()
 
             transcriptFeed

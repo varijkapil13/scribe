@@ -97,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         VaultCoordinator.shared.start()
 
         registerKeyboardShortcuts()
+        // Meeting copilot: live summary / Ask now / ⌃⌥M bookmarks + pre-meeting briefs.
+        MeetingCopilot.install(appState: appState)
         // App Intents (Shortcuts / Siri) entry points + Spotlight indexing.
         ScribeIntentsBridge.didFinishLaunching(self)
         observeMainWindowClose()
