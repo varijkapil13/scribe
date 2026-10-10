@@ -1,11 +1,20 @@
 import AppIntents
 import Foundation
 
+// Compiled into the macOS app AND the iOS app (project.yml → ScribeiOS).
+// Both route through their platform's `ScribeIntentsBridge`; dictation is a
+// Mac-only feature, so its intent is macOS-only.
+
 /// Starts recording a meeting — the same path as the menu bar's
 /// "Start Recording" (permission checks, note binding, calendar matching).
 struct StartRecordingIntent: AppIntent {
 
     static var title: LocalizedStringResource { "Start Recording" }
+
+    #if os(iOS)
+    /// iOS only starts microphone capture from the foreground.
+    static var openAppWhenRun: Bool { true }
+    #endif
 
     init() {}
 
@@ -30,6 +39,7 @@ struct StopRecordingIntent: AppIntent {
     }
 }
 
+#if os(macOS)
 /// Starts or stops dictation into the focused app.
 struct ToggleDictationIntent: AppIntent {
 
@@ -43,3 +53,4 @@ struct ToggleDictationIntent: AppIntent {
         return .result(dialog: dialog)
     }
 }
+#endif

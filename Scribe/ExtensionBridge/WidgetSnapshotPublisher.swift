@@ -139,13 +139,7 @@ final class WidgetSnapshotPublisher {
     }
 
     nonisolated static func taskItem(_ task: TodoTask) -> ScribeSharedSnapshot.TaskItem {
-        ScribeSharedSnapshot.TaskItem(
-            id: task.id,
-            title: task.title,
-            due: task.dueAt,
-            priority: priority(task.priority),
-            isCompleted: task.isCompleted
-        )
+        ScribeWidgetSnapshotBuilder.taskItem(task)
     }
 
     nonisolated static func meeting(_ event: CalendarEventInfo) -> ScribeSharedSnapshot.Meeting {
@@ -159,12 +153,7 @@ final class WidgetSnapshotPublisher {
     }
 
     nonisolated static func priority(_ priority: TodoTask.Priority?) -> ScribeSharedSnapshot.Priority? {
-        switch priority {
-        case .high?:   return .high
-        case .medium?: return .medium
-        case .low?:    return .low
-        case nil:      return nil
-        }
+        ScribeWidgetSnapshotBuilder.priority(priority)
     }
 
     /// Pings `onChange` after every committed write to `tasks`.

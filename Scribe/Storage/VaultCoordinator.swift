@@ -51,7 +51,9 @@ final class VaultCoordinator: ObservableObject {
 
     private let noteStore: NoteStore
     private let dbManager: DatabaseManager
-    private var watcher: NoteVaultWatcher?
+    /// FSEvents watcher today (`NoteVaultWatcher`), behind the portable
+    /// `VaultChangeObserving` protocol (D-Sync-2).
+    private var watcher: (any VaultChangeObserving)?
     /// Serial, coalescing reconciler for the current vault. Replaced on
     /// every vault swap.
     private var scheduler: NoteReconcileScheduler?

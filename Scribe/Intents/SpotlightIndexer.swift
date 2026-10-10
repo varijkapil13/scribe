@@ -49,6 +49,7 @@ enum SpotlightItemID: Hashable, Sendable {
         }
     }
 
+    #if os(macOS)
     /// Where the main window goes when the result is opened.
     var selection: MainSelection {
         switch self {
@@ -56,6 +57,7 @@ enum SpotlightItemID: Hashable, Sendable {
         case .task(let id): return .task(id)
         }
     }
+    #endif
 }
 
 // MARK: - Records + planning (pure)
@@ -427,6 +429,9 @@ final class SpotlightIndexer {
 
     // MARK: - Continuing a Spotlight result
 
+    // macOS only: on iOS the shell continues Spotlight results itself
+    // (CSSearchableItemActionType → ScribeMobileRoute.fromSpotlightIdentifier).
+    #if os(macOS)
     /// Opens the note / task behind a Spotlight result in the main window.
     /// Returns false when `activity` isn't a Scribe Spotlight result.
     @discardableResult
@@ -454,4 +459,5 @@ final class SpotlightIndexer {
         ScribeMainWindowNavigator.show(item.selection)
         return true
     }
+    #endif
 }

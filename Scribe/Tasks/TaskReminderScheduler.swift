@@ -65,6 +65,11 @@ final class TaskReminderScheduler: NSObject, TaskReminderScheduling {
     /// scheduler knowing about macOS-only features.
     var externalResponseHandler: (@MainActor (String, String, [String: String]) -> Void)?
 
+    /// Called when the user taps a task reminder itself (the default action),
+    /// with the task id. The iOS app uses it to open the task; nil (the Mac)
+    /// keeps the tap a no-op.
+    var openTaskHandler: (@MainActor (String) -> Void)?
+
     // MARK: - Init
 
     init(center: UNUserNotificationCenterAdapter = SystemNotificationCenter(),
@@ -259,6 +264,8 @@ extension TaskReminderScheduler: UNUserNotificationCenterDelegate {
                 task.remindAt = Self.snoozeDate()
                 try taskStore.updateTask(task)
                 await schedule(task)
+            case UNNotificationDefaultActionIdentifier:
+                openTaskHandler?(taskId)
             default:
                 break
             }

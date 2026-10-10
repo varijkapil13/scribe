@@ -2,7 +2,9 @@
 
 This tiny npm project builds the **self-contained, offline** JavaScript bundle
 for Scribe's markdown editor (CodeMirror 6) that runs inside a `WKWebView` on
-macOS (`WebMarkdownEditor.swift`).
+macOS (`WebMarkdownEditor.swift`) and iPhone / iPad
+(`ScribeiOS/Notes/IOSWebMarkdownEditor.swift`), both driven by the shared
+`WebEditorCore.swift`.
 
 The **build output is committed** to `../Scribe/Resources/Editor/` so the app
 never needs node/npm at build or run time. This directory only matters when you
@@ -35,6 +37,10 @@ want to **rebuild** the bundle (upgrade CodeMirror, tweak the theme, etc.).
   note's attachments folder → markdown link inserted.
 - `src/images.js` — live-preview rendering of local `![](attachments/…)`
   images via `scribe-asset://vault/…` (remote images are never fetched).
+- `src/touch.js` — touch support for the iPhone / iPad host: a still tap on a
+  widget (task checkbox, `[[wiki link]]`, embed title, slash-menu item) acts
+  like the Mac's click instead of moving the caret / opening the keyboard.
+  (`editor.css` also keeps the hover-only fold chevrons visible on touch.)
 - `src/diagrams.js` — mermaid (offline, **lazy-loaded** via dynamic import on
   first mermaid render) + plantuml (encoded URL via
   `https://www.plantuml.com/plantuml/svg/…`) rendering, cached by source hash.

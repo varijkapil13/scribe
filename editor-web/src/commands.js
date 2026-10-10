@@ -12,9 +12,10 @@
 // Format commands implemented here (all toggle, all multi-selection aware):
 //   bold, italic, strikethrough, code, link,
 //   heading (arg: 0 = paragraph, 1–6), bulletList, orderedList, checklist,
-//   blockquote
+//   blockquote, wikiLink, undo, redo
 
 import { EditorSelection } from "@codemirror/state";
+import { undo, redo } from "@codemirror/commands";
 import { registerCommand } from "./bridge.js";
 
 /** Adds `handlers` (name → fn(arg, view)) to the shared command registry in
@@ -81,6 +82,36 @@ function insertLink(view) {
     return {
       changes: { from: range.from, to: range.to, insert },
       range: EditorSelection.cursor(caret),
+    };
+  });
+  view.dispatch(view.state.update(tr, { scrollIntoView: true, userEvent: "input.format" }));
+  view.focus();
+  return true;
+}
+
+/** `[[selection]]` — an empty range inserts `[[]]` with the caret inside,
+ *  which opens the `[[` note-title completion. Already-wrapped selections are
+ *  unwrapped (like the inline marks). */
+function insertWikiLink(view) {
+  const doc = view.state.doc;
+  const tr = view.state.changeByRange((range) => {
+    const before = doc.sliceString(Math.max(0, range.from - 2), range.from);
+    const after = doc.sliceString(range.to, Math.min(doc.length, range.to + 2));
+    if (!range.empty && before === "[[" && after === "]]") {
+      return {
+        changes: [
+          { from: range.from - 2, to: range.from, insert: "" },
+          { from: range.to, to: range.to + 2, insert: "" },
+        ],
+        range: EditorSelection.range(range.from - 2, range.to - 2),
+      };
+    }
+    const text = doc.sliceString(range.from, range.to);
+    return {
+      changes: { from: range.from, to: range.to, insert: `[[${text}]]` },
+      range: text.length > 0
+        ? EditorSelection.range(range.from + 2, range.to + 2)
+        : EditorSelection.cursor(range.from + 2),
     };
   });
   view.dispatch(view.state.update(tr, { scrollIntoView: true, userEvent: "input.format" }));
@@ -193,5 +224,10 @@ export function installFormatCommands(view) {
     orderedList: (_arg, v) => toggleLinePrefix(v, "ordered"),
     checklist: (_arg, v) => toggleLinePrefix(v, "check"),
     blockquote: (_arg, v) => toggleLinePrefix(v, "quote"),
+    wikiLink: (_arg, v) => insertWikiLink(v),
+    // Touch hosts (the iOS format bar) have no ⌘Z; the Mac menu keeps using
+    // the keymap, so these are only reached through the bridge.
+    undo: (_arg, v) => undo(v),
+    redo: (_arg, v) => redo(v),
   });
 }

@@ -15,8 +15,13 @@
 //   change, kept on an observable model so UI (a table of contents) can show it
 //   and jump with `scrollToLine`.
 // - `EditorCompletionData`: note titles + tags pushed for `[[` / `#` completion.
+//
+// Everything but `WebEditorCommandCenter` (menu routing through NSApp's key
+// window, macOS only) is portable and also compiled into the iOS target.
 
+#if os(macOS)
 import AppKit
+#endif
 import Foundation
 import Observation
 
@@ -172,7 +177,7 @@ final class WebEditorModel {
     var outline: [EditorOutlineHeading] = []
 
     @ObservationIgnored
-    weak var coordinator: WebMarkdownEditor.Coordinator?
+    weak var coordinator: WebEditorCoordinator?
 
     init() {}
 
@@ -191,6 +196,7 @@ final class WebEditorModel {
 
 // MARK: - Routing
 
+#if os(macOS)
 /// Routes commands from menus to the active web editor.
 @MainActor
 final class WebEditorCommandCenter {
@@ -247,3 +253,4 @@ final class WebEditorCommandCenter {
         return inWindow.last
     }
 }
+#endif

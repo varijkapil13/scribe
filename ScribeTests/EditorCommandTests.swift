@@ -19,6 +19,14 @@ final class EditorCommandTests: XCTestCase {
         }
     }
 
+    func testTouchFormatBarCommandNames() {
+        XCTAssertEqual(EditorCommand.wikiLink.jsName, "wikiLink")
+        XCTAssertEqual(EditorCommand.undo.jsName, "undo")
+        XCTAssertEqual(EditorCommand.redo.jsName, "redo")
+        XCTAssertNil(EditorCommand.wikiLink.argument)
+        XCTAssertTrue(EditorCommand.wikiLink.javaScript.contains("window.scribeCommand('wikiLink',null)"))
+    }
+
     func testHeadingArgumentIsClamped() {
         XCTAssertEqual(EditorCommand.heading(0).argument, 0)
         XCTAssertEqual(EditorCommand.heading(3).argument, 3)

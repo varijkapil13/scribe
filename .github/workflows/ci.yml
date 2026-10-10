@@ -138,9 +138,10 @@ jobs:
             build
 
   # Compile the iOS/iPadOS app for the simulator (unsigned). The ScribeiOS
-  # target is the notes+tasks client (no recording). Building here is the only
-  # automated guard for the iOS port without physical devices. Starts from the
-  # M0a stub and grows as portable sources are added to the target.
+  # target is the iPhone/iPad app (notes, tasks, microphone recording, intents)
+  # and embeds its extensions (recording Live Activity, widgets + controls,
+  # Share), which the scheme builds as dependencies. Building here is the only
+  # automated guard for the iOS port without physical devices.
   build-ios:
     name: build iOS app (unsigned)
     runs-on: xcode-27

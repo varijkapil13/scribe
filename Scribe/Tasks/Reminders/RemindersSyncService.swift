@@ -1,4 +1,4 @@
-#if os(macOS)
+#if canImport(EventKit)
 import Combine
 import Foundation
 
@@ -17,7 +17,7 @@ enum RemindersSyncRoundError: LocalizedError {
     }
 }
 
-/// Two-way sync between Scribe tasks and Apple Reminders (macOS).
+/// Two-way sync between Scribe tasks and Apple Reminders (macOS, iOS).
 ///
 /// A round: snapshot every reminder (EventKit) and every task (GRDB) plus the
 /// stored links → `RemindersSyncPlanner.plan` → apply the actions → refresh
