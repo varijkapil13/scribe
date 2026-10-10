@@ -12,8 +12,11 @@ enum ScribeUserActivity {
 
     nonisolated static var allTypes: [String] { [viewNote, viewTask] }
 
+    #if os(macOS)
     /// The destination a continued activity should open, or nil when the
-    /// type is not Scribe's or the id is missing / blank.
+    /// type is not Scribe's or the id is missing / blank. (`MainSelection` is
+    /// the macOS main window's model; the iOS shell maps activities through
+    /// `ScribeMobileRoute.fromActivity(type:userInfo:)` instead.)
     nonisolated static func destination(activityType: String, userInfo: [AnyHashable: Any]?) -> MainSelection? {
         guard let raw = userInfo?[idKey] as? String else { return nil }
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,6 +27,7 @@ enum ScribeUserActivity {
         default:       return nil
         }
     }
+    #endif
 }
 
 /// UserDefaults keys for the "Links & Handoff" settings pane.
