@@ -129,11 +129,13 @@ final class CalendarService: ObservableObject {
         updateAccessState()
         guard isActive else { return nil }
         let window = CalendarEventMatcher.defaultWindow
-        // Wide enough to include long events already in progress.
+        // Wide enough to include long events already in progress. Task time
+        // blocks Scribe wrote itself are never a meeting to name a note after.
+        let mirrored = TaskCalendarMirrorService.shared.mirroredEventIdentifiers()
         let events = store.events(
             from: date.addingTimeInterval(-12 * 60 * 60),
             to: date.addingTimeInterval(window + 60)
-        )
+        ).filter { !mirrored.contains($0.id) }
         return CalendarEventMatcher.bestMatch(in: events, at: date, window: window)
     }
 
