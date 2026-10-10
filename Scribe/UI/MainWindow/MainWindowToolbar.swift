@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 
 /// The main window's customizable toolbar (`.toolbar(id: MainWindowToolbar.id)`).
 ///
@@ -52,6 +53,7 @@ struct MainWindowToolbar: CustomizableToolbarContent {
                 .onTapGesture {
                     if isRecording { onShowLive() }
                 }
+                .popoverTip(ScribeTips.dictation)
         }
 
         ToolbarItem(id: "newNote", placement: .primaryAction) {
@@ -67,12 +69,13 @@ struct MainWindowToolbar: CustomizableToolbarContent {
         ToolbarItem(id: "commandBar", placement: .primaryAction) {
             Button {
                 onCommandBar()
+                ScribeTips.quickSearchUsed()
             } label: {
-                Label("Command Bar", systemImage: "command")
+                Label("Search", systemImage: "magnifyingglass")
             }
-            .help("Command bar (⌘K)")
+            .help("Search and commands (⌘K)")
+            .popoverTip(ScribeTips.quickSearch)
         }
-        .defaultCustomization(.hidden)
 
         ToolbarItem(id: "pauseResume", placement: .primaryAction) {
             if isRecording {
@@ -88,6 +91,7 @@ struct MainWindowToolbar: CustomizableToolbarContent {
 
         ToolbarItem(id: "record", placement: .primaryAction) {
             Button {
+                ScribeTips.recordUsed()
                 onToggleRecording()
             } label: {
                 Label(
@@ -97,6 +101,7 @@ struct MainWindowToolbar: CustomizableToolbarContent {
                 .foregroundStyle(isRecording ? DesignTokens.Palette.recording : .primary)
             }
             .help(isRecording ? "Stop the current session" : "Start a new recording")
+            .popoverTip(ScribeTips.record)
         }
     }
 }

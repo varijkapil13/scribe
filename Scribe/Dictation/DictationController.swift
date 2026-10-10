@@ -102,6 +102,7 @@ final class DictationController: ObservableObject {
 
     func start() {
         guard !isActive else { return }
+        ScribeTips.dictationUsed()
         hideTask?.cancel()
         segments = []
         partial = ""
