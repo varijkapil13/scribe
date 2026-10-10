@@ -162,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // toggle and on a CloudKit-entitled build (CloudKitAvailability).
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.start()
+            RemindersSyncScheduler.shared.start(database: DatabaseManager.shared.database)
         }
 
         // Proactively request microphone and speech-recognition authorization
@@ -198,6 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func applicationDidBecomeActive(_ notification: Notification) {
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.appDidBecomeActive()
+            RemindersSyncScheduler.shared.appDidBecomeActive()
         }
         Task {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)

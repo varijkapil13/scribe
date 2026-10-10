@@ -699,6 +699,8 @@ final class DatabaseManager: @unchecked Sendable {
             try db.create(index: "projects_areaId_idx", on: "projects", columns: ["areaId"])
         }
 
+        registerRemindersLinkMigration(in: &migrator)
+
         return migrator
     }
 
