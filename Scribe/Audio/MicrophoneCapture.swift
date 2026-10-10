@@ -1,8 +1,6 @@
-// AVFAudio's converter-input block is annotated `@Sendable`, but
-// `AVAudioConverter.convert` invokes it synchronously on the calling thread —
-// there is no real concurrency. `@preconcurrency` strips those imported
-// Sendable annotations so capturing the (non-Sendable) source buffer in the
-// block is not flagged.
+// `@preconcurrency`: AVFAudio's tap and converter blocks carry imported
+// `@Sendable` annotations that don't reflect how they're actually invoked
+// (see AudioConversion).
 @preconcurrency import AVFoundation
 import CoreAudio
 
@@ -281,8 +279,6 @@ final class MicrophoneCapture: @unchecked Sendable {
             throw MicrophoneCaptureError.noInputAvailable
         }
 
-        let bufferCapacity = AVAudioFrameCount(sampleRate * 0.1) // 100 ms output buffer
-
         // One-shot log of the raw hardware format + first-buffer peak so we
         // can distinguish "mic delivers silence" from "our converter loses
         // the audio". Both symptoms produce 0.0 peaks downstream.
@@ -336,23 +332,18 @@ final class MicrophoneCapture: @unchecked Sendable {
 
             // (Re)build the converter when first seen or when the input format
             // changes under us, so a mid-session mic switch never crashes.
+            // Otherwise the same converter is reused so the resampler stays
+            // continuous across buffers.
             if converter?.inputFormat != source.format {
                 converter = AVAudioConverter(from: source.format, to: targetFormat)
             }
             guard let converter else { return }
 
-            guard let convertedBuffer = AVAudioPCMBuffer(
-                pcmFormat: targetFormat,
-                frameCapacity: bufferCapacity
-            ) else { return }
-
-            var error: NSError?
-            let status = converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
-                outStatus.pointee = .haveData
-                return source
-            }
-
-            guard status != .error, error == nil, convertedBuffer.frameLength > 0 else { return }
+            // Hands `source` to the converter exactly once, into an output
+            // buffer sized for the rate change (see AudioConversion) — a
+            // fixed-size output fed by an always-`.haveData` block re-read the
+            // same hardware buffer and duplicated audio.
+            guard let convertedBuffer = AudioConversion.convert(source, using: converter) else { return }
             callback(convertedBuffer, time)
         }
 
