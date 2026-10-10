@@ -19,6 +19,16 @@ final class NoteDetailViewModel: ObservableObject {
     /// note title. Recomputed on load and on save (not per keystroke) so the
     /// editor can surface a subtle "broken link" indicator.
     @Published var unresolvedLinkCount: Int = 0
+    /// Sync-conflict copies of this note found in the vault (iCloud /
+    /// Dropbox `(conflicted copy)` files, and the copies Scribe writes when
+    /// an external edit races an unsaved in-app edit).
+    @Published private(set) var conflicts: [NoteConflictDetector.Match] = []
+
+    /// Fingerprint of the file version the editor content is based on
+    /// (recorded on load, after every save, and on reload). Before writing,
+    /// the file on disk is compared against it so an external edit is never
+    /// overwritten blindly.
+    private(set) var loadedFingerprint: NoteFileFingerprint?
 
     private let store: NoteStore
     /// Exposed for view-level features (e.g. Export) that need the same
@@ -29,6 +39,7 @@ final class NoteDetailViewModel: ObservableObject {
     private let onNavigate: (String) -> Void
     private var autosaveCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
+    private var vaultChangeCancellable: AnyCancellable?
 
     /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
     /// across chip selections so analysis state survives expansion-collapse
@@ -48,7 +59,22 @@ final class NoteDetailViewModel: ObservableObject {
         self.transcriptStore = transcriptStore
         self.taskStore = taskStore
         self.onNavigate = onNavigate
+        // The editor's base version and its fingerprint must describe the
+        // same bytes: take the body from the file we fingerprint (callers
+        // may hand in a DB row whose body is only a placeholder).
+        if let entry = store.diskEntry(forNoteId: note.id) {
+            self.note.body = entry.file.body
+            loadedFingerprint = entry.fingerprint
+        }
         reload()
+        refreshConflicts(announce: true)
+        vaultChangeCancellable = NotificationCenter.default
+            .publisher(for: .noteVaultFilesChanged)
+            .map { NoteVaultChange.noteIds(from: $0) }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] ids in
+                self?.handleExternalVaultChange(noteIds: ids)
+            }
         autosaveCancellable = $isDirty
             .filter { $0 }
             .debounce(for: .seconds(1.5), scheduler: DispatchQueue.main)
@@ -101,20 +127,35 @@ final class NoteDetailViewModel: ObservableObject {
     /// on a body/tag save, so the two write paths don't clobber each other.
     func updateProperties(_ updated: [NoteProperty]) {
         guard let fileStore = store.fileStore,
-              let url = try? fileStore.findURL(for: note.id),
-              var file = try? fileStore.read(at: url) else {
+              let entry = try? fileStore.locate(id: note.id) else {
             // No disk backing — keep the edit live in-memory so the UI still
             // reflects it, but there's nowhere to persist.
             properties = updated
             return
         }
+        // This is a read-modify-write of the *current* file, so it never
+        // drops an external body edit. Whether the editor is still in sync
+        // with disk decides what happens to the editor afterwards.
+        let lastOwn = store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loadedFingerprint)
+        let wasInSync = NoteExternalEditPolicy.isUnchanged(loaded: loadedFingerprint, current: entry.fingerprint)
+            || (lastOwn.map { entry.fingerprint.describesSameContent(as: $0) } ?? false)
+        var file = entry.file
         file.frontmatter.applyProperties(updated)
         do {
-            VaultWriteGuard.shared.recordSelfWrite()
             _ = try fileStore.write(file)
             // Re-derive from what was actually written so the bound list
             // matches disk (empty values dropped, order normalised).
             properties = file.frontmatter.properties()
+            if wasInSync {
+                loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id)
+            } else if !isDirty {
+                // Disk had an external edit and the editor has nothing
+                // unsaved: adopt the disk body we just wrote back.
+                note.body = file.body
+                loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id)
+            }
+            // else: unsaved in-app edits on top of a stale base — leave
+            // `loadedFingerprint` stale so the next save keeps both versions.
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -140,20 +181,110 @@ final class NoteDetailViewModel: ObservableObject {
     /// The current on-disk frontmatter for this note, if a file store is wired
     /// and a file exists. Used to read/seed typed properties.
     private func currentFrontmatter() -> NoteFrontmatter? {
-        guard let fileStore = store.fileStore,
-              let url = try? fileStore.findURL(for: note.id),
-              let file = try? fileStore.read(at: url) else { return nil }
-        return file.frontmatter
+        store.diskEntry(forNoteId: note.id)?.file.frontmatter
     }
 
     func save() {
+        var keptConflictCopy = false
+        // Never overwrite an external edit blindly: compare the file on disk
+        // with the version this editor was loaded from.
+        if let loaded = loadedFingerprint {
+            let current = store.currentFileFingerprint(forNoteId: note.id, reusing: loaded)
+            switch NoteExternalEditPolicy.decide(
+                loaded: loaded,
+                current: current,
+                lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
+                hasUnsavedChanges: isDirty
+            ) {
+            case .write:
+                break
+            case .reloadFromDisk:
+                reloadFromDisk()
+                return
+            case .keepBoth:
+                do {
+                    if let copy = try store.preserveDiskVersionAsConflictCopy(noteId: note.id) {
+                        errorMessage = "\u{201C}\(note.title)\u{201D} was changed outside Scribe while you were editing. "
+                            + "Your version was saved; the other version was kept as "
+                            + "\u{201C}\(copy.deletingPathExtension().lastPathComponent)\u{201D}."
+                        keptConflictCopy = true
+                    }
+                } catch {
+                    // Couldn't preserve the external version — don't destroy it.
+                    errorMessage = "\u{201C}\(note.title)\u{201D} was changed outside Scribe and couldn't be saved without losing that change: \(error.localizedDescription)"
+                    return
+                }
+            }
+        }
         do {
             try store.updateNote(note, tags: tags)
+            loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
             backlinks = (try? store.backlinks(for: note.id)) ?? []
             recomputeUnresolvedLinks()
             isDirty = false
         } catch {
             errorMessage = error.localizedDescription
+        }
+        if keptConflictCopy {
+            refreshConflicts(announce: false)
+        }
+    }
+
+    // MARK: - External edits
+
+    /// Called when the vault watcher reconciled changes. `noteIds` nil means
+    /// "unknown — check". With unsaved edits nothing happens here: the next
+    /// save detects the change and keeps both versions.
+    private func handleExternalVaultChange(noteIds: Set<String>?) {
+        if let noteIds, !noteIds.contains(note.id) { return }
+        guard !isDirty, let loaded = loadedFingerprint else { return }
+        let current = store.currentFileFingerprint(forNoteId: note.id, reusing: loaded)
+        let decision = NoteExternalEditPolicy.decide(
+            loaded: loaded,
+            current: current,
+            lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
+            hasUnsavedChanges: false
+        )
+        if decision == .reloadFromDisk {
+            reloadFromDisk()
+        }
+    }
+
+    /// Replaces the editor content with the file as it is on disk now.
+    private func reloadFromDisk() {
+        guard let entry = store.diskEntry(forNoteId: note.id) else { return }
+        let file = entry.file
+        note.body = file.body
+        note.title = file.frontmatter.title
+        note.notebookId = file.frontmatter.notebookId
+        note.updatedAt = file.frontmatter.updatedAt
+        tags = NoteStore.normalizeTags(file.frontmatter.tags)
+        properties = file.frontmatter.properties()
+        loadedFingerprint = entry.fingerprint
+        isDirty = false
+        backlinks = (try? store.backlinks(for: note.id)) ?? []
+        recomputeUnresolvedLinks()
+    }
+
+    /// Looks up conflict copies of this note off the main actor (the
+    /// detector walks the vault) and publishes them. With `announce`, a
+    /// non-empty result is reported through the banner once.
+    private func refreshConflicts(announce: Bool) {
+        guard let fileStore = store.fileStore else { return }
+        let noteId = note.id
+        let originalName = store.diskEntry(forNoteId: noteId)?.url.deletingPathExtension().lastPathComponent
+        Task { [weak self] in
+            let found: [NoteConflictDetector.Match] = await Task.detached(priority: .utility) {
+                (try? NoteConflictDetector(fileStore: fileStore)
+                    .conflicts(forNoteId: noteId, originalName: originalName)) ?? []
+            }.value
+            guard let self, self.note.id == noteId else { return }
+            self.conflicts = found
+            if announce, let first = found.first {
+                self.errorMessage = found.count == 1
+                    ? "This note has a conflicting copy: \u{201C}\(first.displayName)\u{201D}."
+                    : "This note has \(found.count) conflicting copies, e.g. \u{201C}\(first.displayName)\u{201D}."
+            }
         }
     }
 

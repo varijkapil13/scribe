@@ -78,6 +78,9 @@ struct MeetingDetectionPolicy {
     private(set) var current: MeetingApp?
     private var candidate: (app: MeetingApp, since: Date)?
     private var lastSeen: Date?
+    /// Inputs of the latest sample, for ``nextEvaluation()``.
+    private var lastSampleHadMeetingApp = false
+    private var lastCameraInUse = false
 
     init(startDelay: TimeInterval = 3, endGrace: TimeInterval = 15, cameraStartDelay: TimeInterval = 1) {
         self.startDelay = startDelay
@@ -91,6 +94,8 @@ struct MeetingDetectionPolicy {
     ///   it is, the meeting starts after `cameraStartDelay` instead of
     ///   `startDelay` (whichever is shorter).
     mutating func update(active: [MeetingApp], now: Date, cameraInUse: Bool = false) -> Event? {
+        lastCameraInUse = cameraInUse
+        lastSampleHadMeetingApp = !active.isEmpty
         guard let primary = Self.primary(of: active) else {
             candidate = nil
             if let meeting = current, let lastSeen, now.timeIntervalSince(lastSeen) >= endGrace {
@@ -120,6 +125,26 @@ struct MeetingDetectionPolicy {
         current = nil
         candidate = nil
         lastSeen = nil
+        lastSampleHadMeetingApp = false
+        lastCameraInUse = false
+    }
+
+    /// When a new sample could produce an event even if nothing changes in
+    /// between: the moment a pending candidate has held the mic long enough,
+    /// or the moment an idle meeting's end grace runs out. `nil` when only a
+    /// change in mic usage can produce the next event.
+    ///
+    /// Lets an event-driven detector sample again exactly when needed instead
+    /// of polling on a short interval.
+    func nextEvaluation() -> Date? {
+        if let candidate {
+            let delay = lastCameraInUse ? min(startDelay, cameraStartDelay) : startDelay
+            return candidate.since.addingTimeInterval(delay)
+        }
+        if current != nil, !lastSampleHadMeetingApp, let lastSeen {
+            return lastSeen.addingTimeInterval(endGrace)
+        }
+        return nil
     }
 
     /// The app to attribute the meeting to when several hold the mic: a

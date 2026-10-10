@@ -12,12 +12,19 @@
 // with no sidecar font files. All emitted chunks are self-contained local JS
 // (no CDN URLs); they ship inside Scribe/Resources/Editor/ and load over
 // file:// (WKWebView has read access to that folder), so the only runtime
-// network use remains the PlantUML image fetch.
+// network use remains the PlantUML image fetch (off by default; opt-in via the
+// "Render PlantUML diagrams with plantuml.com" Settings toggle).
 //
 // Output filenames are deterministic (no content hashes) so the committed file
 // set is predictable: editor.bundle.js + chunks/*.js.
 
 import { build } from "esbuild";
+import { rmSync } from "node:fs";
+
+// Chunk names carry a content hash, so a rebuild after a dependency or source
+// change emits NEW chunk files. Remove the previous chunks first so stale,
+// unreferenced files don't accumulate in the committed output.
+rmSync("../Scribe/Resources/Editor/chunks", { recursive: true, force: true });
 
 await build({
   entryPoints: { "editor.bundle": "src/editor.js" },

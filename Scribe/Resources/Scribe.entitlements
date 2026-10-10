@@ -17,6 +17,15 @@
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 
+	<!--
+	  Hardened Runtime resource access: EventKit (calendar events today,
+	  reminders too — Hardened Runtime has no separate Reminders entitlement).
+	  Without it the TCC prompt never appears and access is silently denied in
+	  notarized builds, even with NSCalendarsFullAccessUsageDescription set.
+	-->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+
 	<!-- Read/write access to user-selected files (NSSavePanel for export). -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>

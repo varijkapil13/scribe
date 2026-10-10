@@ -55,6 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // sessions that no longer exist (background, best-effort).
         if !AppLaunchEnvironment.isUITesting {
             AppState.runAudioHousekeeping(store: appState.transcriptStore)
+            // Diarization scratch audio left by a crash / quit mid-run.
+            let launchedAt = Date()
+            Task.detached(priority: .utility) {
+                let removed = SpeakerDiarizationCapture.removeLeftoverScratch(createdBefore: launchedAt)
+                if removed > 0 {
+                    Log.app.info("Removed \(removed) leftover diarization scratch folder(s).")
+                }
+            }
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves
@@ -94,8 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         // Start MCP server if the user had it enabled in a previous session.
         if UserDefaults.standard.bool(forKey: "mcpEnabled") {
-            let port = UserDefaults.standard.integer(forKey: "mcpPort")
-            MCPServer.shared.start(port: UInt16(port > 0 ? port : 3333))
+            // sanitize() never traps: unset/out-of-range values fall back to 3333.
+            let port = MCPPortPolicy.sanitize(UserDefaults.standard.integer(forKey: "mcpPort"))
+            MCPServer.shared.start(port: port)
         }
         // Reminder category + delegate. Authorization is requested lazily the
         // first time a task with `remindAt` is saved, not here — that keeps
@@ -121,9 +130,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // where there is no audio stack.
         if !AppLaunchEnvironment.isUITesting {
             MeetingDetector.shared.start(
-                isRecording: { [weak self] in self?.appState?.isTranscribing ?? false },
+                // A recording that is still starting counts as recording, so
+                // detection never offers (or auto-starts) a second one.
+                isRecording: { [weak self] in
+                    guard let state = self?.appState else { return false }
+                    return state.isTranscribing || state.isStartingSession
+                },
+                currentSessionId: { [weak self] in self?.appState?.currentSessionId },
                 startRecording: { [weak self] app, forceNewNote in
-                    await self?.startRecording(detectedMeeting: app, forceNewNote: forceNewNote)
+                    await self?.startRecordingSession(detectedMeeting: app, forceNewNote: forceNewNote)
                 },
                 stopRecording: { [weak self] in await self?.stopRecording() }
             )
@@ -136,6 +151,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 await self?.startRecording(calendarEvent: event)
             }
             CalendarService.shared.start()
+        }
+
+        // iCloud task sync on the Mac: launch / toggle-on / app-active
+        // (throttled) / local edits (debounced). Self-gates on the opt-in
+        // toggle and on a CloudKit-entitled build (CloudKitAvailability).
+        if !AppLaunchEnvironment.isUITesting {
+            TaskSyncScheduler.shared.start()
         }
 
         // Proactively request microphone and speech-recognition authorization
@@ -160,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        if !AppLaunchEnvironment.isUITesting {
+            TaskSyncScheduler.shared.appDidBecomeActive()
+        }
         Task {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }
@@ -254,8 +279,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // MARK: - Recording Actions
 
     /// Toggles recording on or off depending on the current state.
+    /// While a start is still in flight (e.g. downloading the speech model)
+    /// the toggle cancels it.
     func toggleRecording() async {
-        if appState.isTranscribing {
+        if appState.isTranscribing || appState.isStartingSession {
             await stopRecording()
         } else {
             await startRecording()
@@ -277,7 +304,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         forceNewNote: Bool = false,
         calendarEvent: CalendarEventInfo? = nil
     ) async {
-        guard !appState.isTranscribing else { return }
+        await startRecordingSession(
+            detectedMeeting: detectedMeeting,
+            forceNewNote: forceNewNote,
+            calendarEvent: calendarEvent
+        )
+    }
+
+    /// ``startRecording(detectedMeeting:forceNewNote:calendarEvent:)``, but
+    /// returns the id of the session *this call* started — nil when it was
+    /// refused (another recording running or starting), cancelled or failed.
+    /// Meeting detection uses it to know which recording is its own, so a
+    /// manual start racing an auto-start is never mistaken for detection's.
+    @discardableResult
+    func startRecordingSession(
+        detectedMeeting: MeetingApp? = nil,
+        forceNewNote: Bool = false,
+        calendarEvent: CalendarEventInfo? = nil
+    ) async -> String? {
+        // Claim the start gate before the first await: `isTranscribing` only
+        // flips once audio is running, so two starts (auto-record + a click)
+        // would otherwise both get through.
+        guard appState.beginStartingSession() else {
+            Log.app.info("Ignoring start request: a recording is already running or starting.")
+            return nil
+        }
+        defer { appState.endStartingSession() }
         // Verify permissions before touching audio hardware so we can show the
         // user a clear alert instead of silently failing.
         let micStatus = await Permissions.checkMicrophonePermission()
@@ -287,7 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 message: "Scribe needs microphone access to record. Grant permission in System Settings → Privacy & Security → Microphone.",
                 panel: "Privacy_Microphone"
             )
-            return
+            return nil
         }
 
         let speechStatus = await SpeechRecognizerEngine.checkAuthorization()
@@ -297,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 message: "Scribe needs speech recognition access to transcribe audio. Grant permission in System Settings → Privacy & Security → Speech Recognition.",
                 panel: "Privacy_SpeechRecognition"
             )
-            return
+            return nil
         }
 
         // If the user wants system audio, check screen-recording permission.
@@ -317,11 +369,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             switch choice {
             case .openSettings:
                 Permissions.openSystemPreferences(for: "Privacy_ScreenCapture")
-                return
+                return nil
             case .continueMicOnly:
                 captureSystemAudio = false
             case .cancel:
-                return
+                return nil
             }
         }
 
@@ -351,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 message: error.localizedDescription,
                 panel: nil
             )
-            return
+            return nil
         }
 
         // Auto-create path: hand the freshly created meeting note to the window
@@ -390,12 +442,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 try await appState.startSession(noteId: resolved.noteId)
             }
             ConsentDisclosure.recordingDidStart()
+            return appState.currentSessionId
+        } catch is CancellationError {
+            // Stopped while starting: nothing to report.
+            return nil
+        } catch AppStateError.speechStartFailed {
+            // Already surfaced through the speech engine's error handler.
+            return nil
         } catch {
             showPermissionAlert(
                 title: "Couldn't Start Recording",
                 message: error.localizedDescription,
                 panel: nil
             )
+            return nil
         }
     }
 

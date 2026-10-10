@@ -21,6 +21,10 @@ struct NoteEditorView: View {
 
     // Fall back to the old always-on toolbar for accessibility / preference.
     @AppStorage("noteEditor.persistentToolbar") private var persistentToolbar: Bool = false
+    /// Opt-in plantuml.com rendering for ```plantuml``` fences (privacy: off by
+    /// default). Toggled in Settings › General › Diagrams.
+    @AppStorage(PlantUMLRenderingPreference.remoteEnabledKey)
+    private var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -69,7 +73,8 @@ struct NoteEditorView: View {
                     colorScheme: colorScheme,
                     fontSize: bodyFontSize,
                     knownTitles: knownTitles,
-                    onWikiLink: { anchor in onNavigate(anchor) }
+                    onWikiLink: { anchor in onNavigate(anchor) },
+                    plantUMLRemoteEnabled: plantUMLRemoteEnabled
                 )
                 // Full width by default. The finite presets (Regular/Wide)
                 // centre the text column at the chosen reading measure

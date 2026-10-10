@@ -264,7 +264,10 @@ enum MeetingHooks {
             if result.succeeded {
                 Log.app.info("Post-meeting hook succeeded: \(path, privacy: .public)")
             } else {
-                Log.app.error("Post-meeting hook failed: \(result.failureDescription, privacy: .public)")
+                // failureDescription carries the hook's stderr tail, which may
+                // include meeting content or secrets — keep it out of public logs.
+                let hookName = (path as NSString).lastPathComponent
+                Log.app.error("Post-meeting hook failed: \(hookName, privacy: .public): \(result.failureDescription, privacy: .private)")
                 failures.append(result.failureDescription)
             }
         }

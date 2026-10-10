@@ -5,10 +5,19 @@ import CoreAudio
 
 enum AppStateError: Error, LocalizedError {
     case sessionRequiresNoteId
+    /// A recording is already running or starting.
+    case sessionAlreadyActive
+    /// The speech pipelines didn't start. The cause was already reported
+    /// through the speech engine's `onSessionError`.
+    case speechStartFailed
     var errorDescription: String? {
         switch self {
         case .sessionRequiresNoteId:
             return "A note must exist before starting a recording."
+        case .sessionAlreadyActive:
+            return "A recording is already in progress."
+        case .speechStartFailed:
+            return "Speech recognition couldn't start."
         }
     }
 }
@@ -29,6 +38,10 @@ final class AppState: ObservableObject {
     @Published var overlaySegments: [TranscriptionSegment] = []
     @Published var currentSessionId: String?
     @Published var isTranscribing: Bool = false
+    /// True while a recording is being started (permission checks, model
+    /// download, audio start-up) but `isTranscribing` isn't set yet. Guards
+    /// against two concurrent starts (see ``SessionStartGate``).
+    @Published private(set) var isStartingSession: Bool = false
     /// The id of the session that most recently finished, set by `stopSession`
     /// before `currentSessionId` is cleared. Drives the post-stop navigation to
     /// the finished transcript (see `RecordingNavigationPolicy.stopDestination`).
@@ -96,6 +109,19 @@ final class AppState: ObservableObject {
     /// changed — prevents 20-minute monologues from becoming one giant row.
     private let coalesceWindow: TimeInterval = 60
 
+    /// "A start is in flight" bookkeeping; mirrored into `isStartingSession`.
+    private var startGate = SessionStartGate()
+
+    /// True while `startSession` itself is running, so a second call can't
+    /// interleave with it even when the caller already holds `startGate`.
+    private var startSessionInFlight = false
+
+    /// Keeps the Mac awake from recording start until post-processing ends.
+    private var recordingActivity: SystemActivityAssertion?
+
+    /// Upper bound on how long post-processing may keep the Mac awake.
+    private static let postProcessingAwakeLimit: Duration = .seconds(30 * 60)
+
     // MARK: - Singleton
 
     static let shared = AppState()
@@ -127,10 +153,14 @@ final class AppState: ObservableObject {
     private func observeMicrophonePreference() {
         applyStoredMicrophoneDevice()
 
+        // `didChangeNotification` fires for every defaults write, so compare
+        // against the value just applied: only a real change of this key
+        // restarts the mic (an unrelated setting must not).
+        let initial = UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? ""
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
-            .compactMap { _ in UserDefaults.standard.string(forKey: "selectedMicrophoneID") }
-            .removeDuplicates()
+            .map { _ in UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? "" }
+            .changes(from: initial)
             .sink { [weak self] stored in
                 guard let self else { return }
                 let selection = Self.micSelection(from: stored)
@@ -178,10 +208,14 @@ final class AppState: ObservableObject {
     /// "Capture system audio" toggle (in Settings or the live view), without
     /// interrupting microphone capture.
     private func observeSystemAudioPreference() {
+        // Only real changes of this key: an unrelated settings write must not
+        // re-enable system audio for a session started mic-only.
+        let initial = UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
-            .compactMap { _ in UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool }
-            .removeDuplicates()
+            .map { _ in UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool }
+            .changes(from: initial)
+            .compactMap { $0 }
             .sink { [weak self] enabled in
                 guard let self else { return }
                 Task { @MainActor in
@@ -234,6 +268,11 @@ final class AppState: ObservableObject {
     /// actual audio content — silent buffers from the idle stream don't
     /// clobber the label on the active stream, so mic utterances get tagged
     /// "you" and remote utterances get tagged "remote" most of the time.
+    ///
+    /// `AudioSessionManager` hops every buffer from the capture threads to the
+    /// main actor (in capture order) before calling these, so they may touch
+    /// main-actor state and the transcription pipelines directly; the retained
+    /// audio files are written off the main actor before the hop.
     private func wireAudioPipeline() {
         audioManager.onMicBuffer = { [weak self] buffer in
             guard let self else { return }
@@ -277,7 +316,11 @@ final class AppState: ObservableObject {
     /// tiny fragments.
     private func wireTranscriptionResults() {
         speechEngine.onSegmentTranscribed = { [weak self] segment in
-            self?.ingestTranscribedSegment(segment)
+            guard let self else { return }
+            // Each pipeline times segments by the audio it was fed; system
+            // audio starts later than the mic (and late again on resume), so
+            // put both on the shared session clock the audio files use.
+            self.ingestTranscribedSegment(self.audioManager.alignedToSessionClock(segment))
         }
         speechEngine.onSessionError = { [weak self] error in
             self?.report(error)
@@ -408,13 +451,42 @@ final class AppState: ObservableObject {
 
     // MARK: - Session Lifecycle
 
+    /// Claims the "starting a recording" gate. Call before the first await of
+    /// a start (permission checks included) and pair with
+    /// ``endStartingSession()``. Returns false when a recording is already
+    /// running or starting — the caller must not start another.
+    func beginStartingSession() -> Bool {
+        let claimed = startGate.begin(isRunning: isTranscribing)
+        isStartingSession = startGate.isStarting
+        return claimed
+    }
+
+    /// Releases the gate claimed by ``beginStartingSession()``.
+    func endStartingSession() {
+        startGate.end()
+        isStartingSession = false
+    }
+
+    /// Throws `CancellationError` when a stop arrived while starting.
+    private func throwIfStartCancelled() throws {
+        if startGate.stopRequested {
+            Log.app.info("Recording start cancelled by a stop request.")
+            throw CancellationError()
+        }
+    }
+
     /// Starts a new transcription session.
     ///
     /// Creates a database session, starts audio capture, and begins on-device
-    /// speech recognition via Apple Speech.
+    /// speech recognition via Apple Speech. If any step fails (or a stop is
+    /// requested while starting), everything done so far is rolled back: the
+    /// session row is deleted, pipelines and capture are stopped and
+    /// `currentSessionId` is cleared.
     ///
     /// - Parameter title: Display title for the session. Defaults to `"Untitled Session"`.
-    /// - Throws: If audio capture fails.
+    /// - Throws: If audio capture or speech start-up fails,
+    ///   `AppStateError.sessionAlreadyActive` when a recording is already
+    ///   running/starting, or `CancellationError` when stopped while starting.
     func startSession(
         title: String = "Untitled Session",
         noteId: String? = nil
@@ -425,6 +497,20 @@ final class AppState: ObservableObject {
         guard let noteId else {
             throw AppStateError.sessionRequiresNoteId
         }
+        guard !isTranscribing, !startSessionInFlight else { throw AppStateError.sessionAlreadyActive }
+        // AppDelegate claims the gate before its permission prompts; direct
+        // callers (tests) get it claimed here.
+        let ownsGate = !startGate.isStarting
+        if ownsGate {
+            guard beginStartingSession() else { throw AppStateError.sessionAlreadyActive }
+        }
+        startSessionInFlight = true
+        defer {
+            startSessionInFlight = false
+            if ownsGate { endStartingSession() }
+        }
+        try throwIfStartCancelled()
+
         // Retained audio: pick the session's folder up front so the row
         // records it from the start (see SessionAudioStorage).
         let sessionId = UUID().uuidString
@@ -448,33 +534,83 @@ final class AppState: ObservableObject {
         // Reset audio buffers.
         audioBufferManager.reset()
 
-        // The language preference is kept in sync continuously via
-        // observeLanguagePreference() — no need to re-apply here.
+        // Keep the Mac awake for the whole recording (and its post-processing,
+        // see stopSession). Ended on rollback too.
+        recordingActivity?.end()
+        recordingActivity = SystemActivityAssertion(reason: "Recording and transcribing a meeting")
 
-        // Start the parallel speech pipelines FIRST so they're ready to
-        // accept audio as soon as the engine starts producing it. This also
-        // triggers on-demand model download if the locale's model isn't
-        // installed yet — await handles that.
-        await speechEngine.startSession()
+        do {
+            // The language preference is kept in sync continuously via
+            // observeLanguagePreference() — no need to re-apply here.
 
-        // Start audio capture (writing it to disk too when audio is retained;
-        // the manager closes the files on stop or a failed start).
-        // Diarization also needs the system-audio track; with retention off it
-        // goes to a scratch folder that is deleted after diarization.
-        if !audioManager.isRecording {
-            diarizationCapture = SpeakerDiarizationCoordinator.makeCapture(
-                sessionId: sessionId,
-                retainedDirectory: audioDirectory,
-                capturesSystemAudio: audioManager.shouldCaptureSystemAudio
-            )
-            let recordingDirectory = audioDirectory ?? diarizationCapture?.audioDirectory
-            audioManager.audioRecorder = recordingDirectory.map { SessionAudioRecorder(directory: $0) }
+            // Start the parallel speech pipelines FIRST so they're ready to
+            // accept audio as soon as the engine starts producing it. This also
+            // triggers on-demand model download if the locale's model isn't
+            // installed yet — await handles that.
+            let speechStarted = await speechEngine.startSession()
+            try throwIfStartCancelled()
+            guard speechStarted else { throw AppStateError.speechStartFailed }
+
+            // Start audio capture (writing it to disk too when audio is retained;
+            // the manager closes the files on stop or a failed start).
+            // Diarization also needs the system-audio track; with retention off it
+            // goes to a scratch folder that is deleted after diarization.
+            if !audioManager.isRecording {
+                diarizationCapture = SpeakerDiarizationCoordinator.makeCapture(
+                    sessionId: sessionId,
+                    retainedDirectory: audioDirectory,
+                    capturesSystemAudio: audioManager.shouldCaptureSystemAudio
+                )
+                let recordingDirectory = audioDirectory ?? diarizationCapture?.audioDirectory
+                audioManager.audioRecorder = recordingDirectory.map { SessionAudioRecorder(directory: $0) }
+            }
+            try await audioManager.startRecording()
+            try throwIfStartCancelled()
+        } catch {
+            await rollBackFailedStart(sessionId: sessionId, error: error)
+            throw error
         }
-        try await audioManager.startRecording()
 
         isTranscribing = true
         startSystemAudioWatchdog()
         Log.app.info("Session started — id: \(session.id, privacy: .public), language: \(self.speechEngine.currentLanguage ?? "system default", privacy: .public)")
+    }
+
+    /// Undoes a partially started session: stops whatever was started,
+    /// closes and discards its audio, and deletes the (empty) session row so
+    /// no phantom "in progress" recording is left behind.
+    private func rollBackFailedStart(sessionId: String, error: Error) async {
+        Log.app.error("Session start failed, rolling back — id: \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .private)")
+        systemAudioWatchdog?.cancel()
+        systemAudioWatchdog = nil
+
+        await audioManager.stopRecording()
+        // A failed `startRecording` already closed the recorder; this covers a
+        // recorder that was assigned but never handed to a running capture.
+        audioManager.audioRecorder?.finish()
+        audioManager.audioRecorder = nil
+        await speechEngine.stopSession()
+
+        if let capture = diarizationCapture, capture.sessionId == sessionId, capture.isScratch {
+            try? FileManager.default.removeItem(at: capture.audioDirectory)
+        }
+        diarizationCapture = nil
+        pendingSegment = nil
+        overlaySegments.removeAll()
+
+        do {
+            // Also removes the session's retained-audio folder.
+            try transcriptStore.deleteSession(id: sessionId)
+        } catch {
+            Log.app.error("Couldn't delete the failed session; ending it instead: \(error.localizedDescription, privacy: .private)")
+            try? transcriptStore.endSession(id: sessionId)
+        }
+        if currentSessionId == sessionId {
+            currentSessionId = nil
+        }
+        isTranscribing = false
+        recordingActivity?.end()
+        recordingActivity = nil
     }
 
     /// Starts a one-shot timer that flags missing remote audio. If system-audio
@@ -498,8 +634,17 @@ final class AppState: ObservableObject {
     ///
     /// Halts audio capture, stops speech recognition, and finalizes the session
     /// record in the database. Triggers auto-analysis and auto-summarization if
-    /// enabled in settings.
+    /// enabled in settings. Called while a start is still in flight, it
+    /// cancels that start instead (the start rolls itself back).
     func stopSession() async {
+        if !isTranscribing, startGate.requestStop() {
+            Log.app.info("Stop requested while the recording is still starting; cancelling the start.")
+            // Supersede a speech start still in flight (its generation token
+            // goes stale) so it doesn't bring pipelines up only to be torn
+            // down again; the start then rolls itself back.
+            await speechEngine.stopSession()
+            return
+        }
         systemAudioWatchdog?.cancel()
         systemAudioWatchdog = nil
         await audioManager.stopRecording()
@@ -515,12 +660,15 @@ final class AppState: ObservableObject {
         // Store sessionId before clearing so post-session processing can use it.
         let finishedSessionId = currentSessionId
 
+        // Post-processing work that should finish before the Mac may sleep.
+        var postProcessing: [Task<Void, Never>] = []
+
         if let sessionId = finishedSessionId {
             try? transcriptStore.endSession(id: sessionId)
             // Split "Remote" into Speaker 1…N in the background (files are
             // closed by now: audioManager.stopRecording finished the recorder).
             if let capture = diarizationCapture, capture.sessionId == sessionId {
-                SpeakerDiarizationCoordinator.sessionDidStop(capture, store: transcriptStore)
+                postProcessing.append(SpeakerDiarizationCoordinator.sessionDidStop(capture, store: transcriptStore))
             }
             diarizationCapture = nil
             autoTitleIfNeeded(sessionId: sessionId)
@@ -530,18 +678,18 @@ final class AppState: ObservableObject {
         if UserDefaults.standard.bool(forKey: "autoAnalyze"), let sessionId = finishedSessionId {
             let segments = (try? transcriptStore.fetchSegments(sessionId: sessionId)) ?? []
             if !segments.isEmpty {
-                Task {
+                postProcessing.append(Task {
                     let analysis = await Task.detached(priority: .userInitiated) {
                         TranscriptAnalyzer.analyzeTranscript(segments: segments)
                     }.value
                     try? self.transcriptStore.saveEntities(analysis.entities, sessionId: sessionId)
-                }
+                })
             }
         }
 
         // Auto-summarize (Foundation Models — on-device Apple Intelligence).
         if UserDefaults.standard.bool(forKey: "autoSummarize"), let sessionId = finishedSessionId {
-            Task {
+            postProcessing.append(Task {
                 let segments = (try? transcriptStore.fetchSegments(sessionId: sessionId)) ?? []
                 guard !segments.isEmpty else { return }
 
@@ -559,17 +707,44 @@ final class AppState: ObservableObject {
                 }
                 // Optional template summary block in the session's note.
                 await TemplateAutoSummary.runIfEnabled(sessionId: sessionId, title: title, segments: segmentData, transcriptStore: transcriptStore)
-            }
+            })
         }
 
         // Post-meeting hooks (Settings → Hooks); runs in the background.
         MeetingHooks.sessionDidStop(sessionId: finishedSessionId, appState: self)
+
+        // Let the Mac sleep again once post-processing is done (bounded, so a
+        // stuck summary can't keep it awake forever).
+        if let activity = recordingActivity {
+            recordingActivity = nil
+            Self.endActivity(activity, after: postProcessing)
+        }
 
         // Expose the finished session so the UI can navigate to its transcript
         // once `isTranscribing` flips false. Set before clearing currentSessionId.
         lastFinishedSessionId = finishedSessionId
         currentSessionId = nil
         isTranscribing = false
+    }
+
+    /// Ends `activity` when every task in `work` has finished, or after
+    /// ``postProcessingAwakeLimit`` — whichever comes first.
+    private static func endActivity(_ activity: SystemActivityAssertion, after work: [Task<Void, Never>]) {
+        guard !work.isEmpty else {
+            activity.end()
+            return
+        }
+        Task { @MainActor in
+            for task in work { await task.value }
+            activity.end()
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: AppState.postProcessingAwakeLimit)
+            if activity.isActive {
+                Log.app.info("Post-processing still running after the keep-awake limit; allowing sleep.")
+            }
+            activity.end()
+        }
     }
 
     /// Pauses the current recording without ending the session.

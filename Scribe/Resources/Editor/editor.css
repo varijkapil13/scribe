@@ -256,3 +256,19 @@ html[data-theme="dark"] body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85em;
 }
+/* Remote PlantUML rendering disabled (privacy default): notice + raw source. */
+.cm-sl-diagram-disabled {
+  text-align: left;
+}
+.cm-sl-diagram-notice {
+  color: var(--scribe-muted);
+  font-style: italic;
+  font-size: 0.85em;
+  margin-bottom: 0.5em;
+}
+.cm-sl-diagram-disabled pre {
+  white-space: pre-wrap;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}

@@ -816,7 +816,7 @@ private struct WelcomeView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("On-device speech recognition for meetings, interviews, and anything else worth remembering. Nothing leaves your Mac.")
+                Text("On-device speech recognition for meetings, interviews, and anything else worth remembering. Audio never leaves your Mac.")
                     .font(.system(.body))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
