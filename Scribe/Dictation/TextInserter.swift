@@ -1,6 +1,42 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
+
+/// Pure policy for the dictation paste-and-restore dance, kept free of AppKit
+/// state so it is unit-testable.
+enum DictationPastePolicy {
+
+    /// Pasteboard types that mark the temporary dictation item so clipboard
+    /// managers / sync tools skip it (see nspasteboard.org): Transient = "will
+    /// be restored shortly, don't record"; Concealed = "don't display or
+    /// persist the contents".
+    static let temporaryItemMarkerTypes: [String] = [
+        "org.nspasteboard.TransientType",
+        "org.nspasteboard.ConcealedType",
+    ]
+
+    /// How long to wait after posting ⌘V before putting the user's clipboard
+    /// back. The target app reads the pasteboard asynchronously when it
+    /// handles the key event; a busy app (or a large paste) can take well
+    /// over the old fixed 400 ms, and restoring too early pastes the user's
+    /// OLD clipboard instead of the dictation. Grows with the text length,
+    /// capped so the user's clipboard isn't held hostage for long.
+    static func restoreDelayMilliseconds(forTextLength length: Int) -> Int {
+        let base = 750
+        let perThousandChars = 100
+        let extra = (max(0, length) / 1_000) * perThousandChars
+        return min(base + extra, maxRestoreDelayMilliseconds)
+    }
+
+    static let maxRestoreDelayMilliseconds = 2_000
+
+    /// Restore only when nobody else (the user, a clipboard manager) wrote to
+    /// the pasteboard after we placed the dictation on it.
+    static func shouldRestore(currentChangeCount: Int, changeCountAfterWrite: Int) -> Bool {
+        currentChangeCount == changeCountAfterWrite
+    }
+}
 
 /// Types dictated text into whatever app has keyboard focus.
 ///
@@ -16,6 +52,10 @@ enum TextInserter {
         case inserted
         /// No Accessibility permission: the text is on the clipboard.
         case copiedToClipboard
+        /// Secure Event Input is on (a password field, or an app such as a
+        /// terminal / password manager holding it). Synthesized keystrokes are
+        /// not delivered, so the text was left on the clipboard instead.
+        case secureInputActive
     }
 
     /// Whether Scribe may post synthetic key events.
@@ -34,6 +74,13 @@ enum TextInserter {
         Permissions.openSystemPreferences(for: "Privacy_Accessibility")
     }
 
+    /// Whether some process has Secure Event Input enabled. While it is on,
+    /// posted key events don't reach the focused field.
+    static var isSecureInputActive: Bool {
+        // Carbon (HIToolbox) API; still the only public way to query this.
+        IsSecureEventInputEnabled()
+    }
+
     static func insert(_ text: String) async -> Outcome {
         let pasteboard = NSPasteboard.general
         guard hasAccessibilityPermission else {
@@ -41,25 +88,47 @@ enum TextInserter {
             pasteboard.setString(text, forType: .string)
             return .copiedToClipboard
         }
+        guard !isSecureInputActive else {
+            // Don't claim "Inserted" for a paste that can't land; leave the
+            // text on the clipboard (not marked transient — the user needs it).
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return .secureInputActive
+        }
 
         let saved = snapshot(of: pasteboard)
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        writeTemporary(text, to: pasteboard)
         let changeCount = pasteboard.changeCount
 
         postCommandV()
 
-        // Give the target app time to read the pasteboard before restoring the
+        // Give the target app time to consume the paste before restoring the
         // user's clipboard. Skip the restore if something else (the user, a
         // clipboard manager) has written to it in the meantime.
-        try? await Task.sleep(for: .milliseconds(400))
-        if pasteboard.changeCount == changeCount {
+        let delay = DictationPastePolicy.restoreDelayMilliseconds(forTextLength: text.utf16.count)
+        try? await Task.sleep(for: .milliseconds(delay))
+        if DictationPastePolicy.shouldRestore(
+            currentChangeCount: pasteboard.changeCount,
+            changeCountAfterWrite: changeCount
+        ) {
             restore(saved, to: pasteboard)
         }
         return .inserted
     }
 
     // MARK: - Private
+
+    /// Puts the dictation on the pasteboard as a single item flagged
+    /// Transient + Concealed so clipboard managers don't record it.
+    private static func writeTemporary(_ text: String, to pasteboard: NSPasteboard) {
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        for marker in DictationPastePolicy.temporaryItemMarkerTypes {
+            item.setData(Data(), forType: NSPasteboard.PasteboardType(marker))
+        }
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+    }
 
     private static func postCommandV() {
         let source = CGEventSource(stateID: .combinedSessionState)
