@@ -90,6 +90,21 @@ final class SpeechRecognizerEngine: ObservableObject {
     private var micPartial: String = ""
     private var remotePartial: String = ""
 
+    /// Advanced by every start, swap and stop so a superseded async start
+    /// can't install its pipelines after `stopSession` (see
+    /// ``SessionGeneration``).
+    private var generation = SessionGeneration()
+
+    /// Per-source audio accounting: keeps timestamps continuous across a
+    /// language switch and holds audio while new pipelines spin up.
+    private var micLedger = AudioSwapLedger<AVAudioPCMBuffer>()
+    private var remoteLedger = AudioSwapLedger<AVAudioPCMBuffer>()
+
+    /// Finalization of pipelines being replaced by a language switch.
+    /// `stopSession` awaits it so their last segments land before the
+    /// session is closed.
+    private var retiringTask: Task<Void, Never>?
+
     // MARK: - Init
 
     init(language: String? = nil) {
@@ -115,14 +130,43 @@ final class SpeechRecognizerEngine: ObservableObject {
 
     // MARK: - Session lifecycle
 
-    /// Starts both transcription pipelines. Async because the `SpeechAnalyzer`
-    /// actor requires awaiting, and because the required speech model may
-    /// need to be downloaded first.
-    func startSession() async {
+    /// Starts both transcription pipelines for a new recording. Async
+    /// because the `SpeechAnalyzer` actor requires awaiting, and because the
+    /// required speech model may need to be downloaded first.
+    ///
+    /// - Returns: `true` when both pipelines are live. `false` when starting
+    ///   failed (already reported through ``onSessionError``) or was
+    ///   superseded by a `stopSession` that ran meanwhile.
+    @discardableResult
+    func startSession() async -> Bool {
         // Stop any previous session cleanly.
         await stopSession()
 
+        let token = generation.advance()
+        // A new recording: timestamps start at 0. Audio that arrives before
+        // the pipelines are live is held and fed to them first.
+        micLedger.reset()
+        remoteLedger.reset()
+        micLedger.beginHolding()
+        remoteLedger.beginHolding()
+
         let locale = Self.resolveLocale(language)
+        guard await startPipelines(locale: locale, token: token) else { return false }
+
+        // The language preference changed while we were starting (setLanguage
+        // only records it when nothing is running yet): apply it now.
+        if generation.isCurrent(token), Self.resolveLocale(language).identifier != locale.identifier {
+            await swapPipelines()
+            // The swap can fail (already reported) or be superseded by a
+            // stop: only report success when pipelines are actually live.
+            return isProcessing
+        }
+        return true
+    }
+
+    /// Builds and starts both pipelines for `locale`, then — if `token` is
+    /// still current — feeds them any held audio and makes them live.
+    private func startPipelines(locale: Locale, token: UInt64) async -> Bool {
         currentLanguage = locale.identifier
 
         // Ensure the model is installed ONCE before spawning the two pipelines.
@@ -131,9 +175,15 @@ final class SpeechRecognizerEngine: ObservableObject {
         do {
             try await ensureModelInstalled(for: locale)
         } catch {
+            guard generation.isCurrent(token) else { return false }
             Log.speech.error("Engine model install failed: \(error.localizedDescription, privacy: .private)")
+            abandonStart()
             onSessionError?(error)
-            return
+            return false
+        }
+        guard generation.isCurrent(token) else {
+            Log.speech.info("Engine start superseded during model install; not starting pipelines.")
+            return false
         }
 
         let mic = makePipeline(speaker: "you")
@@ -146,17 +196,46 @@ final class SpeechRecognizerEngine: ObservableObject {
             async let remoteStart: Void = remote.start(locale: locale)
             _ = try await (micStart, remoteStart)
         } catch {
-            Log.speech.error("Engine failed to start pipelines: \(error.localizedDescription, privacy: .private)")
-            onSessionError?(error)
             await mic.stop()
             await remote.stop()
-            return
+            guard generation.isCurrent(token) else { return false }
+            Log.speech.error("Engine failed to start pipelines: \(error.localizedDescription, privacy: .private)")
+            abandonStart()
+            onSessionError?(error)
+            return false
         }
 
-        self.micPipeline = mic
-        self.remotePipeline = remote
-        self.isProcessing = true
-        Log.speech.info("Engine session started (parallel pipelines, locale \(locale.identifier, privacy: .public))")
+        guard generation.isCurrent(token) else {
+            // stopSession (or a newer start) ran while we were starting:
+            // don't install these pipelines, just shut them down again.
+            Log.speech.info("Engine start superseded; discarding freshly started pipelines.")
+            await mic.stop()
+            await remote.stop()
+            return false
+        }
+
+        // Go live: the base offset is the session time of the first buffer
+        // each pipeline sees (the oldest held one), so timestamps continue
+        // where the previous pipelines left off after a language switch.
+        let micRelease = micLedger.endHolding()
+        let remoteRelease = remoteLedger.endHolding()
+        mic.baseOffsetMs = micRelease.baseOffsetMs
+        remote.baseOffsetMs = remoteRelease.baseOffsetMs
+        micPipeline = mic
+        remotePipeline = remote
+        for buffer in micRelease.buffers { mic.append(buffer) }
+        for buffer in remoteRelease.buffers { remote.append(buffer) }
+
+        isProcessing = true
+        Log.speech.info("Engine session started (parallel pipelines, locale \(locale.identifier, privacy: .public), offsets \(micRelease.baseOffsetMs)/\(remoteRelease.baseOffsetMs) ms)")
+        return true
+    }
+
+    /// Clears the "starting" state after a failed (current) start.
+    private func abandonStart() {
+        micLedger.discardHeld()
+        remoteLedger.discardHeld()
+        isProcessing = false
     }
 
     /// Idempotent, single-threaded asset install for a given locale. Called
@@ -192,19 +271,32 @@ final class SpeechRecognizerEngine: ObservableObject {
     }
 
     /// Stops both pipelines, awaiting their finalization so any last
-    /// utterances are emitted as segments before the UI clears.
+    /// utterances are emitted as segments before the UI clears. Also
+    /// invalidates any start or language switch still in flight.
     func stopSession() async {
+        generation.advance()
+        // Cleared up front so a language change arriving while we finalize
+        // doesn't start a swap (setLanguage only swaps while processing).
+        isProcessing = false
         let mic = micPipeline
         let remote = remotePipeline
         micPipeline = nil
         remotePipeline = nil
+        micLedger.reset()
+        remoteLedger.reset()
+
+        // Pipelines being retired by a language switch finish first (their
+        // last segments belong before the new ones).
+        if let retiring = retiringTask {
+            await retiring.value
+            retiringTask = nil
+        }
         await mic?.stop()
         await remote?.stop()
 
         micPartial = ""
         remotePartial = ""
         partialResult = ""
-        isProcessing = false
     }
 
     // MARK: - Audio input
@@ -213,30 +305,73 @@ final class SpeechRecognizerEngine: ObservableObject {
     /// speaker label. `"you"` → microphone pipeline, `"remote"` → system-audio
     /// pipeline. No speaker-detection heuristic is needed — the caller knows
     /// the source.
+    ///
+    /// Every buffer is counted in the source's ``AudioSwapLedger`` so a
+    /// pipeline created mid-recording knows its session offset; while new
+    /// pipelines are starting the buffer is held instead of dropped.
     func appendAudioBuffer(_ buffer: AVAudioPCMBuffer, speaker: String) {
-        switch speaker.lowercased() {
-        case "you":
-            micPipeline?.append(buffer)
-        case "remote":
+        let seconds = Self.duration(of: buffer)
+        if speaker.lowercased() == "remote" {
+            guard remoteLedger.receive(buffer, seconds: seconds) else { return }
             remotePipeline?.append(buffer)
-        default:
-            // Unknown source — route to mic as a best-effort default.
+        } else {
+            // "you", or an unknown source routed to the mic as a best-effort
+            // default.
+            guard micLedger.receive(buffer, seconds: seconds) else { return }
             micPipeline?.append(buffer)
         }
+    }
+
+    /// Length of `buffer` in seconds (0 for a malformed format).
+    private static func duration(of buffer: AVAudioPCMBuffer) -> Double {
+        let rate = buffer.format.sampleRate
+        guard rate > 0 else { return 0 }
+        return Double(buffer.frameLength) / rate
     }
 
     // MARK: - Language switching
 
     /// Applies a new locale preference. If a session is currently running,
-    /// both pipelines are torn down and rebuilt with the new locale so the
-    /// change takes effect immediately.
+    /// both pipelines are replaced with ones for the new locale so the change
+    /// takes effect immediately. Timestamps continue from the audio already
+    /// transcribed, and audio arriving during the swap is held and fed to the
+    /// new pipelines rather than lost.
     func setLanguage(_ code: String?) async {
         let wasActive = isProcessing
         language = code
         if wasActive {
-            await stopSession()
-            await startSession()
+            await swapPipelines()
         }
+    }
+
+    /// Replaces the live pipelines without ending the session timeline.
+    private func swapPipelines() async {
+        let token = generation.advance()
+        micLedger.beginHolding()
+        remoteLedger.beginHolding()
+
+        let oldMic = micPipeline
+        let oldRemote = remotePipeline
+        micPipeline = nil
+        remotePipeline = nil
+        micPartial = ""
+        remotePartial = ""
+        partialResult = ""
+
+        // Finalize the old pipelines (their last segments keep their own
+        // offsets). Chained after any earlier swap's retirement so segments
+        // stay in order; stopSession awaits the same task.
+        let previous = retiringTask
+        let retiring = Task { @MainActor in
+            await previous?.value
+            await oldMic?.stop()
+            await oldRemote?.stop()
+        }
+        retiringTask = retiring
+        await retiring.value
+
+        guard generation.isCurrent(token) else { return }
+        _ = await startPipelines(locale: Self.resolveLocale(language), token: token)
     }
 
     // MARK: - Private helpers

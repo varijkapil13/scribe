@@ -51,6 +51,13 @@ final class TranscriptionPipeline {
     /// The resolved locale currently in use (e.g. `en-US`, `de-DE`).
     private(set) var locale: Locale?
 
+    /// Session time (ms) of the first buffer this pipeline is fed. The
+    /// analyzer timestamps results from 0 at its first buffer, so a pipeline
+    /// created mid-recording (language switch) adds this to keep transcript
+    /// timestamps continuous. Set by the engine before the first `append`;
+    /// not reset by `stop()`.
+    var baseOffsetMs: Int = 0
+
     // MARK: - Private state
 
     private var analyzer: SpeechAnalyzer?
@@ -317,14 +324,15 @@ final class TranscriptionPipeline {
         return result.resultsFinalizationTime < result.range.end
     }
 
-    /// Converts a `CMTimeRange` into session-relative millisecond offsets.
-    /// The session start is captured in real time (not audio time) so the
-    /// displayed timestamp matches the recording duration in the UI.
+    /// Converts a `CMTimeRange` (audio time since this pipeline's first
+    /// buffer) into session-relative millisecond offsets by adding
+    /// ``baseOffsetMs``.
     private func offsetsForResult(_ result: SpeechTranscriber.Result) -> (Int, Int) {
-        let rangeStart = result.range.start.seconds
-        let rangeEnd   = result.range.end.seconds
-        let startMs = max(0, Int(rangeStart * 1000))
-        let endMs   = max(startMs, Int(rangeEnd * 1000))
-        return (startMs, endMs)
+        let offsets = PipelineTimestamps.sessionOffsets(
+            rangeStartSeconds: result.range.start.seconds,
+            rangeEndSeconds: result.range.end.seconds,
+            baseOffsetMs: baseOffsetMs
+        )
+        return (offsets.startMs, offsets.endMs)
     }
 }

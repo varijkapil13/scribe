@@ -7,12 +7,15 @@ import UserNotifications
 /// notification with a "Start Recording" action) or start recording outright,
 /// and — once the call releases the mic — offer to stop or stop automatically.
 ///
-/// Detection is a cheap 2-second poll of CoreAudio's per-process "is running
-/// input" flag (`MicrophoneUsageMonitor`), debounced by the pure
-/// `MeetingDetectionPolicy`. Polling (rather than property listeners) keeps
-/// this robust to processes coming and going, and costs a handful of property
-/// reads per tick. Nothing is recorded or stored by detection itself; it only
-/// looks at *which app* holds the mic, never at audio.
+/// Detection is event-driven: CoreAudio property listeners
+/// (`MicrophoneUsageObserver`) on the process list and each process's "is
+/// running input" flag trigger a (debounced) sample of who holds the mic
+/// (`MicrophoneUsageMonitor`), which the pure `MeetingDetectionPolicy` turns
+/// into started/ended events. Follow-up samples are scheduled only for the
+/// policy's own deadlines (start delay, end grace), plus a slow safety-net
+/// poll — slower still in Low Power Mode. Nothing is recorded or stored by
+/// detection itself; it only looks at *which app* holds the mic, never at
+/// audio.
 @MainActor
 final class MeetingDetector: ObservableObject {
 
@@ -56,24 +59,42 @@ final class MeetingDetector: ObservableObject {
     @Published private(set) var currentMeeting: MeetingApp?
 
     private var policy = MeetingDetectionPolicy()
-    private var pollTask: Task<Void, Never>?
+    private var ownership = MeetingRecordingOwnership()
     private var defaultsObserver: NSObjectProtocol?
-    private var startRecording: (@MainActor (MeetingApp, _ forceNewNote: Bool) async -> Void)?
+    private var powerObserver: NSObjectProtocol?
+    /// Starts a recording; returns the id of the session it started (nil
+    /// when the start was refused, cancelled or failed).
+    private var startRecording: (@MainActor (MeetingApp, _ forceNewNote: Bool) async -> String?)?
     private var stopRecording: (@MainActor () async -> Void)?
     private var isRecording: @MainActor () -> Bool = { false }
+    private var currentSessionId: @MainActor () -> String? = { nil }
 
-    private static let pollInterval: Duration = .seconds(2)
+    /// Whether detection is running (mode is not `.off`).
+    private var isActive = false
+    /// CoreAudio change notifications (process list + per-process input).
+    private var usageObserver: MicrophoneUsageObserver?
+    /// Safety-net poll; slow, with tolerance so wake-ups coalesce.
+    private var fallbackTimer: Timer?
+    /// Pending debounced sample after a CoreAudio notification.
+    private var debounceTask: Task<Void, Never>?
+    /// Pending sample at the policy's next deadline (start delay / end grace).
+    private var deadlineTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
-    /// Wires the detector to the app's recording actions and starts polling if
-    /// the user has detection on. Re-evaluates whenever settings change.
+    /// Wires the detector to the app's recording actions and starts watching
+    /// if the user has detection on. Re-evaluates whenever settings change.
+    ///
+    /// - Parameter currentSessionId: The running recording's session id, so
+    ///   detection can tell a recording it started from one started by hand.
     func start(
         isRecording: @escaping @MainActor () -> Bool,
-        startRecording: @escaping @MainActor (MeetingApp, _ forceNewNote: Bool) async -> Void,
+        currentSessionId: @escaping @MainActor () -> String? = { nil },
+        startRecording: @escaping @MainActor (MeetingApp, _ forceNewNote: Bool) async -> String?,
         stopRecording: @escaping @MainActor () async -> Void
     ) {
         self.isRecording = isRecording
+        self.currentSessionId = currentSessionId
         self.startRecording = startRecording
         self.stopRecording = stopRecording
 
@@ -99,30 +120,116 @@ final class MeetingDetector: ObservableObject {
             .flatMap(MeetingEndAction.init(rawValue:)) ?? MeetingEndAction.defaultValue
     }
 
-    /// Starts or stops the poll loop to match the current mode.
+    /// Starts or stops watching to match the current mode.
     private func applyMode() {
         if Self.mode == .off {
-            guard pollTask != nil else { return }
-            pollTask?.cancel()
-            pollTask = nil
+            guard isActive else { return }
+            isActive = false
+            usageObserver?.stop()
+            usageObserver = nil
+            fallbackTimer?.invalidate()
+            fallbackTimer = nil
+            debounceTask?.cancel()
+            debounceTask = nil
+            deadlineTask?.cancel()
+            deadlineTask = nil
+            if let powerObserver {
+                NotificationCenter.default.removeObserver(powerObserver)
+                self.powerObserver = nil
+            }
             policy.reset()
+            ownership.clear()
             currentMeeting = nil
             removeNotifications([Self.startRequestId, Self.endRequestId])
             Log.audio.info("Meeting detection off.")
-        } else if pollTask == nil {
+        } else if !isActive {
+            isActive = true
             Log.audio.info("Meeting detection on (\(Self.mode.rawValue, privacy: .public)).")
-            pollTask = Task { [weak self] in
-                while !Task.isCancelled {
-                    self?.tick()
-                    try? await Task.sleep(for: Self.pollInterval)
+
+            let observer = MicrophoneUsageObserver()
+            observer.onChange = { [weak self] in
+                Task { @MainActor [weak self] in self?.scheduleDebouncedTick() }
+            }
+            if !observer.start() {
+                Log.audio.info("Mic-usage listeners unavailable; meeting detection falls back to polling.")
+            }
+            usageObserver = observer
+
+            if powerObserver == nil {
+                powerObserver = NotificationCenter.default.addObserver(
+                    forName: Self.powerStateDidChange,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.rescheduleFallbackTimer() }
                 }
             }
+            rescheduleFallbackTimer()
+            tick()
         }
     }
 
-    // MARK: - Polling
+    // MARK: - Scheduling
+
+    /// Posted when Low Power Mode is switched on or off. Isolated here: the
+    /// Swift spelling of `NSProcessInfoPowerStateDidChangeNotification`.
+    private static var powerStateDidChange: Notification.Name {
+        .NSProcessInfoPowerStateDidChange
+    }
+
+    /// (Re)creates the safety-net poll for the current power state.
+    private func rescheduleFallbackTimer() {
+        fallbackTimer?.invalidate()
+        fallbackTimer = nil
+        guard isActive else { return }
+        let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let interval = MeetingDetectionSchedule.fallbackInterval(
+            lowPowerMode: lowPower,
+            listenersActive: usageObserver?.isObserving ?? false
+        )
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tick() }
+        }
+        timer.tolerance = MeetingDetectionSchedule.tolerance(for: interval)
+        fallbackTimer = timer
+        Log.audio.debug("Meeting detection fallback poll every \(Int(interval)) s (Low Power Mode \(lowPower ? "on" : "off", privacy: .public)).")
+    }
+
+    /// Samples shortly after a burst of CoreAudio notifications settles.
+    private func scheduleDebouncedTick() {
+        guard isActive else { return }
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: MeetingDetectionSchedule.debounce)
+            guard !Task.isCancelled else { return }
+            self?.tick()
+        }
+    }
+
+    /// Samples again when the policy's next deadline passes (a candidate
+    /// meeting reaching its start delay, or an idle meeting's end grace).
+    private func scheduleDeadlineTick() {
+        deadlineTask?.cancel()
+        deadlineTask = nil
+        guard isActive, let deadline = policy.nextEvaluation() else { return }
+        // A little slack so the sample lands just after the deadline.
+        let wait = max(0, deadline.timeIntervalSinceNow) + 0.25
+        deadlineTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(wait * 1000)))
+            guard !Task.isCancelled else { return }
+            self?.tick()
+        }
+    }
+
+    // MARK: - Sampling
 
     private func tick() {
+        guard isActive else { return }
+        defer { scheduleDeadlineTick() }
+        // The recording detection started has stopped (by any means): forget it.
+        if !ownership.ownsRecording(currentSessionId: currentSessionId()) {
+            ownership.clear()
+        }
         let defaults = UserDefaults.standard
         let includeBrowsers = defaults.object(forKey: Self.includeBrowsersKey) as? Bool ?? true
         let includeOthers = defaults.bool(forKey: Self.includeOtherAppsKey)
@@ -179,10 +286,16 @@ final class MeetingDetector: ObservableObject {
             )
         case .autoRecord:
             Task {
-                await startRecording?(app, true)
+                // Only the session this very call started is detection's own
+                // (a manual start racing this one is refused here, or wins and
+                // makes this one refused — either way it is never claimed).
+                let sessionId = await startRecording?(app, true)
                 // Only announce what actually happened (start can fail on a
                 // missing permission). The banner carries a Stop action.
-                guard isRecording() else { return }
+                guard let sessionId, isRecording(), currentSessionId() == sessionId else { return }
+                // This recording is detection's own: it may stop it again
+                // when the meeting ends.
+                ownership.detectorStarted(sessionId: sessionId)
                 post(
                     id: Self.startRequestId,
                     category: Self.endCategoryId,
@@ -197,12 +310,17 @@ final class MeetingDetector: ObservableObject {
     private func meetingEnded(_ app: MeetingApp) {
         Log.audio.info("Meeting ended: \(app.name, privacy: .public).")
         removeNotifications([Self.startRequestId])
-        guard isRecording() else { return }
+        let response = ownership.endResponse(
+            endAction: Self.endAction,
+            isRecording: isRecording(),
+            currentSessionId: currentSessionId()
+        )
+        ownership.clear()
 
-        switch Self.endAction {
-        case .nothing:
+        switch response {
+        case .ignore:
             return
-        case .notify:
+        case .ask:
             post(
                 id: Self.endRequestId,
                 category: Self.endCategoryId,
@@ -240,7 +358,7 @@ final class MeetingDetector: ObservableObject {
             )
             // A person chose to record: follow the normal Record rules (bind to
             // the open note if there is one), unlike auto-record.
-            Task { await startRecording?(app, false) }
+            Task { _ = await startRecording?(app, false) }
         case (Self.endCategoryId, Self.actionStop):
             guard isRecording() else { return }
             Task { await stopRecording?() }

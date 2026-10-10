@@ -13,19 +13,27 @@ final class AppStateNoteBindingTests: XCTestCase {
 
         let note = try notes.createNote(title: "My note", body: "")
 
-        // startSession boots audio capture, which fails in a test bundle. We
-        // tolerate that and assert only on the persisted session row's noteId.
-        // The bind must happen BEFORE the audio bootstrap so the assertion is
-        // meaningful even on failure.
+        // startSession boots speech + audio capture, which usually fails in a
+        // test bundle. A failed start rolls back completely (no phantom
+        // session row); a successful one leaves the row bound to the note.
+        var started = true
         do {
             try await appState.startSession(title: "Test", noteId: note.id)
         } catch {
-            // expected when audio path fails under XCTest
+            // expected when the speech/audio path fails under XCTest
+            started = false
         }
 
         let bound = try transcripts.fetchSessions(forNoteId: note.id)
-        XCTAssertEqual(bound.count, 1, "Session should be persisted and bound to note before audio bootstrap")
-        XCTAssertEqual(bound.first?.title, "Test")
+        if started {
+            XCTAssertEqual(bound.count, 1, "Session should be persisted and bound to the note")
+            XCTAssertEqual(bound.first?.title, "Test")
+        } else {
+            XCTAssertEqual(bound.count, 0, "A failed start must delete the session row it created")
+            XCTAssertNil(appState.currentSessionId, "A failed start must clear currentSessionId")
+            XCTAssertFalse(appState.isTranscribing)
+            XCTAssertFalse(appState.isStartingSession)
+        }
 
         // Best-effort teardown
         await appState.stopSession()
