@@ -31,6 +31,8 @@ struct NoteEditorView: View {
     /// Known note titles, refreshed when the editor appears / the note changes,
     /// so the web editor can style `[[wiki links]]` as resolved vs broken.
     @State private var knownTitles: [String] = []
+    /// Lets the menu bar's Format / Find commands reach this editor.
+    @State private var commandBridge = EditorCommandBridge()
 
     private var pageWidth: NotePageWidth {
         NotePageWidth(rawValue: pageWidthRaw) ?? .full
@@ -74,7 +76,8 @@ struct NoteEditorView: View {
                     fontSize: bodyFontSize,
                     knownTitles: knownTitles,
                     onWikiLink: { anchor in onNavigate(anchor) },
-                    plantUMLRemoteEnabled: plantUMLRemoteEnabled
+                    plantUMLRemoteEnabled: plantUMLRemoteEnabled,
+                    commandBridge: commandBridge
                 )
                 // Full width by default. The finite presets (Regular/Wide)
                 // centre the text column at the chosen reading measure
@@ -85,6 +88,7 @@ struct NoteEditorView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+        .focusedSceneValue(\.scribeEditorCommands, commandBridge)
         .scribeFocusMenuToolbar(
             pageWidthRaw: $pageWidthRaw,
             perNoteTypefaceRaw: $perNoteTypefaceRaw,

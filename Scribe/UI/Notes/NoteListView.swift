@@ -4,6 +4,7 @@ import SwiftUI
 struct NoteListView: View {
     @StateObject private var vm: NoteListViewModel
     @Binding var selectedNoteId: String?
+    @Environment(\.undoManager) private var undoManager
 
     init(scope: NoteListScope = .all, selectedNoteId: Binding<String?>) {
         _vm = StateObject(wrappedValue: NoteListViewModel(scope: scope))
@@ -57,6 +58,8 @@ struct NoteListView: View {
                     NoteRowView(note: note)
                         .tag(note.id)
                         .contextMenu {
+                            OpenNoteInNewWindowButton(noteId: note.id)
+                            Divider()
                             Button(role: .destructive) {
                                 vm.requestDelete(id: note.id)
                             } label: {
@@ -76,7 +79,7 @@ struct NoteListView: View {
             presenting: vm.pendingDelete
         ) { request in
             Button("Delete", role: .destructive) {
-                let deletedId = vm.confirmDelete(request)
+                let deletedId = vm.confirmDelete(request, undoManager: undoManager)
                 if let id = deletedId, selectedNoteId == id { selectedNoteId = nil }
             }
             Button("Cancel", role: .cancel) { vm.pendingDelete = nil }

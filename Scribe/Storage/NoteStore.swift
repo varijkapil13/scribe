@@ -163,6 +163,37 @@ final class NoteStore: @unchecked Sendable {
         }
     }
 
+    /// Re-creates a note removed by `deleteNote` (Edit › Undo Delete Note)
+    /// under its original id, timestamps, notebook and tags, and writes its
+    /// file back into the vault. Callers must only offer this for notes that
+    /// had no recordings or attachments — `deleteNote` destroys those and
+    /// they can't come back. `note.body` must hold the real body (from
+    /// `fetchNote` before the delete). Outgoing wiki-links are rebuilt here;
+    /// links *into* the note are rebuilt as the linking notes are next saved.
+    func restoreDeletedNote(_ note: Note, tags: [String]) throws {
+        try db.write { database in
+            var restored = note
+            restored.bodyExcerpt = Note.makeExcerpt(from: note.body)
+            try restored.insert(database)
+            for tag in Self.normalizeTags(tags) {
+                try NoteTagRow(noteId: note.id, tag: tag).insert(database)
+            }
+            for anchor in Self.parseWikiLinks(from: note.body) {
+                if let target = try Note
+                    .filter(sql: "LOWER(title) = LOWER(?)", arguments: [anchor])
+                    .fetchOne(database) {
+                    let link = NoteLinkRow(sourceNoteId: note.id,
+                                           targetNoteId: target.id,
+                                           anchorText: anchor)
+                    try link.insert(database, onConflict: .ignore)
+                }
+            }
+            try Self.upsertFTS(database, noteId: note.id, title: note.title, body: note.body)
+            // Inside the transaction — see `createNote`.
+            try mirrorToDisk(note: restored, tags: tags)
+        }
+    }
+
     /// Returns the number of recording sessions bound to a note. Cheap —
     /// hits the `sessions_noteId_idx` index. Used by the UI to decide
     /// whether deleting a note needs an explicit confirmation about the

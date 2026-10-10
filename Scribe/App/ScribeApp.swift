@@ -23,6 +23,20 @@ struct ScribeApp: App {
                 .environmentObject(appDelegate)
         }
         .commands { scribeCommands }
+        .commands { ScribeMenuCommands() }
+
+        // Standalone note windows (File › Open in New Window, ⌥⌘O). Restored
+        // with their note on relaunch.
+        WindowGroup("Note", id: NoteWindowValue.windowID, for: NoteWindowValue.self) { $value in
+            NoteWindowRoot(value: $value)
+                .environmentObject(appState)
+                .environmentObject(appDelegate)
+        }
+
+        // Help › Keyboard Shortcuts.
+        Window("Keyboard Shortcuts", id: ShortcutReferenceWindow.windowID) {
+            ShortcutReferenceView()
+        }
 
         Settings {
             SettingsRootView(audioManager: appState.audioManager)
@@ -89,11 +103,8 @@ struct ScribeApp: App {
                 .keyboardShortcut("3", modifiers: .command)
         }
 
-        // View → focus mode (sidebar collapse).
-        CommandGroup(after: .sidebar) {
-            Button("Toggle Sidebar") { post(.scribeToggleSidebar) }
-                .keyboardShortcut("s", modifiers: [.command, .control])
-        }
+        // View → Show/Hide Sidebar (⌃⌘S) comes from SidebarCommands in
+        // ScribeMenuCommands.
     }
 
     private func post(_ name: Notification.Name) {
