@@ -52,7 +52,8 @@ final class AudioSessionManager: ObservableObject {
     // MARK: - Capture Engines
 
     let micCapture = MicrophoneCapture()
-    let systemCapture = SystemAudioCapture()
+    /// Core Audio process tap, with ScreenCaptureKit as the fallback.
+    let systemCapture = SystemAudioRouter()
 
     // MARK: - Callbacks
 
@@ -183,6 +184,9 @@ final class AudioSessionManager: ObservableObject {
         // silently. `systemCapture` is a single long-lived instance, so wiring
         // this once per session start also covers mid-session toggle/resume.
         systemCapture.onStreamError = Self.makeStreamErrorForwarder(to: WeakAudioSessionManager(self))
+        // A tap rebuild or a backend switch leaves a hole in the system
+        // track; its next buffer measures it.
+        systemCapture.onCaptureWillRestart = Self.makeCaptureRestartForwarder(aligner)
 
         // Configure microphone capture.
         if let deviceID = micDeviceID {
@@ -638,6 +642,11 @@ final class AudioSessionManager: ObservableObject {
         }
     }
 
+    /// System-capture restart callback (background queue) → aligner.
+    nonisolated private static func makeCaptureRestartForwarder(_ aligner: AudioStreamAligner) -> () -> Void {
+        { aligner.trackWillStart(.system) }
+    }
+
     // MARK: - Serialized system capture
 
     /// Queues a system-capture start behind any start/stop still running.
@@ -648,6 +657,8 @@ final class AudioSessionManager: ObservableObject {
         let aligner = self.aligner
         let start = Task { @MainActor in
             await previous?.value
+            // Lets the tap narrow to the meeting app when that's enabled.
+            capture.meetingBundleID = MeetingDetector.shared.currentMeeting?.bundleID
             if !capture.isCapturing {
                 // Its first buffer measures the start-up delay precisely.
                 aligner.trackWillStart(.system)

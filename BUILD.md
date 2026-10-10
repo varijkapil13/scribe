@@ -42,8 +42,10 @@ DISABLE_SWIFTLINT=YES xcodebuild -project Scribe.xcodeproj -scheme Scribe \
 > once with `defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES`
 > (Apple's key is misspelled — copy it verbatim).
 
-On first launch macOS will prompt for **Microphone**, **Screen Recording**
-(system-audio capture via ScreenCaptureKit — audio only, no video), and later
+On first launch macOS will prompt for **Microphone**, **System Audio
+Recording** (other apps' audio via a Core Audio process tap; **Screen
+Recording** instead when ScreenCaptureKit is chosen under Settings → General →
+Audio, or as the fallback), and later
 **Notifications** (the first time a task reminder is saved). All transcription
 and AI run on-device.
 
@@ -134,7 +136,7 @@ The app's feed is `https://github.com/varijkapil13/scribe/releases/latest/downlo
 - **Entitlements**: audio-input, user-selected file read/write.
 - **Min OS**: macOS 27.0 (`LSMinimumSystemVersion`). Apple Silicon only
   (`ARCHS=arm64`).
-- **Usage strings** (mic / screen / speech) are in `Info.plist`.
+- **Usage strings** (mic / system audio / screen / speech) are in `Info.plist`.
 
 ## Troubleshooting
 

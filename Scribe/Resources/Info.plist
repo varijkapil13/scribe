@@ -60,6 +60,8 @@
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Scribe captures the audio other apps play (the remote side of a meeting) so it can transcribe it. Audio is processed on your Mac.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Scribe reads your calendar to name meeting notes after the event, list attendees and the agenda, and remind you to record before meetings start. Calendar data stays on your Mac.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
