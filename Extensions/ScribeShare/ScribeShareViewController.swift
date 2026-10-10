@@ -32,9 +32,12 @@ final class ScribeShareViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
-        Task { [weak self] in
-            await self?.load(items)
+        // Read the (non-Sendable) input items inside the main-actor task
+        // rather than capturing them, so nothing non-Sendable is sent into it.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let items = (self.extensionContext?.inputItems as? [NSExtensionItem]) ?? []
+            await self.load(items)
         }
     }
 
