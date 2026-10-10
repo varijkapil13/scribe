@@ -1,5 +1,7 @@
 # Xcode — the .xcodeproj is regenerated from project.yml via xcodegen
 Scribe.xcodeproj/
+# Written by xcodegen from project.yml's ScribeiOS `info:` block.
+ScribeiOS/Info.plist
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 DerivedData/

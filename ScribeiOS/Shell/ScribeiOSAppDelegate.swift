@@ -66,8 +66,17 @@ enum ScribeiOSBootstrap {
     /// queue; rebuilt when the vault moves (e.g. iCloud Drive toggled).
     private static var reconcileScheduler: NoteReconcileScheduler?
 
+    /// The vault root `migrateNotesToDisk()` last completed for.
+    private static var migratedVaultRoot: URL?
+
     private static func reconcileVault() {
         guard let fileStore = NoteStore.shared.fileStore else { return }
+        // The reconciler deletes every DB row without a file on disk, so a
+        // note that only exists in SQLite (created before disk mirroring, or
+        // with a vault that has since moved) must be written out first —
+        // the same order as the Mac's launch (AppDelegate). Until that
+        // succeeds for this vault, don't reconcile at all.
+        guard migrateNotesToDiskIfNeeded(root: fileStore.directory.root) else { return }
         if reconcileScheduler?.fileStore.directory.root != fileStore.directory.root {
             reconcileScheduler?.invalidate()
             let reconciler = NoteIndexReconciler(fileStore: fileStore, dbManager: DatabaseManager.shared)
@@ -81,5 +90,22 @@ enum ScribeiOSBootstrap {
             }
         }
         reconcileScheduler?.requestReconcile()
+    }
+
+    /// Mirrors DB-only notes into the vault once per vault root. Returns
+    /// false (and retries on the next activation) when it failed.
+    private static func migrateNotesToDiskIfNeeded(root: URL) -> Bool {
+        if migratedVaultRoot == root { return true }
+        do {
+            let migrated = try NoteStore.shared.migrateNotesToDisk()
+            if migrated > 0 {
+                Log.storage.info("iOS vault: migrated \(migrated) note(s) from SQLite to disk")
+            }
+            migratedVaultRoot = root
+            return true
+        } catch {
+            Log.storage.error("iOS vault: notes disk migration failed, skipping reconcile: \(error.localizedDescription)")
+            return false
+        }
     }
 }

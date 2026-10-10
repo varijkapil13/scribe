@@ -47,6 +47,11 @@ struct RootTabView: View {
             .onContinueUserActivity(ScribeUserActivity.viewNote) { activity in _ = navigator.handle(activity: activity) }
             .onContinueUserActivity(ScribeUserActivity.viewTask) { activity in _ = navigator.handle(activity: activity) }
             .onContinueUserActivity(CSSearchableItemActionType) { activity in _ = navigator.handle(activity: activity) }
+            // A note-row drag normally spawns a note window (that scene
+            // matches the drag's target content identifier); if iPadOS hands
+            // it to a main window instead, open the note here rather than
+            // dropping it.
+            .onContinueUserActivity(ScribeMobileWindows.openNoteWindowActivityType) { activity in _ = navigator.handle(activity: activity) }
             .onAppear(perform: restoreSceneState)
             .onChange(of: navigator.selectedTab) { _, tab in storedTab = tab.rawValue }
             .onChange(of: navigator.visibleNoteId) { _, id in storedNoteId = id ?? "" }

@@ -14,6 +14,9 @@ struct ScribeQuickTaskSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var errorMessage: String?
+    /// Return in the field fires both `onSubmit` and the Add button's
+    /// `.defaultAction` shortcut on a hardware keyboard; create only once.
+    @State private var didCreate = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -52,8 +55,10 @@ struct ScribeQuickTaskSheet: View {
     }
 
     private func create() {
+        guard !didCreate else { return }
         do {
             guard let task = try ScribeMobileTaskCreation.createTask(fromQuickAdd: text, store: .shared) else { return }
+            didCreate = true
             dismiss()
             onCreated(task)
         } catch {
