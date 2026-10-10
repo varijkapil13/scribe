@@ -16,6 +16,20 @@ final class TaskEditorViewModel: ObservableObject {
     @Published var priority: TodoTask.Priority?
     @Published var dueAt: Date?
     @Published var remindAt: Date?
+    /// Defer / start date (v20).
+    @Published var startAt: Date?
+    /// Things-style when-bucket (v20).
+    @Published var scheduleBucket: TaskScheduleBucket
+    /// Duration estimate in minutes (v20); nil = none.
+    @Published var estimatedMinutes: Int?
+    /// Area for a task without a project (v20). Ignored (cleared on save)
+    /// while `projectId` is set — the project's area applies instead.
+    @Published var areaId: String?
+    /// Heading inside the selected project (v20).
+    @Published var headingId: String?
+    @Published private(set) var availableAreas: [TaskArea] = []
+    /// Headings of the currently selected project.
+    @Published private(set) var availableHeadings: [ProjectHeading] = []
     /// Legacy comma-separated tag entry, still used by the modal
     /// `TaskEditorView`. The inline `TaskDetailPanel` uses the structured
     /// `tags` array (token field) instead; `parsedTags` reconciles both.
@@ -74,9 +88,16 @@ final class TaskEditorViewModel: ObservableObject {
         self.priority = task.priority
         self.dueAt = task.dueAt
         self.remindAt = task.remindAt
+        self.startAt = task.startAt
+        self.scheduleBucket = task.scheduleBucket
+        self.estimatedMinutes = task.estimatedMinutes
+        self.areaId = task.areaId
+        self.headingId = task.headingId
         self.tagsInput = ""
         self.tags = []
         loadProjects()
+        loadAreas()
+        loadHeadings(for: task.projectId)
         loadTags()
         loadAllTags()
         loadSourceSessionTitle()
@@ -92,6 +113,11 @@ final class TaskEditorViewModel: ObservableObject {
             $priority.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $dueAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $remindAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $startAt.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $scheduleBucket.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $estimatedMinutes.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $areaId.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $headingId.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $tagsInput.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $tags.dropFirst().map { _ in () }.eraseToAnyPublisher()
         ])
@@ -116,6 +142,51 @@ final class TaskEditorViewModel: ObservableObject {
         } catch {
             Log.ui.error("TaskEditorViewModel.loadProjects failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func loadAreas() {
+        do {
+            availableAreas = try store.fetchAreas()
+        } catch {
+            Log.ui.error("TaskEditorViewModel.loadAreas failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func loadHeadings(for projectId: String?) {
+        guard let projectId else {
+            availableHeadings = []
+            return
+        }
+        do {
+            availableHeadings = try store.headings(in: projectId)
+        } catch {
+            Log.ui.error("TaskEditorViewModel.loadHeadings failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Changes the project from the inspector picker. A heading belongs to
+    /// one project, so it's cleared; the heading list reloads for the new
+    /// project.
+    func selectProject(_ newProjectId: String?) {
+        guard newProjectId != projectId else { return }
+        projectId = newProjectId
+        headingId = nil
+        loadHeadings(for: newProjectId)
+    }
+
+    /// Area shown for the task: the project's when it has one, else its own.
+    var effectiveAreaId: String? {
+        if let projectId {
+            return availableProjects.first(where: { $0.id == projectId })?.areaId
+        }
+        return areaId
+    }
+
+    /// Sets the when-bucket. Someday parks the task, so it drops any start
+    /// date (a parked task isn't "deferred until" a day).
+    func setScheduleBucket(_ bucket: TaskScheduleBucket) {
+        scheduleBucket = bucket
+        if bucket == .someday { startAt = nil }
     }
 
     private func loadTags() {
@@ -186,6 +257,14 @@ final class TaskEditorViewModel: ObservableObject {
             updated.priority = priority
             updated.dueAt = dueAt
             updated.remindAt = remindAt
+            updated.startAt = startAt
+            updated.scheduleBucket = scheduleBucket
+            updated.estimatedMinutes = estimatedMinutes.map { max(0, $0) }
+            // Planning links stay consistent: a task in a project uses the
+            // project's area, and its heading must belong to that project.
+            updated.areaId = projectId == nil ? areaId : nil
+            updated.headingId = availableHeadings.contains(where: { $0.id == headingId && $0.projectId == projectId })
+                ? headingId : nil
             try store.updateTask(updated)
             try store.setTags(parsedTags, for: updated.id)
             // (Re-)schedule the reminder. The scheduler decides whether the
@@ -226,7 +305,12 @@ final class TaskEditorViewModel: ObservableObject {
                 recurrenceRule: originalTask.recurrenceRule,
                 sourceSessionId: originalTask.sourceSessionId,
                 sourceActionItemId: originalTask.sourceActionItemId,
-                tags: parsedTags
+                tags: parsedTags,
+                startAt: startAt,
+                scheduleBucket: scheduleBucket,
+                estimatedMinutes: estimatedMinutes,
+                areaId: areaId,
+                headingId: headingId
             )
             return copy
         } catch {
