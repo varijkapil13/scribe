@@ -15,6 +15,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case vocabulary
     case hooks
     case shortcuts
+    case links
     case templates
     case mcp
     case about
@@ -31,6 +32,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .vocabulary:   return "Vocabulary"
         case .hooks:        return "Hooks"
         case .shortcuts:    return "Shortcuts"
+        case .links:        return "Links & Handoff"
         case .templates:    return "Templates"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
@@ -47,6 +49,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .vocabulary:   return "character.book.closed"
         case .hooks:        return "terminal"
         case .shortcuts:    return "keyboard"
+        case .links:        return "link"
         case .templates:    return "doc.text.magnifyingglass"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
@@ -96,6 +99,7 @@ struct SettingsPaneView: View {
         case .vocabulary:   VocabularySettingsPane()
         case .hooks:        HooksSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
+        case .links:        LinksSettingsPane()
         case .templates:    TemplatesSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
@@ -141,7 +145,7 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
         case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
         case .dictation:    return [.dictation]
         case .storageSync:  return [.storage]
-        case .shortcuts:    return [.shortcuts]
+        case .shortcuts:    return [.shortcuts, .links]
         case .mcp:          return [.mcp]
         case .about:        return [.about]
         }
@@ -814,6 +818,7 @@ private struct ShortcutsSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            SiriSpotlightSettingsSection()
         }
         .formStyle(.grouped)
     }

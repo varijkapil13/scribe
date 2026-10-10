@@ -17,6 +17,24 @@ want to **rebuild** the bundle (upgrade CodeMirror, tweak the theme, etc.).
   plus **wiki-links** `[[Title]]` / `[[Title|alias]]`, an in-web **slash command
   menu**, **KaTeX math** (`$…$` / `$$…$$`), fenced **mermaid** + **plantuml**
   diagram rendering, and the JS↔native bridge.
+- `src/bridge.js` — `postToNative` plus the `window.scribeCommand(name, arg)`
+  dispatcher; feature modules register the command names they handle.
+- `src/search.js` — `@codemirror/search` find / replace with a styled panel at
+  the top; commands `find`, `replace`, `findNext`, `findPrevious`,
+  `selectAllMatches`, `replaceAll`, `closeFind`.
+- `src/folding.js` — fold gutter (hover chevrons) for heading sections and
+  list items, ⌥⌘[ / ⌥⌘] keymap; commands `fold`, `unfold`, `toggleFold`,
+  `foldAll`, `unfoldAll`.
+- `src/completion.js` — `@codemirror/autocomplete` for `[[` note titles and
+  `#tags` (data pushed / re-requested from native).
+- `src/outline.js` — debounced heading outline posted to native; command
+  `scrollToLine` (1-based).
+- `src/tables.js` — GFM table Tab / Shift-Tab cell navigation, Enter adds a
+  row (Enter on an empty last row leaves the table).
+- `src/attachments.js` — image / file paste & drop → native saves into the
+  note's attachments folder → markdown link inserted.
+- `src/images.js` — live-preview rendering of local `![](attachments/…)`
+  images via `scribe-asset://vault/…` (remote images are never fetched).
 - `src/diagrams.js` — mermaid (offline, **lazy-loaded** via dynamic import on
   first mermaid render) + plantuml (encoded URL via
   `https://www.plantuml.com/plantuml/svg/…`) rendering, cached by source hash.
@@ -66,6 +84,13 @@ Mirrored in `Scribe/UI/Notes/WebMarkdownEditor.swift`:
   - `{type:"change", text}` debounced (200 ms) on every document edit
   - `{type:"wikilink", target}` when the user clicks a `[[wiki link]]` (the
     `target` is the lookup title, i.e. the text before any `|alias`)
+  - `{type:"outline", headings:[{level, text, line}]}` debounced, when the
+    heading list changes
+  - `{type:"attachment", id, filename, mime, data}` a pasted / dropped file
+    (base64 `data`, ≤ 50 MB); `{type:"attachmentRejected", filename, reason}`
+    when over the cap
+  - `{type:"requestCompletionData"}` when `[[` / `#` completion wants fresh
+    titles / tags
 - **native → JS**:
   - `window.scribeSetDoc(text)` — replace the whole document (no change echo)
   - `window.scribeSetTheme("light"|"dark")` — swap the theme
@@ -73,3 +98,10 @@ Mirrored in `Scribe/UI/Notes/WebMarkdownEditor.swift`:
   - `window.scribeSetKnownTitles([title, …])` — known note titles, so wiki-links
     can be styled resolved vs broken (matched case-insensitively)
   - `window.scribeFocus()` — focus the editor
+  - `window.scribeCommand(name, arg)` — run a registered command (see
+    `bridge.js`); returns false for unknown names
+  - `window.scribeSetCompletionData({titles, tags})` — completion data
+  - `window.scribeAttachmentSaved(id, {path, name, isImage})` /
+    `window.scribeAttachmentFailed(id, message)` — answer to `attachment`
+  - `window.scribeInsertAttachment({path, name, isImage})` — insert a link to
+    a file native saved itself (Continuity Camera) at the caret

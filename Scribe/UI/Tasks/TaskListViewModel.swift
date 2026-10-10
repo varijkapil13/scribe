@@ -279,6 +279,7 @@ final class TaskListViewModel: ObservableObject {
     // MARK: - Row actions
 
     func toggleCompleted(_ task: TodoTask) {
+        let before = (try? store.fetchTask(id: task.id)) ?? task
         do {
             if task.isCompleted {
                 // Cancel any in-flight settle for this row before un-completing.
@@ -323,6 +324,8 @@ final class TaskListViewModel: ObservableObject {
                     }
                 }
             }
+            registerFieldUndo(task.isCompleted ? "Mark Task Incomplete" : "Complete Task",
+                              before: [before], fields: [.completion])
         } catch {
             Log.ui.error("TaskListViewModel.toggleCompleted failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -340,9 +343,11 @@ final class TaskListViewModel: ObservableObject {
     }
 
     func delete(_ task: TodoTask) {
+        let snapshot = TaskUndo.snapshotForDeletion(id: task.id, store: store)
         do {
             try store.deleteTask(id: task.id)
             Task { await reminderScheduler.cancel(taskId: task.id) }
+            registerDeleteUndo(snapshot.map { [$0] } ?? [])
         } catch {
             Log.ui.error("TaskListViewModel.delete failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -353,9 +358,12 @@ final class TaskListViewModel: ObservableObject {
     /// Inline due-date reschedule. Used by the in-row date popover, the
     /// "Reschedule to >" context menu, and drag-to-bucket drops.
     func setDueDate(_ date: Date?, for task: TodoTask) {
+        let before = (try? store.fetchTask(id: task.id)) ?? task
         var updated = task
         updated.dueAt = date
-        commitInline(updated)
+        if commitInline(updated) {
+            registerFieldUndo("Change Due Date", before: [before], fields: [.dueDate])
+        }
     }
 
     /// Cycles priority None → High → Medium → Low → None (click-to-cycle on the
@@ -372,9 +380,12 @@ final class TaskListViewModel: ObservableObject {
     }
 
     func setPriority(_ priority: TodoTask.Priority?, for task: TodoTask) {
+        let before = (try? store.fetchTask(id: task.id)) ?? task
         var updated = task
         updated.priority = priority
-        commitInline(updated)
+        if commitInline(updated) {
+            registerFieldUndo("Change Priority", before: [before], fields: [.priority])
+        }
     }
 
     /// Inline title rename (double-click to edit in place).
@@ -448,7 +459,10 @@ final class TaskListViewModel: ObservableObject {
         // be re-armed (recurring) or cancelled (completed) like the single-task
         // toggle path does — otherwise batch-completed tasks keep firing.
         let ids = Array(selection)
+        let before = (try? store.tasks(forIDs: ids)) ?? []
         runBatch { _ = try store.completeTasks(ids: $0) }
+        registerFieldUndo(ids.count == 1 ? "Complete Task" : "Complete Tasks",
+                          before: before, fields: [.completion])
         for id in ids {
             Task { @MainActor in
                 guard let refreshed = try? store.fetchTask(id: id) else { return }
@@ -465,24 +479,120 @@ final class TaskListViewModel: ObservableObject {
         // Capture ids before the selection is cleared so we can cancel each
         // task's pending reminder — the single-task delete already does this.
         let ids = Array(selection)
+        let snapshots = ids.compactMap { TaskUndo.snapshotForDeletion(id: $0, store: store) }
         runBatch { _ = try store.deleteTasks(ids: $0) }
         for id in ids {
             Task { await reminderScheduler.cancel(taskId: id) }
         }
+        let remaining = (try? store.tasks(forIDs: ids)) ?? []
+        if remaining.isEmpty { registerDeleteUndo(snapshots) }
     }
 
     func batchMove(toProject id: String?)         { runBatch { try store.moveTasks(ids: $0, toProject: id) } }
-    func batchReschedule(to date: Date?)          { runBatch { try store.rescheduleTasks(ids: $0, to: date) } }
-    func batchPriority(_ p: TodoTask.Priority?)   { runBatch { try store.setPriority(p, forTasks: $0) } }
 
-    private func commitInline(_ task: TodoTask) {
+    func batchReschedule(to date: Date?) {
+        let before = (try? store.tasks(forIDs: Array(selection))) ?? []
+        runBatch { try store.rescheduleTasks(ids: $0, to: date) }
+        registerFieldUndo("Change Due Date", before: before, fields: [.dueDate])
+    }
+
+    func batchPriority(_ p: TodoTask.Priority?) {
+        let before = (try? store.tasks(forIDs: Array(selection))) ?? []
+        runBatch { try store.setPriority(p, forTasks: $0) }
+        registerFieldUndo("Change Priority", before: before, fields: [.priority])
+    }
+
+    @discardableResult
+    private func commitInline(_ task: TodoTask) -> Bool {
         do {
             try store.updateTask(task)
             if let refreshed = try store.fetchTask(id: task.id) {
                 Task { await reminderScheduler.schedule(refreshed) }
             }
+            return true
         } catch {
             Log.ui.error("TaskListViewModel.commitInline failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    // MARK: - Undo (Edit › Undo / Redo)
+
+    /// The window's undo manager, handed in by `TaskListView`. Completion,
+    /// delete, due-date and priority changes register their inverse with it.
+    weak var undoManager: UndoManager?
+
+    /// Registers undo/redo for an action that changed `fields` on the tasks
+    /// whose pre-action state is `before`. No-op when nothing changed.
+    private func registerFieldUndo(_ actionName: String,
+                                   before: [TodoTask],
+                                   fields: Set<TaskUndoField>) {
+        guard let undoManager, !before.isEmpty else { return }
+        let after = (try? store.tasks(forIDs: before.map(\.id))) ?? []
+        let changed = before.contains { old in
+            guard let new = after.first(where: { $0.id == old.id }) else { return false }
+            return TaskUndoField.applying(fields, from: old, to: new) != new
+        }
+        guard changed else { return }
+        let store = self.store
+        let scheduler = reminderScheduler
+        UndoableActions.register(
+            on: undoManager,
+            actionName: actionName,
+            undo: { [weak self] in
+                let restored = TaskUndo.restore(before, fields: fields, store: store)
+                self?.didApplyUndo(to: restored)
+                TaskListViewModel.refreshReminders(for: restored, scheduler: scheduler)
+            },
+            redo: { [weak self] in
+                let restored = TaskUndo.restore(after, fields: fields, store: store)
+                self?.didApplyUndo(to: restored)
+                TaskListViewModel.refreshReminders(for: restored, scheduler: scheduler)
+            }
+        )
+    }
+
+    /// Registers undo (restore) / redo (delete again) for deleted tasks.
+    private func registerDeleteUndo(_ snapshots: [DeletedTaskSnapshot]) {
+        guard let undoManager, !snapshots.isEmpty else { return }
+        let store = self.store
+        let scheduler = reminderScheduler
+        let ids = snapshots.map(\.task.id)
+        UndoableActions.register(
+            on: undoManager,
+            actionName: snapshots.count == 1 ? "Delete Task" : "Delete Tasks",
+            undo: {
+                let restored = snapshots.compactMap { TaskUndo.restoreDeleted($0, store: store) }
+                TaskListViewModel.refreshReminders(for: restored, scheduler: scheduler)
+            },
+            redo: {
+                do {
+                    _ = try store.deleteTasks(ids: ids)
+                } catch {
+                    Log.ui.error("TaskListViewModel redo delete failed: \(error.localizedDescription, privacy: .public)")
+                }
+                for id in ids {
+                    Task { await scheduler.cancel(taskId: id) }
+                }
+            }
+        )
+    }
+
+    /// Ends any completion settle-hold on tasks an undo/redo just changed so
+    /// they re-bucket immediately.
+    private func didApplyUndo(to tasks: [TodoTask]) {
+        for task in tasks { clearSettle(task.id) }
+    }
+
+    /// Re-arms (or cancels) reminders to match tasks an undo/redo changed.
+    private static func refreshReminders(for tasks: [TodoTask], scheduler: TaskReminderScheduling) {
+        for task in tasks {
+            if task.isCompleted || task.isCancelled {
+                let id = task.id
+                Task { await scheduler.cancel(taskId: id) }
+            } else {
+                Task { await scheduler.schedule(task) }
+            }
         }
     }
 

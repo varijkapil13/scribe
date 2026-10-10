@@ -15,6 +15,8 @@ enum NoteAIEdit: Sendable, Equatable {
     case upsertSummary(sessionId: String, markdown: String)
     /// Append a `## heading` section at the end of the note.
     case appendSection(heading: String, markdown: String)
+    /// Append plain text at the end of the note (Shortcuts "Append to Note").
+    case appendText(String)
 
     static let userInfoKey = "edit"
 
@@ -24,6 +26,8 @@ enum NoteAIEdit: Sendable, Equatable {
             return NoteScribeBlocks.upsertSummary(body: body, sessionId: sessionId, content: markdown)
         case .appendSection(let heading, let markdown):
             return NoteScribeBlocks.appendSection(body: body, heading: heading, content: markdown)
+        case .appendText(let text):
+            return ScribeIntentsText.append(text, to: body)
         }
     }
 }

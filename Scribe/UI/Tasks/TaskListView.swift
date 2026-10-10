@@ -14,6 +14,8 @@ struct TaskListView: View {
     private let onOpenRecording: ((String) -> Void)?
 
     @StateObject private var viewModel: TaskListViewModel
+    /// Task actions register Edit › Undo with the window's undo manager.
+    @Environment(\.undoManager) private var undoManager
     @State private var selectedTask: TodoTask?
     @State private var pendingDelete: TodoTask?
     @State private var showQuickAddDatePicker = false
@@ -238,6 +240,7 @@ struct TaskListView: View {
         .navigationTitle(headerTitle)
         .searchable(text: $viewModel.searchQuery, prompt: "Search tasks")
         .onAppear {
+            viewModel.undoManager = undoManager
             viewModel.start()
             loadCollapsedBuckets()
             loadSortMode()
