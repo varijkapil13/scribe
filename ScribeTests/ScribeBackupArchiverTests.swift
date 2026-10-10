@@ -240,6 +240,40 @@ final class ScribeBackupArchiverTests: XCTestCase {
         XCTAssertEqual(previousTitles, ["Live task"])
     }
 
+    func testRestoreMovesAudioTheBackupDoesNotKnowIntoTheSafetyCopy() throws {
+        let staging = workspace.appendingPathComponent("staging", isDirectory: true)
+        try ScribeBackupArchiver.stage(
+            sources: sources(database: try makeDatabase(taskTitle: "T"), vault: nil),
+            into: staging, now: now, automatic: false
+        )
+        let inspection = try ScribeBackupArchiver.inspect(
+            extractedRoot: staging,
+            knownMigrations: try ScribeBackupArchiver.knownMigrationIdentifiers()
+        )
+
+        // A recording made after the backup: its id isn't in the backup's
+        // database, so the launch sweep would delete it if left in place.
+        let audioRoot = workspace.appendingPathComponent("Audio", isDirectory: true)
+        let sessionId = UUID().uuidString
+        try write("m4a", to: audioRoot.appendingPathComponent("\(sessionId)/mic.m4a"))
+        try write("keep", to: audioRoot.appendingPathComponent("not-a-session/file.txt"))
+
+        let supportDirectory = workspace.appendingPathComponent("AppSupport", isDirectory: true)
+        let targets = ScribeRestoreTargets(
+            database: try makeDatabase(taskTitle: "Live"),
+            vaultRoot: workspace.appendingPathComponent("LiveVault", isDirectory: true),
+            supportDirectory: supportDirectory,
+            safetyCopiesDirectory: supportDirectory.appendingPathComponent("Restore Safety Copies", isDirectory: true),
+            audioRoot: audioRoot
+        )
+        let outcome = try ScribeBackupArchiver.restore(inspection, into: targets, currentSettingsPlist: nil, now: now)
+
+        let fm = FileManager.default
+        XCTAssertFalse(fm.fileExists(atPath: audioRoot.appendingPathComponent(sessionId).path))
+        XCTAssertTrue(fm.fileExists(atPath: outcome.safetyCopyFolder.appendingPathComponent("Audio/\(sessionId)/mic.m4a").path))
+        XCTAssertTrue(fm.fileExists(atPath: audioRoot.appendingPathComponent("not-a-session/file.txt").path))
+    }
+
     func testRestoreRefusesAnInvalidBackup() throws {
         let staging = workspace.appendingPathComponent("staging", isDirectory: true)
         try ScribeBackupArchiver.stage(

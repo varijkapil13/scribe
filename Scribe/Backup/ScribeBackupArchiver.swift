@@ -46,6 +46,11 @@ struct ScribeRestoreTargets: Sendable {
     var supportDirectory: URL
     /// Parent of the timestamped "Before Restore …" safety-copy folders.
     var safetyCopiesDirectory: URL
+    /// The session-audio root (`SessionAudioStorage.defaultRoot()`). Audio
+    /// folders the restored database no longer references are moved into the
+    /// safety copy, because the launch-time orphan sweep would otherwise
+    /// delete them. Nil skips that step (tests without audio).
+    var audioRoot: URL? = nil
 }
 
 struct ScribeRestoreOutcome: Sendable {
@@ -356,9 +361,10 @@ enum ScribeBackupArchiver {
             throw error
         }
 
-        // 4. Support files, 5. database contents.
+        // 4. Support files, 5. audio the backup doesn't know, 6. database contents.
         var movedSupport: [(live: URL, aside: URL)] = []
         var installedSupport: [URL] = []
+        var movedAudio: [(live: URL, aside: URL)] = []
         var databaseTouched = false
         do {
             let safetySupport = safety.appendingPathComponent(ScribeBackupManifest.supportFolderName, isDirectory: true)
@@ -378,12 +384,31 @@ enum ScribeBackupArchiver {
             }
 
             let backupQueue = try openReadOnly(inspection.databaseURL)
+
+            // Session audio folders are named by session id, and the launch
+            // sweep deletes any id the database doesn't know. Recordings made
+            // after the backup would be lost, so move them aside too.
+            if let audioRoot = targets.audioRoot {
+                let restoredIds = try backupQueue.read { db -> Set<String> in
+                    guard try db.tableExists("sessions") else { return [] }
+                    return Set(try String.fetchAll(db, sql: "SELECT id FROM sessions"))
+                }
+                let safetyAudio = safety.appendingPathComponent("Audio", isDirectory: true)
+                for folder in unreferencedAudioFolders(in: audioRoot, knownSessionIds: restoredIds) {
+                    try fm.createDirectory(at: safetyAudio, withIntermediateDirectories: true)
+                    let aside = safetyAudio.appendingPathComponent(folder.lastPathComponent, isDirectory: true)
+                    try fm.moveItem(at: folder, to: aside)
+                    movedAudio.append((live: folder, aside: aside))
+                }
+            }
+
             databaseTouched = true
             try backupQueue.backup(to: targets.database.database)
         } catch {
             if databaseTouched, let original = try? openReadOnly(safetyDatabase) {
                 try? original.backup(to: targets.database.database)
             }
+            for entry in movedAudio { try? fm.moveItem(at: entry.aside, to: entry.live) }
             for url in installedSupport { try? fm.removeItem(at: url) }
             for entry in movedSupport { try? fm.moveItem(at: entry.aside, to: entry.live) }
             rollBackVault()
@@ -474,6 +499,23 @@ enum ScribeBackupArchiver {
             try FileManager.default.removeItem(at: root.appendingPathComponent(relative))
         }
         return links.count
+    }
+
+    /// UUID-named folders directly under `root` whose name isn't a known
+    /// session id — exactly what `SessionAudioStorage.removeOrphanFolders`
+    /// would delete at the next launch.
+    nonisolated static func unreferencedAudioFolders(in root: URL, knownSessionIds: Set<String>) -> [URL] {
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return entries.filter { entry in
+            let name = entry.lastPathComponent
+            guard UUID(uuidString: name) != nil, !knownSessionIds.contains(name) else { return false }
+            return (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     /// A folder URL under `parent` that doesn't exist yet (`name`, `name 2`, …).

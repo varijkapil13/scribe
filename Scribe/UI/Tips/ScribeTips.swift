@@ -65,4 +65,5 @@ enum ScribeTips {
     @MainActor static func quickSearchUsed() { quickSearch.invalidate(reason: .actionPerformed) }
     @MainActor static func recordUsed() { record.invalidate(reason: .actionPerformed) }
     @MainActor static func taskQuickAddUsed() { taskQuickAdd.invalidate(reason: .actionPerformed) }
+    @MainActor static func dictationUsed() { dictation.invalidate(reason: .actionPerformed) }
 }

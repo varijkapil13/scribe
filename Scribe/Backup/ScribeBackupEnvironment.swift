@@ -62,7 +62,8 @@ enum ScribeBackupEnvironment {
             database: DatabaseManager.shared,
             vaultRoot: vaultRoot,
             supportDirectory: supportDirectory(),
-            safetyCopiesDirectory: safetyCopiesDirectory()
+            safetyCopiesDirectory: safetyCopiesDirectory(),
+            audioRoot: SessionAudioStorage.defaultRoot()
         )
     }
 }
