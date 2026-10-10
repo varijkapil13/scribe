@@ -3,8 +3,9 @@ import KeyboardShortcuts
 import AppKit
 import ServiceManagement
 
-/// One of the four settings screens shown in the combined main window. Each
-/// pane is a standalone `View`, chosen from the sidebar.
+/// One settings screen in the Settings window. Each pane is a standalone
+/// `View`, chosen from the window's sidebar (see `SettingsRootView`), where
+/// panes are listed under their `SettingsPaneGroup`.
 enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case general
     case intelligence
@@ -24,7 +25,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .general:      return "General"
         case .intelligence: return "Intelligence"
-        case .storage:      return "Storage"
+        case .storage:      return "Storage & Sync"
         case .dictation:    return "Dictation"
         case .calendar:     return "Calendar"
         case .vocabulary:   return "Vocabulary"
@@ -102,6 +103,67 @@ struct SettingsPaneView: View {
     }
 }
 
+/// Sidebar grouping for the Settings window. Groups with a `header` render as
+/// a titled sidebar section; the rest render their panes as top-level rows.
+/// Every `SettingsPane` belongs to exactly one group (pinned by tests).
+enum SettingsPaneGroup: String, CaseIterable, Identifiable {
+    case general
+    case recording
+    case intelligence
+    case dictation
+    case storageSync
+    case shortcuts
+    case mcp
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:      return "General"
+        case .recording:    return "Recording"
+        case .intelligence: return "Intelligence"
+        case .dictation:    return "Dictation"
+        case .storageSync:  return "Storage & Sync"
+        case .shortcuts:    return "Shortcuts"
+        case .mcp:          return "MCP"
+        case .about:        return "About"
+        }
+    }
+
+    /// Panes listed under this group, in sidebar order. Audio and meeting
+    /// detection live inside the General pane; speaker naming inside
+    /// Vocabulary.
+    var panes: [SettingsPane] {
+        switch self {
+        case .general:      return [.general]
+        case .recording:    return [.calendar]
+        case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
+        case .dictation:    return [.dictation]
+        case .storageSync:  return [.storage]
+        case .shortcuts:    return [.shortcuts]
+        case .mcp:          return [.mcp]
+        case .about:        return [.about]
+        }
+    }
+
+    /// Section header shown in the sidebar, or nil for single-pane groups
+    /// whose one row already carries the name.
+    var header: String? {
+        switch self {
+        case .recording, .intelligence: return title
+        default:                        return nil
+        }
+    }
+}
+
+extension SettingsPane {
+    /// The sidebar group this pane is listed under.
+    var group: SettingsPaneGroup {
+        SettingsPaneGroup.allCases.first { $0.panes.contains(self) } ?? .general
+    }
+}
+
 // MARK: - General
 
 private struct GeneralSettingsPane: View {
@@ -118,6 +180,8 @@ private struct GeneralSettingsPane: View {
     @AppStorage(MeetingDetector.includeBrowsersKey) var detectBrowserMeetings: Bool = true
     @AppStorage(MeetingDetector.includeOtherAppsKey) var detectOtherApps: Bool = false
     @AppStorage(MenuBarPreferences.showIconKey) var showMenuBarIcon: Bool = true
+    @AppStorage(PlantUMLRenderingPreference.remoteEnabledKey)
+    var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
 
     @State private var openAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var openConfirm: OpenConfirm?
@@ -164,6 +228,14 @@ private struct GeneralSettingsPane: View {
                 Text("Move copies your current notes into a new folder. Open switches Scribe to use an existing folder as the vault — your current files stay where they are.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Diagrams") {
+                toggleWithCaption(
+                    "Render PlantUML diagrams with plantuml.com",
+                    isOn: $plantUMLRemoteEnabled,
+                    caption: "Sends diagram source to the internet (plantuml.com) to draw ```plantuml``` blocks. Off by default; when off, PlantUML blocks show their source. Mermaid diagrams always render on your Mac."
+                )
             }
 
             Section("Audio") {
@@ -405,7 +477,7 @@ private struct IntelligenceSettingsPane: View {
             } header: {
                 Text("Apple Intelligence")
             } footer: {
-                Text("Summaries, action items, and smart search run entirely on-device. No audio or text ever leaves your Mac.")
+                Text("Summaries, action items, and smart search run entirely on-device. Analysis never sends audio or text off your Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -509,6 +581,11 @@ private struct StorageSettingsPane: View {
                     isOn: $iCloudSyncEnabled,
                     caption: "Keep tasks in sync across your devices. Requires iCloud."
                 )
+                if iCloudSyncEnabled && !CloudKitAvailability.isCloudKitEntitled {
+                    Label("This build of Scribe isn't set up for iCloud, so tasks stay on this Mac for now.", systemImage: "icloud.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 toggleWithCaption(
                     "Store notes in iCloud Drive",
                     isOn: Binding(
@@ -777,6 +854,8 @@ private struct AboutSettingsPane: View {
                 Label("All audio is processed on-device.", systemImage: "lock.shield")
                 Label("No network calls during recording or analysis.", systemImage: "network.slash")
                 Label("Recordings live at ~/Library/Application Support/Scribe.", systemImage: "folder")
+                Label("iCloud sync for tasks and notes is off unless you turn it on in Storage & Sync.", systemImage: "icloud")
+                Label("PlantUML diagrams are sent to plantuml.com only if you enable it in General.", systemImage: "point.3.connected.trianglepath.dotted")
             }
 
             Section("Acknowledgements") {

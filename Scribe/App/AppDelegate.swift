@@ -153,6 +153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             CalendarService.shared.start()
         }
 
+        // iCloud task sync on the Mac: launch / toggle-on / app-active
+        // (throttled) / local edits (debounced). Self-gates on the opt-in
+        // toggle and on a CloudKit-entitled build (CloudKitAvailability).
+        if !AppLaunchEnvironment.isUITesting {
+            TaskSyncScheduler.shared.start()
+        }
+
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
         // failing the first time the user hits Record.
@@ -175,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        if !AppLaunchEnvironment.isUITesting {
+            TaskSyncScheduler.shared.appDidBecomeActive()
+        }
         Task {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }

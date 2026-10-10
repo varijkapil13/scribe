@@ -225,6 +225,8 @@ final class DictationController: ObservableObject {
             finishWith(message: "Inserted")
         case .copiedToClipboard:
             finishWith(message: "Copied, press ⌘V to paste. Allow Accessibility to type directly.")
+        case .secureInputActive:
+            finishWith(message: "Secure input is on, so Scribe can't type here. Copied, press ⌘V to paste.")
         }
     }
 

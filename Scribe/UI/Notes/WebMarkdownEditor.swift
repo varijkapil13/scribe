@@ -32,7 +32,9 @@
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px)
 //                  window.scribeSetKnownTitles([title, …])  resolved-link styling
+//                  window.scribeSetPlantUMLRemote(bool)  opt-in plantuml.com rendering
 //                  window.scribeFocus()
+//   config:        window.scribeConfig = {plantUMLRemote}  document-start user script
 
 import SwiftUI
 import WebKit
@@ -159,6 +161,10 @@ struct WebMarkdownEditor: NSViewRepresentable {
     /// the lookup target (the text before any `|alias`), to be resolved via the
     /// note-title resolution and navigated through the app's coordinator.
     var onWikiLink: ((String) -> Void)? = nil
+    /// Whether ```plantuml``` fences may be rendered via plantuml.com (sends
+    /// the diagram source over the internet). Off by default — see
+    /// `PlantUMLRenderingPreference`.
+    var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onWikiLink: onWikiLink)
@@ -168,6 +174,13 @@ struct WebMarkdownEditor: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: "scribe")
+        // Tell the bundle the PlantUML privacy setting before any of its code
+        // runs, so a remote fetch is never attempted when the toggle is off.
+        controller.addUserScript(WKUserScript(
+            source: PlantUMLRenderingPreference.configScript(remoteEnabled: plantUMLRemoteEnabled),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         config.userContentController = controller
         // Serve the bundled editor assets over a real origin so the ES module
         // bundle + its lazy chunks load (file:// is a null origin and WebKit
@@ -192,6 +205,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.pendingTheme = colorScheme
         context.coordinator.pendingFontSize = fontSize
         context.coordinator.pendingTitles = knownTitles
+        context.coordinator.initialPlantUMLRemote(plantUMLRemoteEnabled)
 
         if Self.resourceDir != nil, let entryURL = Self.editorEntryURL {
             webView.load(URLRequest(url: entryURL))
@@ -211,6 +225,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.setTheme(colorScheme)
         if let fontSize { context.coordinator.setFontSize(fontSize) }
         context.coordinator.setKnownTitles(knownTitles)
+        context.coordinator.setPlantUMLRemote(plantUMLRemoteEnabled)
     }
 
     // MARK: - Bundle lookup
@@ -250,12 +265,16 @@ struct WebMarkdownEditor: NSViewRepresentable {
         private var lastSentTheme: ColorScheme?
         private var lastSentFontSize: CGFloat?
         private var lastSentTitles: [String]?
+        /// PlantUML remote-render flag the page currently knows (the injected
+        /// document-start value, then any live pushes).
+        private var lastSentPlantUMLRemote: Bool?
 
         /// Held until the editor reports `ready`, then flushed.
         var pendingText: String?
         var pendingTheme: ColorScheme?
         var pendingFontSize: CGFloat?
         var pendingTitles: [String]?
+        var pendingPlantUMLRemote: Bool?
 
         init(text: Binding<String>, onWikiLink: ((String) -> Void)? = nil) {
             self.parentText = text
@@ -290,6 +309,10 @@ struct WebMarkdownEditor: NSViewRepresentable {
                 if let titles = pendingTitles {
                     pushKnownTitles(titles)
                     pendingTitles = nil
+                }
+                if let remote = pendingPlantUMLRemote {
+                    pendingPlantUMLRemote = nil
+                    if remote != lastSentPlantUMLRemote { pushPlantUMLRemote(remote) }
                 }
             case "change":
                 guard let text = body["text"] as? String else { return }
@@ -337,6 +360,26 @@ struct WebMarkdownEditor: NSViewRepresentable {
             guard isReady else { pendingTitles = titles; return }
             guard titles != lastSentTitles else { return }
             pushKnownTitles(titles)
+        }
+
+        /// Records the value baked into the document-start user script so the
+        /// first `updateNSView` doesn't redundantly re-push it.
+        func initialPlantUMLRemote(_ enabled: Bool) {
+            lastSentPlantUMLRemote = enabled
+        }
+
+        func setPlantUMLRemote(_ enabled: Bool) {
+            guard isReady else { pendingPlantUMLRemote = enabled; return }
+            guard enabled != lastSentPlantUMLRemote else { return }
+            pushPlantUMLRemote(enabled)
+        }
+
+        private func pushPlantUMLRemote(_ enabled: Bool) {
+            lastSentPlantUMLRemote = enabled
+            webView?.evaluateJavaScript(
+                PlantUMLRenderingPreference.setRemoteScript(remoteEnabled: enabled),
+                completionHandler: nil
+            )
         }
 
         private func pushKnownTitles(_ titles: [String]) {
