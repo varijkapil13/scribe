@@ -225,8 +225,10 @@ enum ScribeBackupArchiver {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         )) ?? []
-        for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-        where child.lastPathComponent != "__MACOSX" {
+        let candidates = children
+            .filter { $0.lastPathComponent != "__MACOSX" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for child in candidates {
             let isDirectory = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             if isDirectory, fm.fileExists(atPath: child.appendingPathComponent(ScribeBackupManifest.fileName).path) {
                 return child
@@ -388,9 +390,10 @@ enum ScribeBackupArchiver {
             throw error
         }
 
-        let settings = fm.fileExists(atPath: inspection.settingsURL.path)
-            ? try? Data(contentsOf: inspection.settingsURL)
-            : nil
+        var settings: Data?
+        if fm.fileExists(atPath: inspection.settingsURL.path) {
+            settings = try? Data(contentsOf: inspection.settingsURL)
+        }
         return ScribeRestoreOutcome(safetyCopyFolder: safety, settingsPlist: settings)
     }
 
