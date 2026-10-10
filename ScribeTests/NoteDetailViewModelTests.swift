@@ -305,4 +305,53 @@ final class NoteDetailViewModelTests: XCTestCase {
         // is not a select/list option source and is absent from the suggestions.
         XCTAssertNil(vm.propertyOptionSuggestions["status"])
     }
+
+    // MARK: - Same note in two windows
+
+    /// Lets the main-queue delivery of `.scribeNoteEditorDidSave` run.
+    private func drainMainQueue() async throws {
+        try await Task.sleep(for: .milliseconds(100))
+    }
+
+    private func markdownFiles(under root: URL) -> [URL] {
+        let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+        return (walker?.allObjects as? [URL] ?? []).filter { $0.pathExtension == "md" }
+    }
+
+    func testPeerSaveReloadsAnEditorWithoutUnsavedChanges() async throws {
+        useDiskBackedStore()
+        let note = try notes.createNote(title: "Shared", body: "original")
+        let main = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+        let window = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+
+        window.note.body = "edited in the note window"
+        window.markDirty()
+        window.save()
+        try await drainMainQueue()
+
+        XCTAssertEqual(main.note.body, "edited in the note window",
+                       "A clean editor of the same note adopts the other window's save")
+        XCTAssertFalse(main.isDirty)
+    }
+
+    func testPeerSaveWhileDirtyKeepsBothVersions() async throws {
+        useDiskBackedStore()
+        let root = try XCTUnwrap(tempRoot)
+        let note = try notes.createNote(title: "Shared", body: "original")
+        let main = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+        let window = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+
+        main.note.body = "edited in the main window"
+        main.markDirty()
+        window.note.body = "edited in the note window"
+        window.markDirty()
+        window.save()
+        try await drainMainQueue()
+        main.save()
+
+        XCTAssertEqual(try XCTUnwrap(notes.fetchNote(id: note.id)).body, "edited in the main window")
+        let bodies = markdownFiles(under: root).compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertTrue(bodies.contains { $0.contains("edited in the note window") },
+                      "The other window's save is kept as a conflict copy, not overwritten")
+    }
 }

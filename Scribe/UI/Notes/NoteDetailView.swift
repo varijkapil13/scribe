@@ -206,6 +206,9 @@ struct NoteDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        // Note info inspector (⌥⌘I) + the focused-note value the menu bar's
+        // Print / Export as PDF / Open in New Window commands act on.
+        .modifier(NoteInspectorModifier(vm: vm, onNavigate: onNavigate))
         .onDisappear {
             // Commit any edit still inside the autosave debounce window before
             // this view (and its view model) is torn down on a note switch.

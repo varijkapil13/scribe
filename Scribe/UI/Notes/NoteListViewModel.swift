@@ -72,11 +72,13 @@ final class NoteListViewModel: ObservableObject {
 
     /// Performs the actual delete the user just confirmed. Returns the
     /// noteId so the caller can clear any selection that was pointing at it.
+    /// Pass the window's `undoManager` to make the delete undoable (when it
+    /// safely can be — see `NoteUndo`).
     @discardableResult
-    func confirmDelete(_ request: DeleteNoteRequest) -> String? {
+    func confirmDelete(_ request: DeleteNoteRequest, undoManager: UndoManager? = nil) -> String? {
         defer { pendingDelete = nil }
         do {
-            try store.deleteNote(id: request.noteId)
+            try NoteUndo.deleteNote(id: request.noteId, store: store, undoManager: undoManager)
             return request.noteId
         } catch {
             errorMessage = error.localizedDescription

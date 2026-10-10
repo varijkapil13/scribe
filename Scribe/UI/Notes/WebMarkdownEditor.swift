@@ -34,6 +34,8 @@
 //                  window.scribeSetKnownTitles([title, …])  resolved-link styling
 //                  window.scribeSetPlantUMLRemote(bool)  opt-in plantuml.com rendering
 //                  window.scribeFocus()
+//                  window.scribeCommand(name, arg)  menu-bar Format/Find commands
+//                                                   (EditorCommandBridge)
 //   config:        window.scribeConfig = {plantUMLRemote}  document-start user script
 
 import SwiftUI
@@ -165,6 +167,9 @@ struct WebMarkdownEditor: NSViewRepresentable {
     /// the diagram source over the internet). Off by default — see
     /// `PlantUMLRenderingPreference`.
     var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
+    /// Receives the web view so menu-bar Format/Find commands can reach this
+    /// editor (see `EditorCommandBridge`). Optional; nil means no menu access.
+    var commandBridge: EditorCommandBridge? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onWikiLink: onWikiLink)
@@ -201,6 +206,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         webView.autoresizingMask = [.width, .height]
 
         context.coordinator.webView = webView
+        commandBridge?.attach(webView)
         context.coordinator.pendingText = text
         context.coordinator.pendingTheme = colorScheme
         context.coordinator.pendingFontSize = fontSize
@@ -221,6 +227,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         // ready yet; it flushes pending state on `ready`.
         context.coordinator.parentText = $text
         context.coordinator.onWikiLink = onWikiLink
+        commandBridge?.attach(webView)
         context.coordinator.setDoc(text)
         context.coordinator.setTheme(colorScheme)
         if let fontSize { context.coordinator.setFontSize(fontSize) }

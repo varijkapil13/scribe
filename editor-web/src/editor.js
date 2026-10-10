@@ -24,6 +24,8 @@
 //                  window.scribeSetFontSize(px) optional body font-size override
 //                  window.scribeSetPlantUMLRemote(bool) allow plantuml.com rendering
 //                  window.scribeFocus()         focus the editor
+//                  window.scribeCommand(name, arg) menu-bar format/find commands
+//                                               (see commands.js)
 //   config:        window.scribeConfig = { plantUMLRemote: bool } injected by
 //                  native at document start (read once at module load)
 
@@ -44,6 +46,7 @@ import {
   isPlantUMLRemoteEnabled,
   setPlantUMLRemoteEnabled,
 } from "./diagrams.js";
+import { installFormatCommands } from "./commands.js";
 
 // ── Lazy KaTeX ───────────────────────────────────────────────────────────────
 // KaTeX (the JS engine ~0.6 MB plus its inlined-font CSS) is LAZY-LOADED via a
@@ -994,6 +997,9 @@ const view = new EditorView({
   state,
   parent: document.getElementById("editor"),
 });
+
+// Menu-bar Format commands (window.scribeCommand) — see commands.js.
+installFormatCommands(view);
 
 // Re-decorate when an async diagram (mermaid/plantuml) finishes rendering.
 onDiagramRendered(() => {

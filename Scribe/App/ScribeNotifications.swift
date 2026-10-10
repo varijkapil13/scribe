@@ -22,4 +22,8 @@ extension Notification.Name {
     static let scribeNewDailyNote = Notification.Name("scribe.newDailyNote")
     static let scribeNavigate = Notification.Name("scribe.navigate")  // userInfo["selection"]
     static let scribeScrollToOffset = Notification.Name("scribe.scrollToOffset")  // userInfo["offset"]
+    /// A note editor (`NoteDetailViewModel`) saved a note. object: the saving
+    /// view model; userInfo["noteId"]. Other editors open on the same note
+    /// (main window + a note window) reload or keep both versions.
+    static let scribeNoteEditorDidSave = Notification.Name("scribe.noteEditorDidSave")
 }

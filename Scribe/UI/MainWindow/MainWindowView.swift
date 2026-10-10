@@ -77,29 +77,37 @@ struct MainWindowView: View {
                 }
         }
         .frame(minWidth: columnVisibility == .detailOnly ? 720 : 920, minHeight: 620)
-        .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    nav.goBack()
-                } label: {
-                    Image(systemName: "chevron.backward")
-                }
-                .help("Back (⌘[)")
-                .accessibilityLabel("Back")
-                .disabled(!nav.canGoBack)
-            }
-            ToolbarItem(placement: .navigation) {
-                RecordingStatusPill(audioManager: appState.audioManager, appState: appState)
-                    .onTapGesture {
-                        if appState.isTranscribing {
-                            nav.navigate(to: .live)
-                        }
+        // Customizable (View › Customize Toolbar…); see MainWindowToolbar.
+        .toolbar(id: MainWindowToolbar.id) {
+            MainWindowToolbar(
+                appState: appState,
+                canGoBack: nav.canGoBack,
+                canGoForward: nav.canGoForward,
+                isRecording: appState.isTranscribing,
+                isPaused: appState.audioManager.isPaused,
+                onBack: { nav.goBack() },
+                onForward: { nav.goForward() },
+                onShowLive: { nav.navigate(to: .live) },
+                onTogglePause: {
+                    if appState.audioManager.isPaused {
+                        Task { await appDelegate.resumeRecording() }
+                    } else {
+                        appDelegate.pauseRecording()
                     }
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                recordingToolbar
-            }
+                },
+                onToggleRecording: { Task { await appDelegate.toggleRecording() } },
+                onNewNote: {
+                    NotificationCenter.default.post(name: .scribeNewNote, object: nil)
+                },
+                onCommandBar: { showUniversalSearch.toggle() }
+            )
         }
+        // Restores the selected destination + sidebar visibility per window.
+        .modifier(MainWindowRestorationModifier(
+            nav: nav,
+            columnVisibility: $columnVisibility,
+            isRecording: appState.isTranscribing
+        ))
         .onAppear {
             projectsViewModel.start()
             reloadTags()
@@ -229,39 +237,6 @@ struct MainWindowView: View {
         .onChange(of: nav.current) { _, newValue in
             appState.currentSelection = newValue
         }
-    }
-
-    // MARK: - Recording Toolbar
-
-    @ViewBuilder
-    private var recordingToolbar: some View {
-        let isRecording = appState.isTranscribing
-        let isPaused = appState.audioManager.isPaused
-
-        if isRecording {
-            Button {
-                if isPaused {
-                    Task { await appDelegate.resumeRecording() }
-                } else {
-                    appDelegate.pauseRecording()
-                }
-            } label: {
-                Label(isPaused ? "Resume" : "Pause",
-                      systemImage: isPaused ? "play.fill" : "pause.fill")
-            }
-            .help(isPaused ? "Resume recording" : "Pause recording")
-        }
-
-        Button {
-            Task { await appDelegate.toggleRecording() }
-        } label: {
-            Label(
-                isRecording ? "Stop" : "Record",
-                systemImage: isRecording ? "stop.circle.fill" : "record.circle"
-            )
-            .foregroundStyle(isRecording ? DesignTokens.Palette.recording : .primary)
-        }
-        .help(isRecording ? "Stop the current session" : "Start a new recording")
     }
 
     // MARK: - Sidebar

@@ -259,6 +259,7 @@ struct NoteLeafRow: View {
 
     @State private var showDeleteConfirm = false
     @State private var sessionCount = 0
+    @Environment(\.undoManager) private var undoManager
 
     private var isSelected: Bool {
         if case .note(let id) = selection { return id == note.id }
@@ -280,6 +281,7 @@ struct NoteLeafRow: View {
             } label: {
                 Label("Open", systemImage: "arrow.up.right.square")
             }
+            OpenNoteInNewWindowButton(noteId: note.id)
             NoteLinkMenuItems(noteId: note.id)
             Divider()
             Button(role: .destructive) {
@@ -298,7 +300,7 @@ struct NoteLeafRow: View {
         ) {
             Button("Delete", role: .destructive) {
                 if isSelected { selection = .notes(.all) }
-                try? NoteStore.shared.deleteNote(id: note.id)
+                try? NoteUndo.deleteNote(id: note.id, store: .shared, undoManager: undoManager)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -311,6 +313,6 @@ struct NoteLeafRow: View {
             let plural = sessionCount == 1 ? "recording" : "recordings"
             return "This note and its \(sessionCount) \(plural) — including transcripts, summaries, and action items — will be permanently deleted. Tasks you created from it are kept."
         }
-        return "This note will be permanently deleted. This can’t be undone."
+        return "This note will be permanently deleted."
     }
 }
