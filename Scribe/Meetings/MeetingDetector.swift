@@ -62,7 +62,9 @@ final class MeetingDetector: ObservableObject {
     private var ownership = MeetingRecordingOwnership()
     private var defaultsObserver: NSObjectProtocol?
     private var powerObserver: NSObjectProtocol?
-    private var startRecording: (@MainActor (MeetingApp, _ forceNewNote: Bool) async -> Void)?
+    /// Starts a recording; returns the id of the session it started (nil
+    /// when the start was refused, cancelled or failed).
+    private var startRecording: (@MainActor (MeetingApp, _ forceNewNote: Bool) async -> String?)?
     private var stopRecording: (@MainActor () async -> Void)?
     private var isRecording: @MainActor () -> Bool = { false }
     private var currentSessionId: @MainActor () -> String? = { nil }
@@ -88,7 +90,7 @@ final class MeetingDetector: ObservableObject {
     func start(
         isRecording: @escaping @MainActor () -> Bool,
         currentSessionId: @escaping @MainActor () -> String? = { nil },
-        startRecording: @escaping @MainActor (MeetingApp, _ forceNewNote: Bool) async -> Void,
+        startRecording: @escaping @MainActor (MeetingApp, _ forceNewNote: Bool) async -> String?,
         stopRecording: @escaping @MainActor () async -> Void
     ) {
         self.isRecording = isRecording
@@ -284,13 +286,16 @@ final class MeetingDetector: ObservableObject {
             )
         case .autoRecord:
             Task {
-                await startRecording?(app, true)
+                // Only the session this very call started is detection's own
+                // (a manual start racing this one is refused here, or wins and
+                // makes this one refused — either way it is never claimed).
+                let sessionId = await startRecording?(app, true)
                 // Only announce what actually happened (start can fail on a
                 // missing permission). The banner carries a Stop action.
-                guard isRecording() else { return }
+                guard let sessionId, isRecording(), currentSessionId() == sessionId else { return }
                 // This recording is detection's own: it may stop it again
                 // when the meeting ends.
-                ownership.detectorStarted(sessionId: currentSessionId())
+                ownership.detectorStarted(sessionId: sessionId)
                 post(
                     id: Self.startRequestId,
                     category: Self.endCategoryId,
@@ -353,7 +358,7 @@ final class MeetingDetector: ObservableObject {
             )
             // A person chose to record: follow the normal Record rules (bind to
             // the open note if there is one), unlike auto-record.
-            Task { await startRecording?(app, false) }
+            Task { _ = await startRecording?(app, false) }
         case (Self.endCategoryId, Self.actionStop):
             guard isRecording() else { return }
             Task { await stopRecording?() }

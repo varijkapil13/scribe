@@ -230,6 +230,20 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
     }
 
+    func testRemoveLeftoverScratchKeepsFoldersCreatedAfterLaunch() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScribeDiarizationTest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("recording-now", isDirectory: true)
+        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+
+        // A recording that started after launch (auto-record racing the
+        // cleanup) must keep its scratch audio.
+        let launchedAt = Date().addingTimeInterval(-3600)
+        XCTAssertEqual(SpeakerDiarizationCapture.removeLeftoverScratch(in: root, createdBefore: launchedAt), 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path))
+    }
+
     func testRemoveLeftoverScratchToleratesMissingRoot() {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("ScribeDiarizationMissing-\(UUID().uuidString)", isDirectory: true)

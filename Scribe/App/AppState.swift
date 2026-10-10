@@ -630,6 +630,10 @@ final class AppState: ObservableObject {
     func stopSession() async {
         if !isTranscribing, startGate.requestStop() {
             Log.app.info("Stop requested while the recording is still starting; cancelling the start.")
+            // Supersede a speech start still in flight (its generation token
+            // goes stale) so it doesn't bring pipelines up only to be torn
+            // down again; the start then rolls itself back.
+            await speechEngine.stopSession()
             return
         }
         systemAudioWatchdog?.cancel()

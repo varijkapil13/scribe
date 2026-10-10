@@ -138,20 +138,29 @@ final class SpeakerDiarizationCapture {
         scratchRoot.appendingPathComponent(sessionId, isDirectory: true)
     }
 
-    /// Deletes every scratch folder under `root` (default: ``scratchRoot``).
-    /// Called at launch, when no recording can be using one: anything left
-    /// over is from a crash, a quit mid-diarization or a deferred job that
-    /// never ran. Returns how many entries were removed.
+    /// Deletes every scratch folder under `root` (default: ``scratchRoot``)
+    /// created before `cutoff`. Called at launch: anything left over is from
+    /// a crash, a quit mid-diarization or a deferred job that never ran.
+    /// Passing the launch time as `cutoff` keeps the folder of a recording
+    /// that started (e.g. auto-record) while this cleanup was still running.
+    /// Returns how many entries were removed.
     @discardableResult
-    nonisolated static func removeLeftoverScratch(in root: URL = scratchRoot) -> Int {
+    nonisolated static func removeLeftoverScratch(
+        in root: URL = scratchRoot,
+        createdBefore cutoff: Date = .distantFuture
+    ) -> Int {
         let fileManager = FileManager.default
         guard let entries = try? fileManager.contentsOfDirectory(
             at: root,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.creationDateKey],
             options: []
         ) else { return 0 }
         var removed = 0
         for entry in entries {
+            if let created = (try? entry.resourceValues(forKeys: [.creationDateKey]))?.creationDate,
+               created >= cutoff {
+                continue
+            }
             do {
                 try fileManager.removeItem(at: entry)
                 removed += 1

@@ -157,6 +157,9 @@ final class SpeechRecognizerEngine: ObservableObject {
         // only records it when nothing is running yet): apply it now.
         if generation.isCurrent(token), Self.resolveLocale(language).identifier != locale.identifier {
             await swapPipelines()
+            // The swap can fail (already reported) or be superseded by a
+            // stop: only report success when pipelines are actually live.
+            return isProcessing
         }
         return true
     }
