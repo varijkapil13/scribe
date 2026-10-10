@@ -208,6 +208,14 @@ extension TaskReminderScheduler: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
     ) {
+        // "Scribe Focus" filter: keep reminders off screen while it asks to.
+        if ScribeFocusPreferences.shouldSuppressPresentation(
+            categoryId: notification.request.content.categoryIdentifier,
+            hidingReminders: ScribeFocusPreferences.isHidingReminders()
+        ) {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound, .badge])
     }
 

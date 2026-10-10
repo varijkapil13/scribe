@@ -814,6 +814,7 @@ private struct ShortcutsSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            SiriSpotlightSettingsSection()
         }
         .formStyle(.grouped)
     }

@@ -21,6 +21,7 @@ struct ScribeApp: App {
             MainWindowView()
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
+                .onContinueUserActivity(SpotlightIndexer.activityType) { _ = SpotlightIndexer.handle($0) }
         }
         .commands { scribeCommands }
 
