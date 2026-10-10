@@ -17,6 +17,7 @@ struct NotesScreen: View {
                     NavigationLink(value: note.id) {
                         NoteRow(note: note)
                     }
+                    .scribeNoteRowAffordances(noteId: note.id, title: note.title)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) { model.delete(note) } label: {
                             Label("Delete", systemImage: "trash")
@@ -29,6 +30,7 @@ struct NotesScreen: View {
             .navigationTitle("Notes")
             .searchable(text: $searchText, prompt: "Search notes")
             .navigationDestination(for: String.self) { NoteEditorScreen(noteId: $0) }
+            .onScribeOpenRequest(.note) { path = [$0] }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     // Create on tap (not in body) and push into the editor.
@@ -109,6 +111,7 @@ struct NoteEditorScreen: View {
         }
         .navigationTitle(model.title.isEmpty ? "Untitled" : model.title)
         .navigationBarTitleDisplayMode(.inline)
+        .scribeHandoff(.note, id: noteId, title: model.title)
         .onChange(of: model.title) { model.markDirty() }
         .onChange(of: model.body) { model.markDirty() }
         .onDisappear { model.flush() }
