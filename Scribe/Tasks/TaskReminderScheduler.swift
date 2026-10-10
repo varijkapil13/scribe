@@ -54,6 +54,17 @@ final class TaskReminderScheduler: NSObject, TaskReminderScheduling {
     /// on the next `schedule` call without a restart.
     private var authorizationGranted: Bool?
 
+    /// Notification categories owned by other features (macOS meeting
+    /// detection). `setNotificationCategories` *replaces* the whole set, so
+    /// they have to be registered alongside the reminder category here.
+    var additionalCategories: Set<UNNotificationCategory> = []
+
+    /// Handles responses for notifications whose category isn't the reminder
+    /// one: `(categoryId, actionId, userInfo)`. This keeps the single system
+    /// delegate here (it's also compiled into the iOS target) without the
+    /// scheduler knowing about macOS-only features.
+    var externalResponseHandler: (@MainActor (String, String, [String: String]) -> Void)?
+
     // MARK: - Init
 
     init(center: UNUserNotificationCenterAdapter = SystemNotificationCenter(),
@@ -84,7 +95,7 @@ final class TaskReminderScheduler: NSObject, TaskReminderScheduling {
             intentIdentifiers: [],
             options: [.customDismissAction]
         )
-        center.setNotificationCategories([category])
+        center.setNotificationCategories(additionalCategories.union([category]))
     }
 
     /// Installs `self` as the system notification center's delegate so action
@@ -210,9 +221,16 @@ extension TaskReminderScheduler: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
         let actionId = response.actionIdentifier
-        let taskId = response.notification.request.content.userInfo[Self.userInfoTaskId] as? String
+        let content = response.notification.request.content
+        let categoryId = content.categoryIdentifier
+        let taskId = content.userInfo[Self.userInfoTaskId] as? String
+        let stringInfo = content.userInfo.reduce(into: [String: String]()) { result, pair in
+            if let key = pair.key as? String, let value = pair.value as? String { result[key] = value }
+        }
         Task { @MainActor in
-            if let taskId {
+            if categoryId != Self.categoryId, let handler = TaskReminderScheduler.shared.externalResponseHandler {
+                handler(categoryId, actionId, stringInfo)
+            } else if let taskId {
                 await TaskReminderScheduler.shared.handle(actionId: actionId, taskId: taskId)
             }
             completionHandler()

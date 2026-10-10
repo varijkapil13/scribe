@@ -1,6 +1,7 @@
 import SwiftUI
 import KeyboardShortcuts
 import AppKit
+import ServiceManagement
 
 /// One of the four settings screens shown in the combined main window. Each
 /// pane is a standalone `View`, chosen from the sidebar.
@@ -8,6 +9,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case general
     case intelligence
     case storage
+    case dictation
     case shortcuts
     case mcp
     case about
@@ -19,6 +21,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .general:      return "General"
         case .intelligence: return "Intelligence"
         case .storage:      return "Storage"
+        case .dictation:    return "Dictation"
         case .shortcuts:    return "Shortcuts"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
@@ -30,6 +33,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .general:      return "gear"
         case .intelligence: return "sparkles"
         case .storage:      return "internaldrive"
+        case .dictation:    return "mic.badge.plus"
         case .shortcuts:    return "keyboard"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
@@ -74,6 +78,7 @@ struct SettingsPaneView: View {
         case .general:      GeneralSettingsPane(audioManager: audioManager)
         case .intelligence: IntelligenceSettingsPane()
         case .storage:      StorageSettingsPane()
+        case .dictation:    DictationSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
@@ -91,7 +96,13 @@ private struct GeneralSettingsPane: View {
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
     @AppStorage(NotesDirectory.userPreferenceKey) var notesVaultPath: String = ""
+    @AppStorage(MeetingDetectionMode.defaultsKey) var meetingDetectionMode: MeetingDetectionMode = MeetingDetectionMode.defaultValue
+    @AppStorage(MeetingEndAction.defaultsKey) var meetingEndAction: MeetingEndAction = MeetingEndAction.defaultValue
+    @AppStorage(MeetingDetector.includeBrowsersKey) var detectBrowserMeetings: Bool = true
+    @AppStorage(MeetingDetector.includeOtherAppsKey) var detectOtherApps: Bool = false
+    @AppStorage(MenuBarPreferences.showIconKey) var showMenuBarIcon: Bool = true
 
+    @State private var openAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var openConfirm: OpenConfirm?
     @State private var moveConfirm: MoveConfirm?
 
@@ -165,6 +176,33 @@ private struct GeneralSettingsPane: View {
                 )
             }
 
+            Section("Meeting detection") {
+                Picker("When a meeting starts", selection: $meetingDetectionMode) {
+                    ForEach(MeetingDetectionMode.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("When it ends", selection: $meetingEndAction) {
+                    ForEach(MeetingEndAction.allCases) { Text($0.title).tag($0) }
+                }
+                .disabled(meetingDetectionMode == .off)
+                Toggle("Include calls in web browsers (Google Meet…)", isOn: $detectBrowserMeetings)
+                    .disabled(meetingDetectionMode == .off)
+                Toggle("Include any other app using the microphone", isOn: $detectOtherApps)
+                    .disabled(meetingDetectionMode == .off)
+                Text("Scribe notices when Zoom, Teams, Slack, FaceTime, Webex and other call apps start using your microphone. It only checks which app holds the mic and never listens until you record. Detection runs only while Scribe is open, so keep it in the menu bar and open at login to catch every call.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Menu bar & login") {
+                toggleWithCaption(
+                    "Show Scribe in the menu bar",
+                    isOn: $showMenuBarIcon,
+                    caption: "Recording, dictation and meeting controls from the menu bar. While shown, closing the main window keeps Scribe running in the background."
+                )
+                Toggle("Open Scribe at login", isOn: $openAtLogin)
+                    .onChange(of: openAtLogin) { _, enabled in setOpenAtLogin(enabled) }
+            }
+
             Section("Transcription") {
                 Picker("Language", selection: $selectedLanguage) {
                     ForEach(LanguageOptions.supported, id: \.code) { option in
@@ -219,6 +257,25 @@ private struct GeneralSettingsPane: View {
             ].compactMap { $0 }
             Text(parts.joined(separator: "\n\n"))
         }
+    }
+
+    // MARK: - Open at login
+
+    private func setOpenAtLogin(_ enabled: Bool) {
+        // Also absorbs the onChange echo from the write-back below.
+        guard enabled != (SMAppService.mainApp.status == .enabled) else { return }
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            AppState.shared.report("Couldn't change Open at login: \(error.localizedDescription)")
+        }
+        // Reflect what actually happened (registration can need approval in
+        // System Settings → General → Login Items).
+        openAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     // MARK: - Notes vault — Move / Open
@@ -525,6 +582,62 @@ private struct StorageSettingsPane: View {
     }
 }
 
+// MARK: - Dictation
+
+private struct DictationSettingsPane: View {
+    @AppStorage(DictationController.Mode.defaultsKey) var mode: DictationController.Mode = .toggle
+    @AppStorage(DictationController.removeFillersKey) var removeFillers: Bool = true
+    @AppStorage(DictationController.smartCleanupKey) var smartCleanup: Bool = true
+    @State private var hasAccessibility = TextInserter.hasAccessibilityPermission
+
+    var body: some View {
+        Form {
+            Section("Shortcut") {
+                KeyboardShortcuts.Recorder("Dictate:", name: .dictation)
+                Picker("Mode", selection: $mode) {
+                    ForEach(DictationController.Mode.allCases) { Text($0.title).tag($0) }
+                }
+                Text("Dictate into any app: press the shortcut, speak, and Scribe types the text where your cursor is. Uses on-device speech recognition in your transcription language, separately from meeting recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Cleanup") {
+                Toggle("Remove filler words (um, uh…)", isOn: $removeFillers)
+                Toggle("Polish with Apple Intelligence", isOn: $smartCleanup)
+                Text("Fixes punctuation, capitalization and false starts on-device before inserting. Falls back to the plain transcript if Apple Intelligence is unavailable or slow.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Typing into other apps") {
+                HStack {
+                    Label(
+                        hasAccessibility ? "Accessibility access granted" : "Accessibility access needed",
+                        systemImage: hasAccessibility ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(hasAccessibility ? .green : .orange)
+                    Spacer()
+                    if !hasAccessibility {
+                        Button("Grant Access…") {
+                            hasAccessibility = TextInserter.requestAccessibilityPermission()
+                            if !hasAccessibility { TextInserter.openAccessibilitySettings() }
+                        }
+                    }
+                }
+                Text("Scribe pastes dictated text with ⌘V, which needs Accessibility access. Without it, the text is copied to the clipboard for you to paste.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        // Pick up a grant made in System Settings while this pane is open.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            hasAccessibility = TextInserter.hasAccessibilityPermission
+        }
+    }
+}
+
 // MARK: - Shortcuts
 
 private struct ShortcutsSettingsPane: View {
@@ -532,7 +645,8 @@ private struct ShortcutsSettingsPane: View {
         Form {
             Section("Global Shortcuts") {
                 KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
-                Text("Press this shortcut from any app to start or stop recording without opening Scribe.")
+                KeyboardShortcuts.Recorder("Dictate:", name: .dictation)
+                Text("Press these shortcuts from any app to start or stop recording, or to dictate into the focused app, without opening Scribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

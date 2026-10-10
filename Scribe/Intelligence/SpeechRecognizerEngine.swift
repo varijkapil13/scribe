@@ -122,7 +122,7 @@ final class SpeechRecognizerEngine: ObservableObject {
         // Stop any previous session cleanly.
         await stopSession()
 
-        let locale = resolveLocale(language)
+        let locale = Self.resolveLocale(language)
         currentLanguage = locale.identifier
 
         // Ensure the model is installed ONCE before spawning the two pipelines.
@@ -275,7 +275,7 @@ final class SpeechRecognizerEngine: ObservableObject {
 
     /// Converts a user-supplied language code (e.g. `"en"`, `"de"`, `"auto"`,
     /// or `nil`) into a concrete `Locale`. Falls back to the system default.
-    private func resolveLocale(_ code: String?) -> Locale {
+    nonisolated static func resolveLocale(_ code: String?) -> Locale {
         guard let code, !code.isEmpty, code.lowercased() != "auto" else {
             return Locale.current
         }

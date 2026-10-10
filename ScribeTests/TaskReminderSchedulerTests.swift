@@ -46,6 +46,22 @@ final class TaskReminderSchedulerTests: XCTestCase {
 
     // MARK: - Scheduling against a fake adapter
 
+    /// `setNotificationCategories` replaces the whole set, so other features'
+    /// categories (meeting detection) must ride along with the reminder one.
+    @MainActor
+    func testRegisterCategoryKeepsAdditionalCategories() {
+        let fake = FakeNotificationCenter(grantAuth: true)
+        let scheduler = TaskReminderScheduler(center: fake)
+        scheduler.additionalCategories = MeetingDetector.notificationCategories
+
+        scheduler.registerCategory()
+
+        XCTAssertEqual(
+            Set(fake.categories.map(\.identifier)),
+            [TaskReminderScheduler.categoryId, MeetingDetector.startCategoryId, MeetingDetector.endCategoryId]
+        )
+    }
+
     @MainActor
     func testScheduleAddsRequestForFutureTask() async {
         let fake = FakeNotificationCenter(grantAuth: true)

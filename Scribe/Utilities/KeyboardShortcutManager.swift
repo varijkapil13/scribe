@@ -9,6 +9,13 @@ extension KeyboardShortcuts.Name {
         "toggleRecording",
         default: .init(.r, modifiers: [.command, .shift])
     )
+
+    /// Global shortcut for dictation into the focused app. Toggle or
+    /// hold-to-talk depending on `DictationController.Mode`.
+    static let dictation = Self(
+        "dictation",
+        default: .init(.d, modifiers: [.option, .command])
+    )
 }
 
 // MARK: - KeyboardShortcutManager
@@ -20,9 +27,22 @@ struct KeyboardShortcutManager {
     ///
     /// - Parameter onToggleRecording: Closure invoked when the user presses the
     ///   toggle-recording shortcut (default: Command+Shift+R).
-    static func registerShortcuts(onToggleRecording: @escaping () -> Void) {
+    ///   - onDictationDown / onDictationUp: Press and release of the
+    ///     dictation shortcut (default: Option+Command+D). Both are needed for
+    ///     hold-to-talk.
+    static func registerShortcuts(
+        onToggleRecording: @escaping () -> Void,
+        onDictationDown: @escaping () -> Void,
+        onDictationUp: @escaping () -> Void
+    ) {
         KeyboardShortcuts.onKeyUp(for: .toggleRecording) {
             onToggleRecording()
+        }
+        KeyboardShortcuts.onKeyDown(for: .dictation) {
+            onDictationDown()
+        }
+        KeyboardShortcuts.onKeyUp(for: .dictation) {
+            onDictationUp()
         }
     }
 }

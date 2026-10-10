@@ -22,7 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // before the user has visited Settings.
         UserDefaults.standard.register(defaults: [
             "captureSystemAudio": true,
-            "selectedLanguage": "auto"
+            "selectedLanguage": "auto",
+            MenuBarPreferences.showIconKey: true
         ])
 
         // Screenshot / UI-test fixture mode: seed a deterministic dataset into
@@ -90,8 +91,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Reminder category + delegate. Authorization is requested lazily the
         // first time a task with `remindAt` is saved, not here — that keeps
         // first-launch silent for users who don't use the task layer.
+        TaskReminderScheduler.shared.additionalCategories = MeetingDetector.notificationCategories
+        TaskReminderScheduler.shared.externalResponseHandler = { categoryId, actionId, userInfo in
+            MeetingDetector.shared.handleNotificationResponse(
+                categoryId: categoryId, actionId: actionId, userInfo: userInfo
+            )
+        }
         TaskReminderScheduler.shared.registerCategory()
         TaskReminderScheduler.shared.installDelegate()
+
+        // Meeting auto-detection: watch for Zoom/Teams/Meet/… taking the mic
+        // and offer to (or automatically) record. Not under `--uitesting`,
+        // where there is no audio stack.
+        if !AppLaunchEnvironment.isUITesting {
+            MeetingDetector.shared.start(
+                isRecording: { [weak self] in self?.appState?.isTranscribing ?? false },
+                startRecording: { [weak self] app, forceNewNote in
+                    await self?.startRecording(detectedMeeting: app, forceNewNote: forceNewNote)
+                },
+                stopRecording: { [weak self] in await self?.stopRecording() }
+            )
+        }
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
@@ -135,11 +155,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - Window Close → Quit
 
-    /// The user explicitly asked: closing the main window quits the app. We
-    /// observe ``NSWindow.willCloseNotification`` via Combine and terminate
-    /// when the SwiftUI `Window("Scribe", id: "main")` scene goes away. We
-    /// match on the window's identifier so alert and panel closes don't
-    /// trigger quit.
+    /// Closing the main window quits the app, unless the menu-bar item is
+    /// shown: then Scribe keeps running in the menu bar so meeting detection,
+    /// dictation and reminders keep working. We observe
+    /// ``NSWindow.willCloseNotification`` via Combine and match on the
+    /// window's identifier so alert and panel closes don't trigger quit.
     private func observeMainWindowClose() {
         NotificationCenter.default
             .publisher(for: NSWindow.willCloseNotification)
@@ -147,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             .sink { notification in
                 guard let window = notification.object as? NSWindow else { return }
                 guard window.identifier?.rawValue == "main" else { return }
+                guard !UserDefaults.standard.bool(forKey: MenuBarPreferences.showIconKey) else { return }
                 NSApp.terminate(nil)
             }
             .store(in: &cancellables)
@@ -156,12 +177,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     /// Registers global keyboard shortcuts via ``KeyboardShortcutManager``.
     private func registerKeyboardShortcuts() {
-        KeyboardShortcutManager.registerShortcuts { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                await self.toggleRecording()
+        KeyboardShortcutManager.registerShortcuts(
+            onToggleRecording: { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in
+                    await self.toggleRecording()
+                }
+            },
+            onDictationDown: {
+                Task { @MainActor in DictationController.shared.shortcutPressed() }
+            },
+            onDictationUp: {
+                Task { @MainActor in DictationController.shared.shortcutReleased() }
             }
-        }
+        )
     }
 
     // MARK: - Recording Actions
@@ -176,7 +205,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     /// Starts a new transcription session.
-    func startRecording() async {
+    ///
+    /// - Parameters:
+    ///   - detectedMeeting: Set when meeting detection triggered the start;
+    ///     names an auto-created note after the meeting app.
+    ///   - forceNewNote: Always create a fresh meeting note instead of binding
+    ///     to the open one (auto-record, where nobody chose the context).
+    func startRecording(detectedMeeting: MeetingApp? = nil, forceNewNote: Bool = false) async {
+        guard !appState.isTranscribing else { return }
         // Verify permissions before touching audio hardware so we can show the
         // user a clear alert instead of silently failing.
         let micStatus = await Permissions.checkMicrophonePermission()
@@ -229,9 +265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let resolved: ResolvedNoteContext
         do {
             resolved = try Self.resolveNoteContext(
-                selection: appState.currentSelection,
+                selection: forceNewNote ? nil : appState.currentSelection,
                 noteStore: .shared,
-                now: Date()
+                now: Date(),
+                meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:))
             )
         } catch {
             // Surface the underlying createNote error to the user instead of
@@ -434,7 +471,8 @@ extension AppDelegate {
 
     /// Pure resolver: decides which Note a new global recording should be
     /// bound to, creating a "Meeting on <datetime>" Note when no note is
-    /// currently open. Throws `NoteContextError.autoCreateFailed` when the
+    /// currently open (or "<meetingName> on <datetime>", e.g. "Zoom meeting
+    /// on …", when meeting detection supplied one). Throws `NoteContextError.autoCreateFailed` when the
     /// auto-create path fails — callers surface the underlying message so
     /// users see "disk full"-style errors instead of the downstream
     /// generic "A note must exist before starting a recording."
@@ -443,7 +481,8 @@ extension AppDelegate {
     static func resolveNoteContext(
         selection: MainSelection?,
         noteStore: NoteStore,
-        now: Date
+        now: Date,
+        meetingName: String? = nil
     ) throws -> ResolvedNoteContext {
         if case .note(let noteId)? = selection {
             return ResolvedNoteContext(noteId: noteId, didCreateNote: false)
@@ -451,7 +490,7 @@ extension AppDelegate {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        let title = "Meeting on \(formatter.string(from: now))"
+        let title = "\(meetingName ?? "Meeting") on \(formatter.string(from: now))"
         do {
             let created = try noteStore.createNote(title: title, body: "")
             return ResolvedNoteContext(noteId: created.id, didCreateNote: true)

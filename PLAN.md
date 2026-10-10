@@ -266,6 +266,38 @@ Once tasks and notes both exist, wire the joins:
       selection change (`textViewDidChangeSelection`). At current note
       sizes it's fine; profile once notes get multi-KB bodies.
 
+## Meeting auto-detection
+
+- [~] **Detect + prompt + auto-stop.** `MicrophoneUsageMonitor` reads
+      CoreAudio's per-process `kAudioProcessPropertyIsRunningInput` (macOS
+      14.2+) excluding our own PID; `MeetingAppCatalog` maps bundle IDs
+      (incl. helper-process prefixes) to known conferencing apps / browsers;
+      the pure `MeetingDetectionPolicy` debounces samples into
+      started/ended events; `MeetingDetector` polls every 2 s and posts
+      notifications ("Start Recording" / "Stop Recording") or auto-starts /
+      auto-stops per Settings. Notification responses route through the
+      single `TaskReminderScheduler` delegate via `externalResponseHandler`
+      (keeps the iOS target free of macOS code). Open-at-login via
+      `SMAppService`.
+- [ ] **Calendar (EventKit).** Name the note after the overlapping event,
+      seed attendees/agenda, notify a minute before 2+-attendee events.
+- [ ] **Camera+mic as a stronger signal** (CoreMediaIO), per-app allow/deny
+      list in Settings.
+
+## Menu bar + dictation
+
+- [~] **Menu bar item.** `MenuBarExtra` (toggleable, default on) with
+      recording transport, detected-meeting shortcut, dictation, and
+      navigation. While shown, closing the main window no longer quits.
+- [~] **System-wide dictation.** `DictationController` runs its own
+      `MicrophoneCapture` + `TranscriptionPipeline`, shows a non-activating
+      `DictationHUD`, cleans text (`DictationTextFormatter` filler removal +
+      optional Foundation Models polish guarded by `isPlausibleEdit`), and
+      inserts via `TextInserter` (pasteboard + synthetic ⌘V; clipboard
+      fallback without Accessibility). Global shortcut ⌥⌘D, toggle or hold.
+- [ ] Personal dictionary / custom vocabulary shared with meeting
+      transcription; per-app dictation styles; dictation history.
+
 ## Phase 4 — Polish
 - Global hotkey for **Quick Capture** (use existing `KeyboardShortcuts`
   package). Prompt asks: capture as note, task, or both.
