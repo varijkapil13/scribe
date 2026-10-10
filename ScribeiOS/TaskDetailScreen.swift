@@ -76,6 +76,7 @@ struct TaskDetailScreen: View {
             }
         }
         .navigationTitle(model.title.isEmpty ? "Task" : model.title)
+        .scribeHandoff(.task, id: taskId, title: model.title)
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: model.title) { model.markDirty() }
         .onChange(of: model.notes) { model.markDirty() }

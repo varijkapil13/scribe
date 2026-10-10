@@ -38,6 +38,7 @@ struct TasksScreen: View {
             .overlay { if model.isEmpty { emptyState } }
             .navigationTitle("Tasks")
             .navigationDestination(for: String.self) { TaskDetailScreen(taskId: $0) }
+            .onScribeOpenRequest(.task) { path = [$0] }
             .safeAreaInset(edge: .bottom) { quickAdd }
             .toolbar { ToolbarItem(placement: .topBarTrailing) { filterMenu } }
         }
