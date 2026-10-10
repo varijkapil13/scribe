@@ -88,20 +88,26 @@ enum MeetingAppCatalog {
     ///   - includeOtherApps: Whether *any* non-ignored app counts.
     ///   - fallbackName: Display name for an `.other` match (e.g. the running
     ///     app's localized name); defaults to the bundle ID.
+    ///   - rules: The user's per-app overrides (see ``MeetingAppRules``):
+    ///     disabled apps never match; "always count" apps match as `.other`
+    ///     even with `includeOtherApps` off.
     static func match(
         bundleID: String,
         includeBrowsers: Bool = true,
         includeOtherApps: Bool = false,
-        fallbackName: String? = nil
+        fallbackName: String? = nil,
+        rules: MeetingAppRules = MeetingAppRules()
     ) -> MeetingApp? {
         guard !bundleID.isEmpty, !isIgnored(bundleID) else { return nil }
         if let (id, name) = lookup(bundleID, in: conferencing) {
+            guard !rules.isDisabled(id) else { return nil }
             return MeetingApp(bundleID: id, name: name, kind: .conferencing)
         }
         if let (id, name) = lookup(bundleID, in: browsers) {
-            return includeBrowsers ? MeetingApp(bundleID: id, name: name, kind: .browser) : nil
+            guard includeBrowsers, !rules.isDisabled(id) else { return nil }
+            return MeetingApp(bundleID: id, name: name, kind: .browser)
         }
-        guard includeOtherApps else { return nil }
+        guard rules.countsOtherApp(bundleID, includeOtherApps: includeOtherApps) else { return nil }
         return MeetingApp(bundleID: bundleID, name: fallbackName ?? bundleID, kind: .other)
     }
 

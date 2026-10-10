@@ -6,7 +6,10 @@ import Foundation
 /// speaker heading to improve readability.
 struct MarkdownExporter {
 
-    static func export(session: Session, segments: [Segment]) -> String {
+    /// - Parameter speakerNames: Resolves display names ("Priya" instead of
+    ///   "remote"). `nil` keeps the raw speaker labels.
+    static func export(session: Session, segments: [Segment],
+                       speakerNames: SpeakerNameResolver? = nil) -> String {
         var lines: [String] = []
 
         // Header
@@ -19,12 +22,12 @@ struct MarkdownExporter {
         lines.append("")
 
         // Group consecutive segments by the same speaker.
-        let groups = groupConsecutiveSegments(segments)
+        let groups = groupConsecutiveSegments(segments, speakerNames: speakerNames)
 
         for (index, group) in groups.enumerated() {
             guard let first = group.first else { continue }
 
-            lines.append("**\(formatTimestamp(first.startMs)) \(first.speaker):**")
+            lines.append("**\(formatTimestamp(first.startMs)) \(speakerLabel(first, speakerNames)):**")
 
             let combinedText = group.map(\.text).joined(separator: " ")
             lines.append(combinedText)
@@ -40,15 +43,21 @@ struct MarkdownExporter {
 
     // MARK: - Private Helpers
 
+    private static func speakerLabel(_ segment: Segment, _ speakerNames: SpeakerNameResolver?) -> String {
+        speakerNames?.displayName(for: segment) ?? segment.speaker
+    }
+
     /// Groups consecutive segments that share the same speaker label.
-    private static func groupConsecutiveSegments(_ segments: [Segment]) -> [[Segment]] {
+    private static func groupConsecutiveSegments(_ segments: [Segment],
+                                                 speakerNames: SpeakerNameResolver?) -> [[Segment]] {
         guard !segments.isEmpty else { return [] }
 
         var groups: [[Segment]] = []
         var currentGroup: [Segment] = [segments[0]]
 
         for segment in segments.dropFirst() {
-            if segment.speaker == currentGroup.last?.speaker {
+            if let last = currentGroup.last,
+               speakerLabel(segment, speakerNames) == speakerLabel(last, speakerNames) {
                 currentGroup.append(segment)
             } else {
                 groups.append(currentGroup)

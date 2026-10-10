@@ -10,11 +10,11 @@ Works with any conferencing tool (Teams, Zoom, Google Meet, phone calls, in-pers
 
 | Requirement | Value |
 |-------------|-------|
-| macOS | **26** or later |
+| macOS | **27** or later |
 | Chip | **Apple Silicon** (M1 or later) |
-| Downloads | None — all models are built into macOS |
+| Downloads | None. Speech and Apple Intelligence models are built into macOS, and the speaker-separation model (about 22 MB) ships inside release builds |
 
-No model downloads, no accounts, no subscriptions, no API keys.
+No accounts, no subscriptions, no API keys.
 
 ## Features
 
@@ -47,6 +47,38 @@ No model downloads, no accounts, no subscriptions, no API keys.
 - Status icon shows idle / recording / paused / dictating
 - Start/stop/pause recording, record a detected meeting, start dictation, paste the last dictation, jump to Today or Settings
 - While the icon is shown, closing the main window keeps Scribe running so detection, dictation and reminders keep working (Settings → General → Menu bar & login)
+
+### Calendar (optional)
+- Turn it on in Settings → Calendar. It reads the calendars already on your Mac via EventKit, with no account sign-in
+- Notes are named after the meeting ("Weekly Sync — Oct 9, 2026") and start with attendees, agenda and the meeting link
+- A notification one minute before meetings with 2+ attendees offers **Start Recording** or **Join & Record**
+- Detected calls are matched to the calendar event, and the menu bar lists upcoming meetings
+
+### Speakers
+- **Telling remote speakers apart:** after a meeting, Scribe splits "Remote" into Speaker 1, 2, 3… on your Mac (pyannote via [FluidAudio](https://github.com/FluidInference/FluidAudio), Core ML)
+- Names are suggested from calendar attendees and the conversation ("Thanks, Priya"), and are only applied when the name is an attendee or is actually said in the meeting
+- Rename any speaker per transcript, or reassign lines to someone else
+- "Your name" defaults to your macOS account name
+
+### Templates, Enhance & Recipes
+- Summary templates (General, 1:1, Standup, Interview, Sales call, Brainstorm) are markdown files in `<vault>/Templates/Summaries/`, picked automatically from the meeting title
+- **Re-summarize with…** any template. The summary is written into a marked block in the note, so your own text is never touched
+- **Enhance notes** expands your typed notes with details from the transcript, with a preview you accept or discard
+- Recipes (saved prompts) for a follow-up email, decisions and owners, and risks and open questions, or add your own in `<vault>/Templates/Recipes/`
+
+### Ask Scribe & People
+- **Ask Scribe:** chat across all meetings, a notebook, a person, or the last 7/30 days. Answers cite clickable `[[sources]]`
+- **People:** everyone mentioned or speaking across meetings, with their meetings and open tasks, plus one-click person notes
+- MCP tools: `ask_meetings`, `search_meetings`, `list_people`, `get_person`
+
+### Vocabulary & Hooks
+- A custom vocabulary (`~/Library/Application Support/Scribe/vocabulary.md`) improves recognition of names and jargon and fixes "heard as → spelled" mistakes
+- Post-meeting hooks run your own scripts with the meeting as JSON on stdin (Slack, Notion, Linear… with no Scribe cloud)
+
+### Audio
+- Optionally keep each meeting's audio (mic and remote as separate files), deleted after 7/30/90 days or kept forever
+- Built-in player: click any timestamp to hear that moment, at 1×/1.5×/2× speed
+- Echo cancellation for meetings without headphones
 
 ### Meeting Notes (notes own transcripts)
 - Every recording lives inside a Note — there is no standalone "transcript" surface
@@ -95,6 +127,8 @@ No model downloads, no accounts, no subscriptions, no API keys.
 - Transcription: Apple Speech on-device recognition
 - AI features: Apple Intelligence Foundation Models — on-device
 - Text analysis: NaturalLanguage framework — on-device
+- Speaker separation: FluidAudio Core ML models — on-device
+- Calendar: read from the Mac's own calendars via EventKit, only after you turn it on
 - No telemetry, no analytics, no cloud sync
 - Data stored locally at `~/Library/Application Support/Scribe/`
 - Delete individual sessions or wipe all data from within the app
@@ -159,7 +193,7 @@ Scribe needs three macOS permissions across its lifetime:
 ## Architecture
 
 ```
-Scribe.app (Swift 6 / SwiftUI / macOS 26)
+Scribe.app (Swift 6 / SwiftUI / macOS 27)
 ├── Main Window (NavigationSplitView: sidebar + detail)
 │   ├── Live Session view (when recording from no-note contexts)
 │   ├── Note Detail view (freeform editor + Sessions strip + per-session auto-section + inline live pane)
@@ -209,6 +243,7 @@ Scribe.app (Swift 6 / SwiftUI / macOS 26)
 |---------|---------|
 | [GRDB.swift](https://github.com/groue/GRDB.swift) | SQLite database with FTS5 full-text search |
 | [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) | Global keyboard shortcut for start/stop recording |
+| [FluidAudio](https://github.com/FluidInference/FluidAudio) | On-device speaker diarization (pyannote community-1 models, CC BY 4.0). Fetch the models into release builds with `scripts/fetch-diarizer-models.sh` |
 
 ### Project Structure
 

@@ -23,7 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         UserDefaults.standard.register(defaults: [
             "captureSystemAudio": true,
             "selectedLanguage": "auto",
-            MenuBarPreferences.showIconKey: true
+            MenuBarPreferences.showIconKey: true,
+            "autoSummarize": true,
+            "autoExtractActions": true,
+            AudioSessionManager.echoCancellationKey: true
         ])
 
         // Screenshot / UI-test fixture mode: seed a deterministic dataset into
@@ -46,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         } catch {
             Log.app.error("Crash recovery sweep failed: \(error.localizedDescription, privacy: .private)")
+        }
+
+        // Retained audio: apply the retention policy and drop folders of
+        // sessions that no longer exist (background, best-effort).
+        if !AppLaunchEnvironment.isUITesting {
+            AppState.runAudioHousekeeping(store: appState.transcriptStore)
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves
@@ -91,12 +100,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Reminder category + delegate. Authorization is requested lazily the
         // first time a task with `remindAt` is saved, not here — that keeps
         // first-launch silent for users who don't use the task layer.
-        TaskReminderScheduler.shared.additionalCategories = MeetingDetector.notificationCategories
-        TaskReminderScheduler.shared.externalResponseHandler = { categoryId, actionId, userInfo in
+        // Other features' notification categories share the scheduler's
+        // delegate through NotificationRouter (one handler per category).
+        NotificationRouter.shared.register(categories: MeetingDetector.notificationCategories) { categoryId, actionId, userInfo in
             MeetingDetector.shared.handleNotificationResponse(
                 categoryId: categoryId, actionId: actionId, userInfo: userInfo
             )
         }
+        NotificationRouter.shared.register(categories: CalendarReminderScheduler.notificationCategories) { categoryId, actionId, userInfo in
+            CalendarReminderScheduler.shared.handleNotificationResponse(
+                categoryId: categoryId, actionId: actionId, userInfo: userInfo
+            )
+        }
+        NotificationRouter.shared.install(on: TaskReminderScheduler.shared)
         TaskReminderScheduler.shared.registerCategory()
         TaskReminderScheduler.shared.installDelegate()
 
@@ -111,6 +127,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 },
                 stopRecording: { [weak self] in await self?.stopRecording() }
             )
+        }
+
+        // Calendar integration: off until enabled in Settings → Calendar (no
+        // permission prompt here). Refreshes events + pre-meeting reminders.
+        if !AppLaunchEnvironment.isUITesting {
+            CalendarReminderScheduler.shared.configure { [weak self] event in
+                await self?.startRecording(calendarEvent: event)
+            }
+            CalendarService.shared.start()
         }
 
         // Proactively request microphone and speech-recognition authorization
@@ -140,17 +165,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        // Make sure an active session is flushed to disk before the process
-        // dies — otherwise the last coalesced segment can be lost.
-        if appState?.isTranscribing == true {
-            let semaphore = DispatchSemaphore(value: 0)
-            Task { @MainActor in
-                await appState.stopSession()
-                semaphore.signal()
-            }
-            _ = semaphore.wait(timeout: .now() + 2)
+    /// Upper bound on how long quitting waits for an active session to stop
+    /// cleanly before terminating anyway.
+    static let terminationStopTimeout: Duration = .seconds(5)
+
+    /// Set while a deferred quit is waiting on `stopSession`, so the reply is
+    /// sent exactly once (by whichever of stop / timeout finishes first).
+    private var pendingTerminationReply = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Quitting mid-recording: stop the session properly first so the last
+        // coalesced segment is persisted, the session is ended and retained
+        // audio files are closed. `stopSession` is async on the main actor,
+        // so it can't be awaited here (blocking the main thread would
+        // deadlock it); defer the quit and reply when it finishes.
+        guard appState?.isTranscribing == true else { return .terminateNow }
+        guard !pendingTerminationReply else { return .terminateLater }
+        pendingTerminationReply = true
+
+        Task { @MainActor [weak self] in
+            await self?.appState?.stopSession()
+            self?.replyToPendingTermination()
         }
+        // Safety net: never hang the quit on a stuck stop.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.terminationStopTimeout)
+            if self?.pendingTerminationReply == true {
+                Log.app.error("Session didn't stop within the quit timeout; quitting anyway.")
+            }
+            self?.replyToPendingTermination()
+        }
+        return .terminateLater
+    }
+
+    private func replyToPendingTermination() {
+        guard pendingTerminationReply else { return }
+        pendingTerminationReply = false
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Nothing blocking here: an active session was already stopped in
+        // `applicationShouldTerminate`. Never wait on the main actor in this
+        // callback — it runs on the main thread, so a Task awaiting it could
+        // never run.
     }
 
     // MARK: - Window Close → Quit
@@ -211,7 +269,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     ///     names an auto-created note after the meeting app.
     ///   - forceNewNote: Always create a fresh meeting note instead of binding
     ///     to the open one (auto-record, where nobody chose the context).
-    func startRecording(detectedMeeting: MeetingApp? = nil, forceNewNote: Bool = false) async {
+    ///   - calendarEvent: The calendar event to record (menu-bar "Upcoming",
+    ///     reminder actions). Always gets a fresh note named after it. When
+    ///     nil and calendar integration is on, the event in progress is used.
+    func startRecording(
+        detectedMeeting: MeetingApp? = nil,
+        forceNewNote: Bool = false,
+        calendarEvent: CalendarEventInfo? = nil
+    ) async {
         guard !appState.isTranscribing else { return }
         // Verify permissions before touching audio hardware so we can show the
         // user a clear alert instead of silently failing.
@@ -262,13 +327,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         appState.audioManager.shouldCaptureSystemAudio = captureSystemAudio
 
+        let now = Date()
+        let event = calendarEvent ?? CalendarService.shared.matchingEvent(at: now)
+        // Name/seed the note after the event when the user picked the event
+        // explicitly, or when "Name notes after calendar events" is on.
+        let namesNote = event != nil && (calendarEvent != nil || CalendarService.nameNotesEnabled)
         let resolved: ResolvedNoteContext
         do {
             resolved = try Self.resolveNoteContext(
-                selection: forceNewNote ? nil : appState.currentSelection,
+                selection: (forceNewNote || calendarEvent != nil) ? nil : appState.currentSelection,
                 noteStore: .shared,
-                now: Date(),
-                meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:))
+                now: now,
+                meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:)),
+                explicitTitle: namesNote ? event.map { CalendarNoteFormatter.noteTitle(for: $0, date: now) } : nil,
+                initialBody: namesNote ? (event.map(CalendarNoteFormatter.noteHeader(for:)) ?? "") : ""
             )
         } catch {
             // Surface the underlying createNote error to the user instead of
@@ -300,7 +372,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         do {
-            try await appState.startSession(noteId: resolved.noteId)
+            if let event {
+                try await appState.startSession(title: event.displayTitle, noteId: resolved.noteId)
+                if let sessionId = appState.currentSessionId {
+                    do {
+                        try appState.transcriptStore.setCalendarEvent(
+                            sessionId: sessionId,
+                            eventId: event.id,
+                            eventTitle: event.title,
+                            attendees: event.attendees
+                        )
+                    } catch {
+                        Log.app.error("Failed to link session to calendar event: \(error.localizedDescription, privacy: .private)")
+                    }
+                }
+            } else {
+                try await appState.startSession(noteId: resolved.noteId)
+            }
+            ConsentDisclosure.recordingDidStart()
         } catch {
             showPermissionAlert(
                 title: "Couldn't Start Recording",
@@ -478,21 +567,32 @@ extension AppDelegate {
     /// generic "A note must exist before starting a recording."
     /// Extracted as a static helper so it's unit-testable without booting
     /// audio.
+    ///
+    /// `explicitTitle` / `initialBody` (calendar integration) override the
+    /// generated title and seed the new note's body; they're ignored when an
+    /// open note is reused.
     static func resolveNoteContext(
         selection: MainSelection?,
         noteStore: NoteStore,
         now: Date,
-        meetingName: String? = nil
+        meetingName: String? = nil,
+        explicitTitle: String? = nil,
+        initialBody: String = ""
     ) throws -> ResolvedNoteContext {
         if case .note(let noteId)? = selection {
             return ResolvedNoteContext(noteId: noteId, didCreateNote: false)
         }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        let title = "\(meetingName ?? "Meeting") on \(formatter.string(from: now))"
+        let title: String
+        if let explicitTitle, !explicitTitle.isEmpty {
+            title = explicitTitle
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            title = "\(meetingName ?? "Meeting") on \(formatter.string(from: now))"
+        }
         do {
-            let created = try noteStore.createNote(title: title, body: "")
+            let created = try noteStore.createNote(title: title, body: initialBody)
             return ResolvedNoteContext(noteId: created.id, didCreateNote: true)
         } catch {
             Log.app.error("Failed to auto-create meeting note: \(error.localizedDescription, privacy: .private)")

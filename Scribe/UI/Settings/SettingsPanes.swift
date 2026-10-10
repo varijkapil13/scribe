@@ -10,7 +10,11 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case intelligence
     case storage
     case dictation
+    case calendar
+    case vocabulary
+    case hooks
     case shortcuts
+    case templates
     case mcp
     case about
 
@@ -22,7 +26,11 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "Intelligence"
         case .storage:      return "Storage"
         case .dictation:    return "Dictation"
+        case .calendar:     return "Calendar"
+        case .vocabulary:   return "Vocabulary"
+        case .hooks:        return "Hooks"
         case .shortcuts:    return "Shortcuts"
+        case .templates:    return "Templates"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
         }
@@ -34,7 +42,11 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .intelligence: return "sparkles"
         case .storage:      return "internaldrive"
         case .dictation:    return "mic.badge.plus"
+        case .calendar:     return "calendar"
+        case .vocabulary:   return "character.book.closed"
+        case .hooks:        return "terminal"
         case .shortcuts:    return "keyboard"
+        case .templates:    return "doc.text.magnifyingglass"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
         }
@@ -79,7 +91,11 @@ struct SettingsPaneView: View {
         case .intelligence: IntelligenceSettingsPane()
         case .storage:      StorageSettingsPane()
         case .dictation:    DictationSettingsPane()
+        case .calendar:     CalendarSettingsPane()
+        case .vocabulary:   VocabularySettingsPane()
+        case .hooks:        HooksSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
+        case .templates:    TemplatesSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
         }
@@ -94,6 +110,7 @@ private struct GeneralSettingsPane: View {
 
     @AppStorage("selectedMicrophoneID") var selectedMicID: String = ""
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
+    @AppStorage(AudioSessionManager.echoCancellationKey) var echoCancellation: Bool = true
     @AppStorage("selectedLanguage") var selectedLanguage: String = "auto"
     @AppStorage(NotesDirectory.userPreferenceKey) var notesVaultPath: String = ""
     @AppStorage(MeetingDetectionMode.defaultsKey) var meetingDetectionMode: MeetingDetectionMode = MeetingDetectionMode.defaultValue
@@ -174,6 +191,12 @@ private struct GeneralSettingsPane: View {
                     isOn: $captureSystemAudio,
                     caption: "Record remote participants via ScreenCaptureKit. Requires Screen Recording permission."
                 )
+                toggleWithCaption(
+                    "Echo cancellation (use when not wearing headphones)",
+                    isOn: $echoCancellation,
+                    caption: "Stops the mic from picking up remote participants playing through your speakers. Applies while system audio is captured; takes effect from the next recording."
+                )
+                .disabled(!captureSystemAudio)
             }
 
             Section("Meeting detection") {
@@ -188,10 +211,13 @@ private struct GeneralSettingsPane: View {
                     .disabled(meetingDetectionMode == .off)
                 Toggle("Include any other app using the microphone", isOn: $detectOtherApps)
                     .disabled(meetingDetectionMode == .off)
+                MeetingDetectionExtraSettings(detectionEnabled: meetingDetectionMode != .off)
                 Text("Scribe notices when Zoom, Teams, Slack, FaceTime, Webex and other call apps start using your microphone. It only checks which app holds the mic and never listens until you record. Detection runs only while Scribe is open, so keep it in the menu bar and open at login to catch every call.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            ConsentDisclosureSettingsSection()
 
             Section("Menu bar & login") {
                 toggleWithCaption(
@@ -360,8 +386,8 @@ private extension GeneralSettingsPane {
 // MARK: - Intelligence
 
 private struct IntelligenceSettingsPane: View {
-    @AppStorage("autoSummarize") var autoSummarize: Bool = false
-    @AppStorage("autoExtractActions") var autoExtractActions: Bool = false
+    @AppStorage("autoSummarize") var autoSummarize: Bool = true
+    @AppStorage("autoExtractActions") var autoExtractActions: Bool = true
     @AppStorage("autoAnalyze") var autoAnalyze: Bool = true
     @AppStorage("extractEntities") var extractEntities: Bool = true
     @AppStorage("detectLanguage") var detectLanguage: Bool = true
@@ -427,8 +453,10 @@ private struct IntelligenceSettingsPane: View {
 // MARK: - Storage
 
 private struct StorageSettingsPane: View {
-    @AppStorage("retainAudio") var retainAudio: Bool = false
-    @AppStorage("storageLocation") var storageLocation: String = ""
+    @AppStorage(SessionAudioStorage.retainAudioKey) var retainAudio: Bool = false
+    @AppStorage(SessionAudioStorage.storageLocationKey) var storageLocation: String = ""
+    @AppStorage(AudioRetentionPolicy.defaultsKey) var audioRetention: AudioRetentionPolicy = AudioRetentionPolicy.defaultValue
+    @State private var audioUsageBytes: Int64?
     @AppStorage(CloudKitSyncService.enabledDefaultsKey) var iCloudSyncEnabled: Bool = false
     @AppStorage("iCloudNotesEnabled") var iCloudNotesEnabled: Bool = false
     @State private var notesState: NotesVaultState = .idle
@@ -447,8 +475,18 @@ private struct StorageSettingsPane: View {
                 toggleWithCaption(
                     "Retain raw audio recordings",
                     isOn: $retainAudio,
-                    caption: "Keep the original audio file alongside the transcript. Disabled by default to save disk space."
+                    caption: "Keep each recording's audio (your mic and system audio, AAC) so you can play it back from the transcript. Off by default to save disk space. Applies from the next recording."
                 )
+
+                Picker("Keep audio", selection: $audioRetention) {
+                    ForEach(AudioRetentionPolicy.allCases) { Text($0.title).tag($0) }
+                }
+                .onChange(of: audioRetention) { _, newPolicy in applyRetention(newPolicy) }
+
+                LabeledContent("Audio on disk") {
+                    Text(audioUsageBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Calculating…")
+                        .foregroundStyle(.secondary)
+                }
 
                 LabeledContent("Location") {
                     HStack {
@@ -459,6 +497,10 @@ private struct StorageSettingsPane: View {
                         Button("Change…", action: chooseStorageLocation)
                     }
                 }
+                Text("Audio recordings are saved in \(audioRootPath). Expired audio is deleted when Scribe opens; transcripts are kept.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("iCloud") {
@@ -513,7 +555,7 @@ private struct StorageSettingsPane: View {
                     Button("Delete All Data", role: .destructive, action: deleteAllData)
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This permanently removes every session, segment, summary, and action item. Your notes are kept. This action cannot be undone.")
+                    Text("This permanently removes every session, segment, summary, action item, and retained audio recording. Your notes are kept. This action cannot be undone.")
                 }
 
                 Text("Scribe stores data at ~/Library/Application Support/Scribe/.")
@@ -522,6 +564,7 @@ private struct StorageSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .task { await refreshAudioUsage() }
         .alert("Couldn’t Delete Data", isPresented: Binding(
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
@@ -561,6 +604,13 @@ private struct StorageSettingsPane: View {
         }
     }
 
+    /// Where new recordings' audio goes (re-read on each render, so it
+    /// follows the Location picker).
+    private var audioRootPath: String {
+        _ = storageLocation
+        return SessionAudioStorage.defaultRoot().path
+    }
+
     private func chooseStorageLocation() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -575,10 +625,47 @@ private struct StorageSettingsPane: View {
     private func deleteAllData() {
         do {
             try TranscriptStore().deleteAllData()
+            // Also sweep session folders no row referenced any more (only
+            // UUID-named folders — the root may be inside a user folder).
+            // Skipped mid-recording so the live session's files survive.
+            if !AppState.shared.isTranscribing {
+                SessionAudioStorage.removeOrphanFolders(
+                    root: SessionAudioStorage.defaultRoot(),
+                    knownSessionIds: []
+                )
+            }
             didDelete = true
         } catch {
             deleteError = error.localizedDescription
         }
+        Task { await refreshAudioUsage() }
+    }
+
+    /// Applies a newly picked retention policy right away (rather than only
+    /// on next launch), then refreshes the usage figure.
+    private func applyRetention(_ policy: AudioRetentionPolicy) {
+        let store = TranscriptStore.shared
+        Task {
+            await Task.detached(priority: .utility) {
+                do {
+                    try store.sweepExpiredAudio(policy: policy)
+                } catch {
+                    Log.storage.error("Retention sweep failed: \(error.localizedDescription, privacy: .private)")
+                }
+            }.value
+            await refreshAudioUsage()
+        }
+    }
+
+    /// Recomputes retained-audio disk usage off the main thread.
+    private func refreshAudioUsage() async {
+        let store = TranscriptStore.shared
+        let root = SessionAudioStorage.defaultRoot()
+        let bytes = await Task.detached(priority: .utility) { () -> Int64 in
+            let directories = (try? store.fetchAllAudioDirectories()) ?? []
+            return SessionAudioStorage.totalDiskUsage(root: root, sessionDirectories: directories)
+        }.value
+        audioUsageBytes = bytes
     }
 }
 
@@ -693,7 +780,7 @@ private struct AboutSettingsPane: View {
             }
 
             Section("Acknowledgements") {
-                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, and FoundationModels.")
+                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, FoundationModels, and FluidAudio. Speaker separation uses the pyannote community-1 models (CC BY 4.0) converted to Core ML by FluidInference.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(copyright)

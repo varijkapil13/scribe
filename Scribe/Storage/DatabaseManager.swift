@@ -587,6 +587,41 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Calendar integration (macOS): the event a recording belongs to.
+        // Additive, all nullable — existing rows read as "no event".
+        // `attendees` holds a JSON array of {name, email}.
+        migrator.registerMigration("v17_session_calendar") { db in
+            try db.alter(table: "sessions") { t in
+                t.add(column: "calendarEventId", .text)
+                t.add(column: "calendarEventTitle", .text)
+                t.add(column: "attendees", .text)
+            }
+        }
+
+        // Retained session audio: absolute path of the folder holding the
+        // session's mic/system recordings. Nullable — NULL means no audio was
+        // kept (the default) or the retention policy has since deleted it.
+        migrator.registerMigration("v19_session_audio") { db in
+            try db.alter(table: "sessions") { t in
+                t.add(column: "audioDirectory", .text)
+            }
+        }
+
+        // Speaker naming: per-session display names for speaker keys ("you",
+        // "remote", or custom names) plus a per-segment reassignment. Additive.
+        migrator.registerMigration("v18_speaker_names") { db in
+            try db.create(table: "session_speakers") { t in
+                t.column("sessionId", .text).notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("speakerKey", .text).notNull()
+                t.column("displayName", .text).notNull()
+                t.primaryKey(["sessionId", "speakerKey"])
+            }
+            try db.alter(table: "segments") { t in
+                t.add(column: "speakerOverride", .text)
+            }
+        }
+
         return migrator
     }
 

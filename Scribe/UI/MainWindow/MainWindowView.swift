@@ -289,6 +289,8 @@ struct MainWindowView: View {
                 Section {
                     sidebarLink(.today, "Today", systemImage: "sun.max", badge: taskCounts.today)
                     sidebarLink(.recordings, "Recordings", systemImage: "waveform")
+                    sidebarLink(.ask, "Ask Scribe", systemImage: "bubble.left.and.text.bubble.right")
+                    sidebarLink(.people, "People", systemImage: "person.2")
                 }
                 }  // end Capture surface
 
@@ -703,6 +705,10 @@ struct MainWindowView: View {
             notesDetailView(filter: filter)
         case .bases:
             BasesScreen(onNavigate: { nav.navigate(to: .note($0)) })
+        case .ask:
+            AskView(onNavigate: { nav.navigate(to: $0) })
+        case .people:
+            PeopleView(onNavigate: { nav.navigate(to: $0) })
         case .session(let id):
             Group {
                 if let session = detailSession, session.id == id {

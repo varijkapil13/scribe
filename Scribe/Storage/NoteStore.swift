@@ -118,7 +118,13 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func deleteNote(id: String) throws {
-        try db.write { database in
+        let audioDirectories = try db.write { database -> [String] in
+            // Collect retained-audio folders before the session rows go.
+            let audioPaths = try String.fetchAll(
+                database,
+                sql: "SELECT audioDirectory FROM sessions WHERE noteId = ? AND audioDirectory IS NOT NULL",
+                arguments: [id]
+            )
             // Cascade-delete sessions owned by this note. The session's FKs
             // (set up in v1 and v2 migrations) cascade to segments,
             // meeting_summaries, action_items, and extracted_entities.
@@ -130,6 +136,10 @@ final class NoteStore: @unchecked Sendable {
             )
             _ = try Note.deleteOne(database, key: id)
             try database.execute(sql: "DELETE FROM notes_fts WHERE noteId = ?", arguments: [id])
+            return audioPaths
+        }
+        for path in audioDirectories {
+            SessionAudioStorage.removeDirectory(atPath: path)
         }
         deleteFromDisk(id: id)
         // Best-effort: remove the note's attachments folder. Failures are

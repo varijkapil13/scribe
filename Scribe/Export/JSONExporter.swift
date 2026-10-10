@@ -34,19 +34,26 @@ struct JSONExporter {
         let startMs: Int
         let endMs: Int
         let speaker: String
+        /// Underlying speaker key ("you", "remote", or a custom speaker) —
+        /// only emitted when `speaker` carries a resolved display name.
+        let speakerKey: String?
         let text: String
 
         enum CodingKeys: String, CodingKey {
             case startMs = "start_ms"
             case endMs = "end_ms"
             case speaker
+            case speakerKey = "speaker_key"
             case text
         }
     }
 
     // MARK: - Public
 
-    static func export(session: Session, segments: [Segment]) -> String {
+    /// - Parameter speakerNames: When set, `speaker` is the display name and
+    ///   `speaker_key` the underlying key. `nil` keeps the legacy shape.
+    static func export(session: Session, segments: [Segment],
+                       speakerNames: SpeakerNameResolver? = nil) -> String {
         let exportSession = ExportSession(
             id: session.id,
             title: session.title,
@@ -59,7 +66,8 @@ struct JSONExporter {
             ExportSegment(
                 startMs: segment.startMs,
                 endMs: segment.endMs,
-                speaker: segment.speaker,
+                speaker: speakerNames?.displayName(for: segment) ?? segment.speaker,
+                speakerKey: speakerNames == nil ? nil : SpeakerNameResolver.effectiveKey(for: segment),
                 text: segment.text
             )
         }

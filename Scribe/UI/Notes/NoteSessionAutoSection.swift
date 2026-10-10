@@ -49,6 +49,8 @@ struct NoteSessionAutoSection: View {
                 .tracking(0.5)
                 .foregroundStyle(.secondary)
             Spacer()
+            SessionTemplateActionsMenu(session: viewModel.session)
+                .controlSize(.small)
             Button("Open transcript") { onOpenSession(viewModel.session) }
                 .buttonStyle(.plain)
                 .font(.caption)

@@ -25,14 +25,21 @@ permissions:
 jobs:
   release:
     name: build + package macOS app
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history + tags, so the changelog step can diff against the previous tag
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -switch /Applications/Xcode_26.app || sudo xcode-select -switch /Applications/Xcode.app
+      - name: Select Xcode 27
+        # macOS 27 SDK is required (deployment target 27.0). Pick the newest
+        # installed Xcode 27 and fail loudly if the runner image has none.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 27 on this runner image"; exit 1; fi
+          sudo xcode-select -switch "$XC"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -54,6 +61,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$PLIST"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST"
           echo "Stamped $PLIST -> ${VERSION} (build ${GITHUB_RUN_NUMBER})"
+
+      - name: Fetch speaker-diarization models
+        run: scripts/fetch-diarizer-models.sh
 
       - name: Build app (Release, ad-hoc signed)
         # Manual ad-hoc signing ("-") with no team/profile: xcodebuild signs the
@@ -126,7 +136,7 @@ jobs:
           > xattr -dr com.apple.quarantine /Applications/Scribe.app
           > ```
 
-          Apple Silicon, macOS 26+. Download the `.dmg` (drag to Applications) or the `.zip`.
+          Apple Silicon, macOS 27+. Download the `.dmg` (drag to Applications) or the `.zip`.
 
           EOF
 

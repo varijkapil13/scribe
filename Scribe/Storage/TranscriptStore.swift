@@ -11,7 +11,9 @@ final class TranscriptStore: @unchecked Sendable {
 
     nonisolated static let shared = TranscriptStore()
 
-    private let dbManager: DatabaseManager
+    /// Internal (not private) so feature extensions in other files
+    /// (e.g. `TranscriptStore+Speakers.swift`) can reach the database.
+    let dbManager: DatabaseManager
 
     /// Convenience accessor for the underlying database queue.
     private var db: DatabaseQueue { dbManager.database }
@@ -26,9 +28,20 @@ final class TranscriptStore: @unchecked Sendable {
 
     /// Creates a session attached to a Note. Every session must belong to a
     /// note — transcripts are part of notes, not standalone entities.
+    ///
+    /// - Parameters:
+    ///   - id: Session id. Callers that need the id before the row exists
+    ///     (e.g. to name the session's audio folder) can pre-generate it.
+    ///   - audioDirectory: Absolute path of the folder retained audio will be
+    ///     written to, or nil when audio isn't being kept.
     @discardableResult
-    func createSession(title: String, noteId: String) throws -> Session {
-        let session = Session(title: title, noteId: noteId)
+    func createSession(
+        title: String,
+        noteId: String,
+        id: String = UUID().uuidString,
+        audioDirectory: String? = nil
+    ) throws -> Session {
+        let session = Session(id: id, title: title, noteId: noteId, audioDirectory: audioDirectory)
         try db.write { database in
             try session.insert(database)
         }
@@ -56,11 +69,19 @@ final class TranscriptStore: @unchecked Sendable {
         }
     }
 
-    /// Deletes a session and all its segments (cascade).
+    /// Deletes a session and all its segments (cascade), plus its retained
+    /// audio folder if it has one.
     func deleteSession(id: String) throws {
-        try db.write { database in
+        let audioDirectory = try db.write { database -> String? in
+            let path = try String.fetchOne(
+                database,
+                sql: "SELECT audioDirectory FROM sessions WHERE id = ?",
+                arguments: [id]
+            )
             _ = try Session.deleteOne(database, key: id)
+            return path
         }
+        SessionAudioStorage.removeDirectory(atPath: audioDirectory)
     }
 
     /// Returns all sessions ordered by creation date, most recent first.
@@ -90,6 +111,23 @@ final class TranscriptStore: @unchecked Sendable {
             try database.execute(
                 sql: "UPDATE sessions SET noteId = ? WHERE id = ?",
                 arguments: [noteId, sessionId]
+            )
+        }
+    }
+
+    /// Records which calendar event a session belongs to (macOS calendar
+    /// integration). Pass nils / an empty list to clear.
+    func setCalendarEvent(
+        sessionId: String,
+        eventId: String?,
+        eventTitle: String?,
+        attendees: [CalendarAttendee]
+    ) throws {
+        let attendeesJSON = CalendarAttendee.encodeList(attendees)
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE sessions SET calendarEventId = ?, calendarEventTitle = ?, attendees = ? WHERE id = ?",
+                arguments: [eventId, eventTitle, attendeesJSON, sessionId]
             )
         }
     }
@@ -357,11 +395,23 @@ final class TranscriptStore: @unchecked Sendable {
 
     // MARK: - Bulk Operations
 
-    /// Deletes all sessions and segments from the database.
+    /// Deletes all sessions and segments from the database, and the retained
+    /// audio folder of every session (wherever it lives). Leftover folders
+    /// nothing references are swept separately by the caller / at launch
+    /// (``SessionAudioStorage/removeOrphanFolders(root:knownSessionIds:untouchedSince:)``),
+    /// so this never scans a real folder from a test database.
     func deleteAllData() throws {
-        try db.write { database in
+        let audioDirectories = try db.write { database -> [String] in
+            let paths = try String.fetchAll(
+                database,
+                sql: "SELECT audioDirectory FROM sessions WHERE audioDirectory IS NOT NULL"
+            )
             _ = try Segment.deleteAll(database)
             _ = try Session.deleteAll(database)
+            return paths
+        }
+        for path in audioDirectories {
+            SessionAudioStorage.removeDirectory(atPath: path)
         }
     }
 
@@ -702,5 +752,84 @@ final class TranscriptStore: @unchecked Sendable {
             language: language,
             tags: tags
         )
+    }
+}
+
+// MARK: - Retained session audio
+
+extension TranscriptStore {
+
+    /// Sets (or clears, with nil) the audio folder recorded on a session.
+    func setAudioDirectory(_ path: String?, sessionId: String) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE sessions SET audioDirectory = ? WHERE id = ?",
+                arguments: [path, sessionId]
+            )
+        }
+    }
+
+    /// All sessions that currently reference an audio folder.
+    func fetchSessionsWithAudio() throws -> [Session] {
+        try db.read { database in
+            try Session
+                .filter(Column("audioDirectory") != nil)
+                .fetchAll(database)
+        }
+    }
+
+    /// Ids of every session in the database (for orphan-folder detection).
+    func fetchAllSessionIds() throws -> Set<String> {
+        try db.read { database in
+            try Set(String.fetchAll(database, sql: "SELECT id FROM sessions"))
+        }
+    }
+
+    /// Paths of every session audio folder recorded in the database.
+    func fetchAllAudioDirectories() throws -> [String] {
+        try db.read { database in
+            try String.fetchAll(
+                database,
+                sql: "SELECT audioDirectory FROM sessions WHERE audioDirectory IS NOT NULL"
+            )
+        }
+    }
+
+    /// Applies `policy`: deletes the audio folder of every finished session
+    /// whose audio has expired and clears its `audioDirectory`. Sessions still
+    /// recording (`endedAt == nil`) are never touched. Returns the number of
+    /// sessions whose audio was removed.
+    @discardableResult
+    func sweepExpiredAudio(policy: AudioRetentionPolicy, now: Date = Date()) throws -> Int {
+        guard policy.expirationCutoff(now: now) != nil else { return 0 }
+        let expired = try fetchSessionsWithAudio().filter { session in
+            session.endedAt != nil && policy.isExpired(createdAt: session.createdAt, now: now)
+        }
+        for session in expired {
+            SessionAudioStorage.removeDirectory(atPath: session.audioDirectory)
+            try setAudioDirectory(nil, sessionId: session.id)
+        }
+        return expired.count
+    }
+
+    /// Launch-time housekeeping: applies the retention policy, then removes
+    /// UUID-named folders under `root` that no session row references any
+    /// more. Returns `(expired, orphans)` counts for logging.
+    @discardableResult
+    func runAudioHousekeeping(
+        policy: AudioRetentionPolicy,
+        root: URL,
+        now: Date = Date()
+    ) throws -> (expired: Int, orphans: Int) {
+        let expired = try sweepExpiredAudio(policy: policy, now: now)
+        // Folders touched in the last hour are skipped so a recording that
+        // starts while this runs can't lose its brand-new folder.
+        let knownIds = try fetchAllSessionIds()
+        let orphans = SessionAudioStorage.removeOrphanFolders(
+            root: root,
+            knownSessionIds: knownIds,
+            untouchedSince: now.addingTimeInterval(-3600)
+        )
+        return (expired, orphans)
     }
 }

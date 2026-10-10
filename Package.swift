@@ -5,12 +5,16 @@ import PackageDescription
 let package = Package(
     name: "Scribe",
     platforms: [
-        .macOS("26.0")
+        .macOS("27.0")
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
+        // On-device speaker diarization (Scribe/Diarization). Pinned exactly:
+        // scripts/fetch-diarizer-models.sh pins the model revision this
+        // version expects.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
     ],
     targets: [
         // The SwiftPM target backs the logic-test job (`swift test`). The note
@@ -33,6 +37,7 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
                 "KeyboardShortcuts",
                 .product(name: "Markdown", package: "swift-markdown"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             path: "Scribe"
         ),

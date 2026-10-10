@@ -75,6 +75,10 @@ final class TranscriptionPipeline {
     /// displayed in the UI rather than a CoreMedia timeline.
     private var sessionStart: Date?
 
+    /// User vocabulary "heard as → replace with" rules, snapshotted at
+    /// `start` and applied to every result (see `VocabularyCorrector`).
+    private var corrector: VocabularyCorrector?
+
     // MARK: - Init
 
     init(speaker: String) {
@@ -112,6 +116,13 @@ final class TranscriptionPipeline {
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
+
+        // Custom vocabulary: bias recognition towards the user's terms and
+        // fix known mis-hearings in finalized text.
+        let vocabulary = VocabularyStore.shared
+        vocabulary.reload()
+        corrector = vocabulary.makeCorrector()
+        await applyContextualStrings(vocabulary.contextualStrings, to: analyzer)
 
         // Consume results on a detached task so we don't block `start`. The
         // task is cancelled on `stop()` to tear down cleanly.
@@ -270,7 +281,8 @@ final class TranscriptionPipeline {
 
     private func handle(result: SpeechTranscriber.Result) async {
         let rawText = String(result.text.characters)
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = corrector?.apply(to: stripped) ?? stripped
         guard !trimmed.isEmpty else { return }
 
         let isVolatile = isResultVolatile(result)

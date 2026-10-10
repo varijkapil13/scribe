@@ -61,6 +61,14 @@ struct NoteMarkdownExporter {
             lines.append("")
         }
 
+        // Speakers — only when the user named or reassigned speakers, so
+        // unnamed "you"/"remote" sessions export exactly as before.
+        let speakerNames = speakerDisplayNames(session: session, transcriptStore: transcriptStore)
+        if !speakerNames.isEmpty {
+            lines.append("**Speakers:** \(speakerNames.map(escapeInline).joined(separator: ", "))")
+            lines.append("")
+        }
+
         // Summary
         if let summary = try? transcriptStore.fetchSummary(sessionId: session.id) {
             lines.append("**Summary**")
@@ -122,6 +130,20 @@ struct NoteMarkdownExporter {
     }
 
     // MARK: - Helpers
+
+    /// Distinct speaker display names in transcript order, or `[]` when the
+    /// session has no custom speaker naming.
+    static func speakerDisplayNames(session: Session, transcriptStore: TranscriptStore) -> [String] {
+        guard (try? transcriptStore.hasCustomSpeakers(sessionId: session.id)) == true else { return [] }
+        let segments = (try? transcriptStore.fetchSegments(sessionId: session.id)) ?? []
+        let resolver = transcriptStore.speakerResolver(sessionId: session.id)
+        var names: [String] = []
+        for segment in segments {
+            let name = resolver.displayName(for: segment)
+            if !names.contains(name) { names.append(name) }
+        }
+        return names
+    }
 
     /// Escapes characters that have markdown meaning when they appear inline
     /// (in titles, bullet contents, link text, etc.) so values written by

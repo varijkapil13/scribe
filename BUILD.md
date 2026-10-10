@@ -1,6 +1,6 @@
 # Building & Distributing Scribe
 
-Scribe is a native macOS 26 (Apple Silicon) app. It builds two ways:
+Scribe is a native macOS 27 (Apple Silicon) app. It builds two ways:
 
 - **Logic tests** run via SwiftPM: `swift test`
 - **The shippable app** builds via Xcode from the `xcodegen`-generated project.
@@ -9,7 +9,7 @@ Scribe is a native macOS 26 (Apple Silicon) app. It builds two ways:
 
 | Tool | Install |
 |------|---------|
-| Xcode 26+ | App Store / developer.apple.com |
+| Xcode 27+ | App Store / developer.apple.com |
 | XcodeGen | `brew install xcodegen` |
 | create-dmg (optional, nicer DMGs) | `brew install create-dmg` |
 
@@ -103,7 +103,7 @@ notarized upload). Then re-run the release script.
   **off** (ScreenCaptureKit system-audio capture needs an unsandboxed,
   Developer-ID-signed build — see `Scribe/Resources/Scribe.entitlements`).
 - **Entitlements**: audio-input, user-selected file read/write.
-- **Min OS**: macOS 26.0 (`LSMinimumSystemVersion`). Apple Silicon only
+- **Min OS**: macOS 27.0 (`LSMinimumSystemVersion`). Apple Silicon only
   (`ARCHS=arm64`).
 - **Usage strings** (mic / screen / speech) are in `Info.plist`.
 

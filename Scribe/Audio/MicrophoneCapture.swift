@@ -53,6 +53,17 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// default. Falls back to the system default when nothing else is in use.
     var autoDetectActiveInput: Bool = false
 
+    /// When `true`, ``startCapture`` turns on Apple's voice processing
+    /// (acoustic echo cancellation) on the input node, so audio playing from
+    /// the speakers — e.g. the remote side of a call — isn't picked up again
+    /// by the mic. Off by default: dictation's separate capture leaves it off.
+    /// Takes effect on the next ``startCapture``. Best-effort — if the device
+    /// or engine rejects it, capture continues without it.
+    var voiceProcessing: Bool = false
+
+    /// Whether voice processing is actually active for the current capture.
+    private(set) var isVoiceProcessingActive = false
+
     /// The CoreAudio device ID the engine is currently capturing from (whatever
     /// was resolved at the last ``startCapture``). Used to avoid counting our
     /// own input usage when detecting which mic a call app is using.
@@ -168,6 +179,57 @@ final class MicrophoneCapture: @unchecked Sendable {
     func startCapture(sampleRate: Double = 16000) throws {
         guard !isCapturing else { return }
 
+        // Voice processing swaps the input node's underlying audio unit, so it
+        // has to be applied before the device is bound (which talks to that
+        // unit) and before the tap/engine start.
+        applyVoiceProcessing(voiceProcessing)
+
+        do {
+            try bindInputDevice()
+        } catch {
+            // Voice processing can refuse some devices; retry plainly rather
+            // than failing the recording.
+            guard isVoiceProcessingActive else { throw error }
+            Log.audio.error("Binding the input device failed with echo cancellation on; retrying without it.")
+            applyVoiceProcessing(false)
+            try bindInputDevice()
+        }
+
+        do {
+            try installTapAndStart(sampleRate: sampleRate)
+        } catch {
+            guard isVoiceProcessingActive else { throw error }
+            Log.audio.error("Mic capture failed to start with echo cancellation on; retrying without it: \(error.localizedDescription, privacy: .public)")
+            applyVoiceProcessing(false)
+            try bindInputDevice()
+            try installTapAndStart(sampleRate: sampleRate)
+        }
+    }
+
+    /// Turns voice processing on/off on the input node (engine must be
+    /// stopped). Errors are logged and leave it off.
+    private func applyVoiceProcessing(_ enabled: Bool) {
+        let inputNode = audioEngine.inputNode
+        if inputNode.isVoiceProcessingEnabled != enabled {
+            do {
+                try inputNode.setVoiceProcessingEnabled(enabled)
+            } catch {
+                Log.audio.error("Couldn't \(enabled ? "enable" : "disable", privacy: .public) echo cancellation: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        isVoiceProcessingActive = inputNode.isVoiceProcessingEnabled
+        if isVoiceProcessingActive {
+            // Voice processing ducks (turns down) other audio by default, which
+            // would make the call itself quieter. Ask for the minimum.
+            var ducking = AVAudioVoiceProcessingOtherAudioDuckingConfiguration()
+            ducking.enableAdvancedDucking = false
+            ducking.duckingLevel = .min
+            inputNode.voiceProcessingOtherAudioDuckingConfiguration = ducking
+        }
+    }
+
+    /// Resolves and binds the input device for this capture.
+    private func bindInputDevice() throws {
         // Resolve and bind the input device. We always set the device
         // explicitly rather than relying on the engine, because the input audio
         // unit latches whatever device was current when it was first
@@ -189,8 +251,13 @@ final class MicrophoneCapture: @unchecked Sendable {
             }
             currentCaptureDeviceID = resolved
         }
+    }
 
+    /// Installs the converting tap and starts the engine. On failure the tap
+    /// is removed again so a retry starts clean.
+    private func installTapAndStart(sampleRate: Double) throws {
         let inputNode = audioEngine.inputNode
+        let takeFirstChannelOnly = isVoiceProcessingActive
 
         // Sanity check that an input is actually available. We deliberately do
         // NOT reuse this format for the tap: immediately after switching the
@@ -256,10 +323,21 @@ final class MicrophoneCapture: @unchecked Sendable {
             // already computed above — previously this value was only logged.
             self.onLevel?(rawPeak)
 
+            // With voice processing on, the input node can report several
+            // channels with the echo-cancelled signal in the first one; feed
+            // only that channel so the result isn't diluted by a downmix.
+            let source: AVAudioPCMBuffer
+            if takeFirstChannelOnly, buffer.format.channelCount > 1,
+               let mono = Self.firstChannel(of: buffer) {
+                source = mono
+            } else {
+                source = buffer
+            }
+
             // (Re)build the converter when first seen or when the input format
             // changes under us, so a mid-session mic switch never crashes.
-            if converter?.inputFormat != buffer.format {
-                converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+            if converter?.inputFormat != source.format {
+                converter = AVAudioConverter(from: source.format, to: targetFormat)
             }
             guard let converter else { return }
 
@@ -271,7 +349,7 @@ final class MicrophoneCapture: @unchecked Sendable {
             var error: NSError?
             let status = converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
                 outStatus.pointee = .haveData
-                return buffer
+                return source
             }
 
             guard status != .error, error == nil, convertedBuffer.frameLength > 0 else { return }
@@ -286,6 +364,25 @@ final class MicrophoneCapture: @unchecked Sendable {
             throw MicrophoneCaptureError.engineStartFailed(underlying: error)
         }
         isCapturing = true
+    }
+
+    /// Copies the first channel of a non-interleaved Float32 buffer into a
+    /// mono buffer at the same sample rate. Returns nil for other layouts
+    /// (the caller then converts the buffer as-is).
+    private static func firstChannel(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let source = buffer.floatChannelData, !buffer.format.isInterleaved,
+              let monoFormat = AVAudioFormat(
+                  commonFormat: .pcmFormatFloat32,
+                  sampleRate: buffer.format.sampleRate,
+                  channels: 1,
+                  interleaved: false
+              ),
+              let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+              let destination = mono.floatChannelData else { return nil }
+        let frames = Int(buffer.frameLength)
+        destination[0].update(from: source[0], count: frames)
+        mono.frameLength = buffer.frameLength
+        return mono
     }
 
     /// Clears the record of which device we're capturing, so the next

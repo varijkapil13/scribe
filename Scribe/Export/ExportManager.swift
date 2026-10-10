@@ -24,30 +24,38 @@ struct ExportManager {
 
     /// Exports a session and its segments in the requested format, returning the
     /// formatted string.
-    static func export(session: Session, segments: [Segment], format: ExportFormat) -> String {
+    ///
+    /// Pass `speakerNames` to label speakers with their display names
+    /// (session renames, reassignments, the global "you" name); `nil` keeps
+    /// the raw `you` / `remote` labels.
+    static func export(session: Session, segments: [Segment], format: ExportFormat,
+                       speakerNames: SpeakerNameResolver? = nil) -> String {
         switch format {
         case .markdown:
-            return exportToMarkdown(session: session, segments: segments)
+            return exportToMarkdown(session: session, segments: segments, speakerNames: speakerNames)
         case .plainText:
-            return exportToPlainText(session: session, segments: segments)
+            return exportToPlainText(session: session, segments: segments, speakerNames: speakerNames)
         case .json:
-            return exportToJSON(session: session, segments: segments)
+            return exportToJSON(session: session, segments: segments, speakerNames: speakerNames)
         }
     }
 
     /// Returns a Markdown-formatted transcript.
-    static func exportToMarkdown(session: Session, segments: [Segment]) -> String {
-        MarkdownExporter.export(session: session, segments: segments)
+    static func exportToMarkdown(session: Session, segments: [Segment],
+                                 speakerNames: SpeakerNameResolver? = nil) -> String {
+        MarkdownExporter.export(session: session, segments: segments, speakerNames: speakerNames)
     }
 
     /// Returns a plain-text transcript.
-    static func exportToPlainText(session: Session, segments: [Segment]) -> String {
-        PlainTextExporter.export(session: session, segments: segments)
+    static func exportToPlainText(session: Session, segments: [Segment],
+                                  speakerNames: SpeakerNameResolver? = nil) -> String {
+        PlainTextExporter.export(session: session, segments: segments, speakerNames: speakerNames)
     }
 
     /// Returns a JSON-encoded transcript.
-    static func exportToJSON(session: Session, segments: [Segment]) -> String {
-        JSONExporter.export(session: session, segments: segments)
+    static func exportToJSON(session: Session, segments: [Segment],
+                             speakerNames: SpeakerNameResolver? = nil) -> String {
+        JSONExporter.export(session: session, segments: segments, speakerNames: speakerNames)
     }
 
     /// Presents an NSSavePanel so the user can choose where to save the exported

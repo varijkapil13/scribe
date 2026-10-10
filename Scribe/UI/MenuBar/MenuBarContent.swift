@@ -24,6 +24,7 @@ struct MenuBarContent: View {
     @ObservedObject var audioManager: AudioSessionManager
     @ObservedObject private var detector = MeetingDetector.shared
     @ObservedObject private var dictation = DictationController.shared
+    @ObservedObject private var calendar = CalendarService.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -40,6 +41,7 @@ struct MenuBarContent: View {
                 }
             }
             Button("Show Live Transcript") { open(.live) }
+            Button("Copy Disclosure Message") { _ = ConsentDisclosure.copyToPasteboard() }
         } else {
             if let meeting = detector.currentMeeting {
                 Button("Record \(MeetingDetector.meetingPhrase(for: meeting))") {
@@ -48,6 +50,9 @@ struct MenuBarContent: View {
                 Divider()
             }
             Button("Start Recording") { Task { await appDelegate.startRecording() } }
+            UpcomingEventsMenuSection(events: calendar.upcomingEvents) { event in
+                Task { await appDelegate.startRecording(calendarEvent: event) }
+            }
         }
 
         Divider()
