@@ -9,9 +9,14 @@ struct NoteMarkdownExporter {
     /// Exports the note's title, body, and (when present) linked-recordings
     /// tail. Takes the stores as parameters so tests can inject in-memory
     /// instances.
+    ///
+    /// `![[Note]]` / `![[Note#Heading]]` / `![[Note#^block]]` embeds in the
+    /// body are expanded one level (cycle-safe) through `embeds`; pass nil to
+    /// keep them verbatim.
     static func export(
         note: Note,
-        transcriptStore: TranscriptStore = .shared
+        transcriptStore: TranscriptStore = .shared,
+        embeds: NoteEmbedLookup? = .live
     ) -> String {
         var lines: [String] = []
 
@@ -23,9 +28,13 @@ struct NoteMarkdownExporter {
         lines.append("**Last edited:** \(formatDate(note.updatedAt))")
         lines.append("")
 
-        // Freeform body (may be empty)
+        // Freeform body (may be empty), embeds expanded one level.
         if !note.body.isEmpty {
-            lines.append(note.body)
+            var body = note.body
+            if let embeds, body.contains("![[") {
+                body = NoteEmbedExpander.expand(body: body, currentNoteId: note.id, resolve: embeds.resolve)
+            }
+            lines.append(body)
             lines.append("")
         }
 

@@ -700,6 +700,7 @@ final class DatabaseManager: @unchecked Sendable {
         }
 
         registerRemindersLinkMigration(in: &migrator)
+        NoteVersionStore.registerNoteVersionsMigration(in: &migrator)
 
         return migrator
     }
