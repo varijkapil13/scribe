@@ -73,8 +73,12 @@ final class SemanticIndexScheduler {
         } else {
             loop?.cancel()
             loop = nil
-            SemanticSearchService.shared.purgeCache()
-            NLSemanticEmbedder.shared.unload()
+            // Off the main thread: both wait on locks a running indexing
+            // batch may hold (e.g. while the model loads).
+            Task.detached(priority: .utility) {
+                SemanticSearchService.shared.purgeCache()
+                NLSemanticEmbedder.shared.unload()
+            }
             Log.intelligence.info("Semantic indexing stopped.")
         }
     }

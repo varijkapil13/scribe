@@ -30,6 +30,24 @@ final class BagOfWordsTestEmbedder: SemanticTextEmbedding, @unchecked Sendable {
     }
 }
 
+/// An embedder with no vectors for anything (counts its calls).
+final class NilTestEmbedder: SemanticTextEmbedding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _calls = 0
+
+    var calls: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _calls
+    }
+
+    var identifier: String? { "test-nil:1" }
+
+    func embed(_ text: String) -> [Float]? {
+        lock.lock(); _calls += 1; lock.unlock()
+        return nil
+    }
+}
+
 /// Fixed hits, for retrieval tests.
 struct StubSemanticProvider: SemanticCandidateProviding {
     let hits: [SemanticHit]
@@ -346,6 +364,26 @@ final class SemanticIndexerTests: XCTestCase {
         }
         XCTAssertTrue(result.isComplete)
         XCTAssertEqual(try store.stamps(sourceType: .note, embedder: "test-bow:64").count, 5)
+    }
+
+    func testUnembeddableSourcesAreNotRetriedEveryPass() throws {
+        for i in 0..<3 {
+            try notes.createNote(title: "Note \(i)", body: "Body text number \(i).")
+        }
+        let failing = NilTestEmbedder()
+        let failingIndexer = SemanticIndexer(dbManager: dbm, store: store, embedder: failing)
+
+        let first = try failingIndexer.runPass(maxEmbeddings: 100)
+        XCTAssertTrue(first.isComplete)
+        let afterFirst = failing.calls
+        XCTAssertEqual(afterFirst, 3)
+
+        // Nothing could be stored, but the same sources aren't embedded again.
+        let second = try failingIndexer.runPass(maxEmbeddings: 100)
+        XCTAssertTrue(second.isComplete)
+        XCTAssertEqual(second.embedded, 0)
+        XCTAssertEqual(failing.calls, afterFirst)
+        XCTAssertEqual(try store.chunkCount(), 0)
     }
 
     func testSearchServiceFindsClosestNote() throws {

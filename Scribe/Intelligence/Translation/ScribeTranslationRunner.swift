@@ -89,6 +89,10 @@ struct ScribeTranslationHost: ViewModifier {
             } catch {
                 outcome = .failed(error.localizedDescription)
             }
+            // A run superseded by a new / cleared configuration (or a view
+            // that went away) is cancelled: its outcome must not be applied
+            // to the run that replaced it.
+            if Task.isCancelled { return }
             await onFinish(outcome)
         }
     }

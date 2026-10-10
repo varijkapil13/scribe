@@ -32,6 +32,14 @@ final class SemanticIndexer: @unchecked Sendable {
     let store: SemanticEmbeddingStore
     let embedder: any SemanticTextEmbedding
 
+    /// Sources (`"<type>:<id>"` → stamp) that produced no embeddable chunk at
+    /// that stamp (e.g. text the fallback model has no vectors for). They
+    /// have no stored rows, so without this memo every pass would re-embed
+    /// them, and enough of them would keep the pass from ever completing (the
+    /// scheduler would never go idle). Retried after a relaunch or an edit.
+    private let unembeddableLock = NSLock()
+    private var unembeddable: [String: String] = [:]
+
     init(dbManager: DatabaseManager, store: SemanticEmbeddingStore, embedder: any SemanticTextEmbedding) {
         self.dbManager = dbManager
         self.store = store
@@ -55,7 +63,7 @@ final class SemanticIndexer: @unchecked Sendable {
         let notes = try noteStamps()
         result.removedRows += try store.removeSources(sourceType: .note, notIn: Set(notes.keys))
         let noteIndexed = try store.stamps(sourceType: .note, embedder: embedderId)
-        for (noteId, stamp) in notes.sorted(by: { $0.key < $1.key }) where noteIndexed[noteId] != stamp {
+        for (noteId, stamp) in notes.sorted(by: { $0.key < $1.key }) where noteIndexed[noteId] != stamp && !isUnembeddable(.note, noteId, stamp: stamp) {
             guard shouldContinue(), budget > 0 else { result.isComplete = false; return result }
             guard let content = try noteContent(id: noteId) else { continue }
             let chunks = SemanticChunker.chunkNote(body: content.body).map { (text: $0, startMs: Int?.none) }
@@ -73,7 +81,7 @@ final class SemanticIndexer: @unchecked Sendable {
         let sessions = try sessionStamps()
         result.removedRows += try store.removeSources(sourceType: .session, notIn: Set(sessions.keys))
         let sessionIndexed = try store.stamps(sourceType: .session, embedder: embedderId)
-        for (sessionId, info) in sessions.sorted(by: { $0.key < $1.key }) where sessionIndexed[sessionId] != info.stamp {
+        for (sessionId, info) in sessions.sorted(by: { $0.key < $1.key }) where sessionIndexed[sessionId] != info.stamp && !isUnembeddable(.session, sessionId, stamp: info.stamp) {
             guard shouldContinue(), budget > 0 else { result.isComplete = false; return result }
             let lines = try transcriptLines(sessionId: sessionId)
             let chunks = SemanticChunker.chunkTranscript(lines).map { (text: $0.text, startMs: Optional($0.startMs)) }
@@ -133,7 +141,22 @@ final class SemanticIndexer: @unchecked Sendable {
         }
         try store.replaceChunks(sourceType: sourceType, sourceId: sourceId, stamp: stamp,
                                 embedder: embedderId, chunks: inputs)
+        if inputs.isEmpty && !hashed.isEmpty {
+            markUnembeddable(sourceType, sourceId, stamp: stamp)
+        }
         return used
+    }
+
+    private func isUnembeddable(_ sourceType: SemanticSourceType, _ sourceId: String, stamp: String) -> Bool {
+        unembeddableLock.lock()
+        defer { unembeddableLock.unlock() }
+        return unembeddable["\(sourceType.rawValue):\(sourceId)"] == stamp
+    }
+
+    private func markUnembeddable(_ sourceType: SemanticSourceType, _ sourceId: String, stamp: String) {
+        unembeddableLock.lock()
+        unembeddable["\(sourceType.rawValue):\(sourceId)"] = stamp
+        unembeddableLock.unlock()
     }
 
     // MARK: - Sources

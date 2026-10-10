@@ -3,8 +3,8 @@ import SwiftUI
 import Translation
 
 /// What the Translate window was opened for.
-struct ScribeTranslationRequest: Codable, Hashable, Identifiable {
-    enum Source: String, Codable, Hashable {
+struct ScribeTranslationRequest: Codable, Hashable, Identifiable, Sendable {
+    enum Source: String, Codable, Hashable, Sendable {
         case note
         case transcript
     }
