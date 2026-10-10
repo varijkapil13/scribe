@@ -22,6 +22,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case about
     case privacy
     case backup
+    case documents
 
     var id: String { rawValue }
 
@@ -42,6 +43,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .about:        return "About"
         case .privacy:      return "Privacy"
         case .backup:       return "Backup"
+        case .documents:    return "Documents"
         }
     }
 
@@ -62,6 +64,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .about:        return "info.circle"
         case .privacy:      return "hand.raised"
         case .backup:       return "externaldrive.badge.timemachine"
+        case .documents:    return "doc.on.doc"
         }
     }
 }
@@ -115,6 +118,7 @@ struct SettingsPaneView: View {
         case .about:        AboutSettingsPane()
         case .privacy:      PrivacySettingsPane()
         case .backup:       BackupSettingsPane()
+        case .documents:    DocumentsSettingsPane()
         }
     }
 }
@@ -156,7 +160,7 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
         case .recording:    return [.calendar]
         case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
         case .dictation:    return [.dictation]
-        case .storageSync:  return [.storage, .reminders, .backup]
+        case .storageSync:  return [.storage, .reminders, .backup, .documents]
         case .shortcuts:    return [.shortcuts, .links]
         case .mcp:          return [.mcp]
         case .about:        return [.about]

@@ -38,6 +38,8 @@ enum NoteAIEdit: Sendable, Equatable {
 enum NoteAIEditWriter {
     static func apply(_ edit: NoteAIEdit, toNoteId noteId: String, noteStore: NoteStore = .shared) throws {
         guard var note = try noteStore.fetchNote(id: noteId) else { return }
+        // Never write into a locked note's ciphertext.
+        guard !LockedNoteEnvelope.isLocked(note.body) else { return }
         let updated = edit.apply(to: note.body)
         if updated != note.body {
             note.body = updated

@@ -199,6 +199,8 @@ struct NoteAIFeaturesModifier: ViewModifier {
             Label(controller.busyLabel ?? "Notes AI",
                   systemImage: controller.isBusy ? "hourglass" : "sparkles")
         }
+        // A locked note's body is ciphertext until it is unlocked.
+        .disabled(vm.lockPhase == .locked)
         .help(controller.busyLabel ?? "Enhance your notes with the recording, or run a recipe")
     }
 }

@@ -700,6 +700,7 @@ final class DatabaseManager: @unchecked Sendable {
         }
 
         registerRemindersLinkMigration(in: &migrator)
+        registerAttachmentTextMigration(in: &migrator)
 
         return migrator
     }

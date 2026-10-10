@@ -97,6 +97,8 @@ struct Note: Codable, Identifiable, Equatable, Hashable {
     /// no full AST parse, just collapse whitespace and remove the most
     /// glaring decoration characters so the preview is readable.
     static func makeExcerpt(from body: String, limit: Int = 200) -> String? {
+        // A locked note's body is ciphertext: never preview it.
+        if LockedNoteEnvelope.isLocked(body) { return LockedNoteEnvelope.excerptPlaceholder }
         let cleaned = body
             .replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: .newlines)

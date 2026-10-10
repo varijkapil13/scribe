@@ -126,6 +126,8 @@ struct MeetingRetriever: Sendable {
         }
     }
 
+    /// Locked notes (excerpt = `LockedNoteEnvelope.excerptPlaceholder`) never
+    /// reach Ask / the MCP server, not even by their clear title.
     private static func noteCandidates(_ db: Database, ftsQuery: String) throws -> [RetrievedSnippet] {
         let rows = try Row.fetchAll(db, sql: """
             SELECT n.id AS noteId, n.title AS noteTitle, n.notebookId AS notebookId,
@@ -134,9 +136,10 @@ struct MeetingRetriever: Sendable {
             FROM notes_fts
             JOIN notes n ON n.id = notes_fts.noteId
             WHERE notes_fts MATCH ?
+              AND (n.bodyExcerpt IS NULL OR n.bodyExcerpt != ?)
             ORDER BY bm25(notes_fts)
             LIMIT 60
-            """, arguments: [ftsQuery])
+            """, arguments: [ftsQuery, LockedNoteEnvelope.excerptPlaceholder])
         return rows.compactMap { row -> RetrievedSnippet? in
             let noteId: String = row["noteId"]
             let title: String = (row["noteTitle"] as String?) ?? ""

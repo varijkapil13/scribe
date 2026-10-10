@@ -178,6 +178,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             ScribeAutoBackupScheduler.shared.start()
         }
 
+        // Documents: background OCR of attachments + locked-note re-locking.
+        if !AppLaunchEnvironment.isUITesting {
+            DocumentsServices.start()
+        }
+
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
         // failing the first time the user hits Record.

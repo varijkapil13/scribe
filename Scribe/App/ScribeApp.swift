@@ -25,6 +25,7 @@ struct ScribeApp: App {
         }
         .commands { scribeCommands }
         .commands { ScribeMenuCommands() }
+        .commands { DocumentsMenuCommands() }
 
         // Standalone note windows (File › Open in New Window, ⌥⌘O). Restored
         // with their note on relaunch.
