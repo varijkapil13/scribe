@@ -251,6 +251,40 @@ final class TaskPlanningStoreTests: XCTestCase {
         XCTAssertEqual(local.updatedAt, Date(timeIntervalSince1970: 2))
     }
 
+    func testSyncUpsertKeepsLocalOnlyAreaAndHeadingLinks() throws {
+        // Another device never knew this Mac's area / heading, so its newer
+        // edit arrives with no links — that must not wipe them here.
+        let area = try store.createArea(name: "Home")
+        let loose = try store.createTask(title: "Loose", areaId: area.id)
+        var remoteLoose = loose
+        remoteLoose.title = "Edited elsewhere"
+        remoteLoose.areaId = nil
+        remoteLoose.updatedAt = loose.updatedAt.addingTimeInterval(60)
+        try store.upsertFromSync(remoteLoose)
+        let readLoose = try XCTUnwrap(store.fetchTask(id: loose.id))
+        XCTAssertEqual(readLoose.title, "Edited elsewhere")
+        XCTAssertEqual(readLoose.areaId, area.id)
+
+        let project = try store.createProject(name: "P")
+        let heading = try store.createHeading(in: project.id, title: "Phase 1")
+        let filed = try store.createTask(title: "Filed", projectId: project.id, headingId: heading.id)
+        var remoteFiled = filed
+        remoteFiled.headingId = "unknown-heading"
+        remoteFiled.updatedAt = filed.updatedAt.addingTimeInterval(60)
+        try store.upsertFromSync(remoteFiled)
+        XCTAssertEqual(try XCTUnwrap(store.fetchTask(id: filed.id)).headingId, heading.id)
+
+        // Moved to another project remotely: the old project's heading no
+        // longer applies.
+        let other = try store.createProject(name: "Q")
+        var moved = remoteFiled
+        moved.projectId = other.id
+        moved.headingId = nil
+        moved.updatedAt = remoteFiled.updatedAt.addingTimeInterval(60)
+        try store.upsertFromSync(moved)
+        XCTAssertNil(try XCTUnwrap(store.fetchTask(id: filed.id)).headingId)
+    }
+
     // MARK: - SQL ⇄ TaskPlanningRules agreement
 
     func testSQLFiltersMatchPlanningRules() throws {

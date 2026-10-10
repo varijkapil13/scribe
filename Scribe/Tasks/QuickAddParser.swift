@@ -226,9 +226,22 @@ enum QuickAddParser {
 
         // A recurring task needs a due date: default to the rule's first
         // occurrence on or after the start date (or today).
-        if let rule = planning.recurrence, dueAt == nil {
-            let from = planning.startAt ?? calendar.startOfDay(for: now)
-            dueAt = RecurrenceEngine.firstOccurrence(onOrAfter: from, rule: rule, calendar: calendar)
+        if let rule = planning.recurrence {
+            if let detected = dueAt {
+                // "every monday 9am": the detector only saw "9am" (today), so
+                // keep its time but move to the first day fitting the pattern.
+                let firstDay = RecurrenceEngine.firstOccurrence(onOrAfter: detected, rule: rule, calendar: calendar)
+                if !calendar.isDate(firstDay, inSameDayAs: detected) {
+                    let time = calendar.dateComponents([.hour, .minute, .second], from: detected)
+                    dueAt = calendar.date(bySettingHour: time.hour ?? 0,
+                                          minute: time.minute ?? 0,
+                                          second: time.second ?? 0,
+                                          of: firstDay) ?? firstDay
+                }
+            } else {
+                let from = planning.startAt ?? calendar.startOfDay(for: now)
+                dueAt = RecurrenceEngine.firstOccurrence(onOrAfter: from, rule: rule, calendar: calendar)
+            }
         }
 
         return ParsedQuickAdd(

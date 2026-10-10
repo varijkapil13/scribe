@@ -295,6 +295,14 @@ final class TaskStore {
                 sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
                 arguments: [projectId]) ?? 0
 
+            // A heading only lives inside its own project.
+            var validHeadingId: String? = nil
+            if let headingId, let projectId,
+               let heading = try ProjectHeading.fetchOne(database, key: headingId),
+               heading.projectId == projectId {
+                validHeadingId = heading.id
+            }
+
             let now = Date()
             let task = TodoTask(
                 title: title,
@@ -314,7 +322,7 @@ final class TaskStore {
                 estimatedMinutes: estimatedMinutes.map { max(0, $0) },
                 // A task inside a project inherits the project's area.
                 areaId: projectId == nil ? areaId : nil,
-                headingId: projectId == nil ? nil : headingId
+                headingId: validHeadingId
             )
 
             try task.insert(database)
@@ -820,15 +828,39 @@ final class TaskStore {
     /// Areas and headings are local-only (not synced), so an area / heading id
     /// written on another device may not exist here; those links are dropped
     /// rather than letting the foreign key abort the whole sync write.
+    ///
+    /// Because those ids only resolve on the device that created them, a
+    /// remote record without a usable link (written by a device that never
+    /// knew the area / heading) must not wipe the local one: the existing
+    /// local link is kept when it's still consistent with the incoming
+    /// `projectId` (an area only for project-less tasks; a heading only inside
+    /// its own project).
     func upsertFromSync(_ task: TodoTask) throws {
         try db.write { database in
             var task = task
+            let existing = try TodoTask.fetchOne(database, key: task.id)
+
             if let areaId = task.areaId, try TaskArea.fetchOne(database, key: areaId) == nil {
                 task.areaId = nil
             }
-            if let headingId = task.headingId, try ProjectHeading.fetchOne(database, key: headingId) == nil {
-                task.headingId = nil
+            if task.projectId != nil { task.areaId = nil }
+            if task.areaId == nil, task.projectId == nil,
+               let localArea = existing?.areaId,
+               try TaskArea.fetchOne(database, key: localArea) != nil {
+                task.areaId = localArea
             }
+
+            if let headingId = task.headingId {
+                let heading = try ProjectHeading.fetchOne(database, key: headingId)
+                if heading == nil || heading?.projectId != task.projectId { task.headingId = nil }
+            }
+            if task.headingId == nil, let projectId = task.projectId,
+               let localHeading = existing?.headingId,
+               let heading = try ProjectHeading.fetchOne(database, key: localHeading),
+               heading.projectId == projectId {
+                task.headingId = localHeading
+            }
+
             try task.save(database)
             try database.execute(sql: "DELETE FROM task_tombstones WHERE id = ?", arguments: [task.id])
         }
