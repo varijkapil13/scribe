@@ -658,6 +658,8 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        registerRemindersLinkMigration(in: &migrator)
+
         return migrator
     }
 
