@@ -96,6 +96,14 @@ enum DesignTokens {
     // MARK: - Semantic colors
 
     enum Palette {
+        /// Brand / chrome accent. Resolves to the `AccentColor` asset (a muted
+        /// ink indigo with a lighter dark-mode variant; it is also the
+        /// project's global accent via ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME).
+        /// macOS only uses the app's accent when the user's system accent is
+        /// "Multicolor" — any accent the user picked wins, which is the point.
+        /// Never hardcode a brand colour; reference this (or `.accentColor`).
+        static let accent: Color = .accentColor
+
         /// Accent bar / chip for the user's own audio.
         static let speakerYou: Color = .blue
         /// Accent bar / chip for remote participants (system audio).
@@ -280,8 +288,16 @@ private struct GlassBackgroundModifier<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.background(style, in: shape)
+        // Floating HUD chrome is Liquid Glass (see GlassStyles.swift); the
+        // other roles keep the system bar/sidebar materials.
+        if role == .hud && !ScribeGlassPolicy.prefersOpaque(reduceTransparency: reduceTransparency,
+                                                            increasedContrast: contrast == .increased) {
+            content.scribeLiquidGlass(in: shape, tint: nil, interactive: false)
+        } else {
+            content.background(style, in: shape)
+        }
     }
 
     /// Collapses glass to a solid fill when the user needs legibility
@@ -408,7 +424,7 @@ extension View {
 // MARK: - Phase 0: Theme accent rail (chrome-only)
 
 private struct ScribeAccentKey: EnvironmentKey {
-    static let defaultValue: Color = .accentColor
+    static let defaultValue: Color = DesignTokens.Palette.accent
 }
 
 extension EnvironmentValues {

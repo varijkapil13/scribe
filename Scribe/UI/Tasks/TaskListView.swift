@@ -576,8 +576,8 @@ struct TaskListView: View {
             .accessibilityLabel("Quick-add syntax help")
             .popoverTip(ScribeTips.taskQuickAdd)
             .popover(isPresented: $showQuickAddSyntaxHelp, arrowEdge: .bottom) {
+                // No custom backing: the system popover is already glass.
                 quickAddSyntaxHelp
-                    .scribeGlass(.hud, in: Rectangle())
             }
             .help("Quick-add syntax")
 
@@ -598,7 +598,6 @@ struct TaskListView: View {
             .popover(isPresented: $showQuickAddDatePicker, arrowEdge: .bottom) {
                 InlineDatePickerView(selectedDate: $viewModel.quickAddDueDate)
                     .padding(DesignTokens.Spacing.xs)
-                    .scribeGlass(.hud, in: Rectangle())
             }
             .help(viewModel.quickAddDueDate.map {
                 "Due: \($0.formatted(date: .abbreviated, time: .omitted))"

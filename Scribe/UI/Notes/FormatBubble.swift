@@ -5,15 +5,13 @@ import SwiftUI
 /// non-empty selection and offers inline formatting + a "turn into" block menu,
 /// all routed through the existing `EditorActions` verbs. It never becomes
 /// first responder (so the text view keeps its selection) — buttons act and the
-/// caret stays put. Backed by a translucent material that collapses to a solid
+/// caret stays put. Backed by Liquid Glass that collapses to a solid
 /// surface under Reduce Transparency / Increase Contrast; its entrance is gated
 /// on Reduce Motion.
 struct FormatBubble: View {
     let actions: EditorActions
 
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         HStack(spacing: 2) {
@@ -52,13 +50,8 @@ struct FormatBubble: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.xs)
         .padding(.vertical, 3)
-        .background(bubbleBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-        .shadow(color: .black.opacity(reduceTransparency ? 0 : 0.20), radius: 10, y: 4)
+        // Liquid Glass; opaque under Reduce Transparency / Increase Contrast.
+        .scribeFloatingGlass(in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         .transition(reduceMotion
                     ? .opacity
                     : .opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
@@ -82,20 +75,4 @@ struct FormatBubble: View {
         .accessibilityHint(hint)
     }
 
-    // MARK: - Styling (a11y-aware)
-
-    @ViewBuilder
-    private var bubbleBackground: some View {
-        if reduceTransparency || contrast == .increased {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(DesignTokens.Palette.surfaceElevated)
-        } else {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(.regularMaterial)
-        }
-    }
-
-    private var borderColor: Color {
-        DesignTokens.Palette.cardBorder(contrast)
-    }
 }

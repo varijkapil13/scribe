@@ -122,13 +122,9 @@ struct LiveControllerOverlay: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.lg)
         .padding(.vertical, DesignTokens.Spacing.sm)
-        .scribeGlass(.hud, in: Capsule())
-        .overlay(
-            Capsule().strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(DesignTokens.Shadow.medium.opacity),
-                radius: DesignTokens.Shadow.medium.radius,
-                y: DesignTokens.Shadow.medium.y)
+        // Liquid Glass (interactive: the capsule is a control surface);
+        // opaque under Reduce Transparency / Increase Contrast.
+        .scribeFloatingGlass(in: Capsule(), interactive: true)
         .onHover { hovering in
             isHovering = hovering
             if hovering { bumpActivity() }

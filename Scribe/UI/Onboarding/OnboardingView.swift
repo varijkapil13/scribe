@@ -188,6 +188,7 @@ struct OnboardingView: View {
                 Text("Dictation into any app has its own shortcut in Settings → Dictation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                MenuBarHiddenHint()
             }
         }
     }

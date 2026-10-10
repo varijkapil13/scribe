@@ -43,15 +43,13 @@ struct ErrorBanner: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.lg)
         .padding(.vertical, DesignTokens.Spacing.md)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(DesignTokens.Palette.surfaceElevated)
-        )
+        // Floating toast → Liquid Glass (opaque under Reduce Transparency /
+        // Increase Contrast); the tinted hairline keeps the semantic colour.
+        .scribeFloatingGlass(in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .strokeBorder(DesignTokens.Palette.recording.opacity(0.4), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
         .padding(DesignTokens.Spacing.md)
         .transition(
             .move(edge: .top)
@@ -97,15 +95,13 @@ struct SuccessBanner: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.lg)
         .padding(.vertical, DesignTokens.Spacing.md)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(DesignTokens.Palette.surfaceElevated)
-        )
+        // Floating toast → Liquid Glass (opaque under Reduce Transparency /
+        // Increase Contrast); the tinted hairline keeps the semantic colour.
+        .scribeFloatingGlass(in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .strokeBorder(Color.green.opacity(0.4), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
         .padding(DesignTokens.Spacing.md)
         .transition(
             .move(edge: .top)
