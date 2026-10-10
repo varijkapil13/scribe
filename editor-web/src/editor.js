@@ -68,6 +68,7 @@ import {
 } from "./attachments.js";
 import { imageExtensions } from "./images.js";
 import { notePowerExtensions } from "./notepower.js";
+import { addTouchTap } from "./touch.js";
 
 // ── Lazy KaTeX ───────────────────────────────────────────────────────────────
 // KaTeX (the JS engine ~0.6 MB plus its inlined-font CSS) is LAZY-LOADED via a
@@ -253,6 +254,7 @@ class TaskWidget extends WidgetType {
       const insert = this.checked ? " " : "x";
       view.dispatch({ changes: { from: this.pos, to: this.pos + 1, insert } });
     });
+    addTouchTap(box);
     return box;
   }
   ignoreEvent() {
@@ -287,6 +289,7 @@ class WikiLinkWidget extends WidgetType {
       e.stopPropagation();
       postToNative({ type: "wikilink", target: this.target });
     });
+    addTouchTap(a);
     return a;
   }
   ignoreEvent() {
@@ -896,6 +899,7 @@ const slashMenu = (() => {
         e.preventDefault();
         choose(i);
       });
+      addTouchTap(item);
       el.appendChild(item);
     });
     el.style.display = "block";

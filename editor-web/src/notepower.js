@@ -20,6 +20,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view
 import { RangeSetBuilder, StateEffect } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { postToNative, registerCommand } from "./bridge.js";
+import { addTouchTap } from "./touch.js";
 
 // ── Embed cache ─────────────────────────────────────────────────────────────
 
@@ -214,6 +215,7 @@ class EmbedWidget extends WidgetType {
       e.stopPropagation();
       postToNative({ type: "wikilink", target: this.target });
     });
+    addTouchTap(title);
     header.appendChild(title);
     wrap.appendChild(header);
     wrap.setAttribute("aria-label", `Embedded note ${this.target}`);

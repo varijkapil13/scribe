@@ -1,5 +1,10 @@
 // Scribe/UI/Notes/EditorCommandBridge.swift
+//
+// Portable: also compiled into the iOS target, where the keyboard format bar
+// (ScribeiOS/Notes/NoteFormatBar.swift) drives the editor through it.
+#if os(macOS)
 import AppKit
+#endif
 import SwiftUI
 import WebKit
 
@@ -22,6 +27,11 @@ enum EditorCommand: Equatable, Hashable, Sendable {
     case numberedList
     case checklist
     case quote
+    /// `[[selection]]` — a wiki link (caret inside when nothing is selected,
+    /// which opens the `[[` note-title completion).
+    case wikiLink
+    case undo
+    case redo
     case find
     case findAndReplace
     case findNext
@@ -40,6 +50,9 @@ enum EditorCommand: Equatable, Hashable, Sendable {
         case .numberedList:   return "orderedList"
         case .checklist:      return "checklist"
         case .quote:          return "blockquote"
+        case .wikiLink:       return "wikiLink"
+        case .undo:           return "undo"
+        case .redo:           return "redo"
         case .find:           return "find"
         case .findAndReplace: return "replace"
         case .findNext:       return "findNext"
@@ -85,9 +98,11 @@ final class EditorCommandBridge {
     /// first so the edit lands where the user expects and the caret shows.
     func perform(_ command: EditorCommand) {
         guard let webView else { return }
+        #if os(macOS)
         if let window = webView.window, window.firstResponder !== webView {
             window.makeFirstResponder(webView)
         }
+        #endif
         webView.evaluateJavaScript(command.javaScript, completionHandler: nil)
     }
 }

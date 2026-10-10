@@ -1,10 +1,11 @@
 // Scribe/Documents/Locking/LockedNoteKeychain.swift
 //
 // The locked-notes key: one random 256-bit AES key per Mac, kept in the
-// login Keychain (service `com.varij.scribe.locked-notes`), never written
-// anywhere else. Reading it is gated by LocalAuthentication
-// (`.deviceOwnerAuthentication`: Touch ID, Apple Watch or the Mac's login
-// password) in `LockedNoteSession`.
+// login Keychain (service `com.varij.scribe.locked-notes`), plus a
+// synchronizable copy in iCloud Keychain when available (see
+// LockedNoteSyncedKeyStore) so the same notes unlock on iPhone / iPad.
+// Reading it is gated by LocalAuthentication (`.deviceOwnerAuthentication`:
+// Touch ID, Apple Watch or the Mac's login password) in `LockedNoteSession`.
 //
 // Why not a `.userPresence` access-control item: those live in the
 // data-protection keychain, which needs a keychain-access-group entitlement
@@ -107,19 +108,43 @@ enum LockedNoteKeychain {
     /// locked note unreadable).
     nonisolated static func createKey() throws -> SymmetricKey {
         let key = SymmetricKey(size: .bits256)
+        try storeKey(key)
+        return key
+    }
+
+    /// Stores `key` as this Mac's local item. Only called when `loadKey()`
+    /// found none.
+    private nonisolated static func storeKey(_ key: SymmetricKey) throws {
         var add = baseQuery()
         add[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
         add[kSecAttrLabel as String] = "Scribe locked notes key"
         add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw LockedNoteKeychainError.keychain(status) }
-        return key
     }
 
     /// The stored key, creating one first when `create` is true.
+    ///
+    /// Cross-device: this Mac's key is also published to iCloud Keychain
+    /// (`LockedNoteSyncedKeyStore`, best effort) so notes locked here open on
+    /// iPhone / iPad; a Mac without its own key yet adopts one synced from
+    /// another device. Both are no-ops when iCloud Keychain isn't available.
     nonisolated static func key(creatingIfNeeded create: Bool) throws -> SymmetricKey? {
-        if let existing = try loadKey() { return existing }
+        if let existing = try loadKey() {
+            LockedNoteSyncedKeyStore.publish(existing)
+            return existing
+        }
+        if let synced = LockedNoteKeySelection.preferredSealingKey(LockedNoteSyncedKeyStore.loadAll()) {
+            // Keep a local copy too, so notes sealed with it still open here
+            // if iCloud Keychain is later turned off on this Mac.
+            do { try storeKey(synced) } catch {
+                Log.storage.error("LockedNoteKeychain: couldn't keep a local copy of the synced key: \(error.localizedDescription, privacy: .public)")
+            }
+            return synced
+        }
         guard create else { return nil }
-        return try createKey()
+        let key = try createKey()
+        LockedNoteSyncedKeyStore.publish(key)
+        return key
     }
 }
