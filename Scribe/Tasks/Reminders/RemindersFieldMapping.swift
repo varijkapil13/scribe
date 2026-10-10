@@ -68,6 +68,10 @@ enum RemindersFieldMapping {
     static func normalizedRecurrence(_ raw: String?) -> (supported: Bool, rule: String?) {
         guard let raw, !raw.trimmingCharacters(in: .whitespaces).isEmpty else { return (true, nil) }
         guard let parsed = try? RecurrenceRule.parse(raw) else { return (false, nil) }
+        // Rules using the extended parts (YEARLY, BYMONTHDAY, BYSETPOS,
+        // UNTIL, COUNT, after-completion) have no simple Reminders mapping:
+        // leave them alone rather than canonicalise them into a lossy form.
+        guard !Self.usesExtendedRecurrence(parsed) else { return (false, nil) }
         let order = RecurrenceRule.Weekday.allCases
         let sortedDays = parsed.byDay.sorted {
             (order.firstIndex(of: $0) ?? 0) < (order.firstIndex(of: $1) ?? 0)
@@ -79,6 +83,13 @@ enum RemindersFieldMapping {
             byOrdinalWeekday: parsed.byOrdinalWeekday
         )
         return (true, canonical.rruleString)
+    }
+
+    /// Whether `rule` uses recurrence parts beyond the simple daily / weekly /
+    /// monthly forms this mapping round-trips.
+    static func usesExtendedRecurrence(_ rule: RecurrenceRule) -> Bool {
+        rule.frequency == .yearly || !rule.byMonthDay.isEmpty || !rule.bySetPos.isEmpty
+            || rule.until != nil || rule.count != nil || rule.fromCompletion
     }
 
     // MARK: Matching
@@ -222,12 +233,14 @@ struct RemindersRecurrenceDescriptor: Equatable, Sendable {
 
     /// Builds the descriptor for a Scribe RRULE (nil when it doesn't parse).
     init?(rrule: String) {
-        guard let rule = try? RecurrenceRule.parse(rrule) else { return nil }
+        guard let rule = try? RecurrenceRule.parse(rrule),
+              !RemindersFieldMapping.usesExtendedRecurrence(rule) else { return nil }
         let frequency: Frequency
         switch rule.frequency {
         case .daily:   frequency = .daily
         case .weekly:  frequency = .weekly
         case .monthly: frequency = .monthly
+        case .yearly:  return nil
         }
         var days: [DayOfWeek] = []
         if let ordinal = rule.byOrdinalWeekday {
