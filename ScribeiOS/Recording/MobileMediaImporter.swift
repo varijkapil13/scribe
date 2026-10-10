@@ -37,8 +37,8 @@ final class MobileMediaImporter {
 
     var isImporting: Bool { progress != nil }
 
-    @ObservationIgnored private let transcriptStore: TranscriptStore
-    @ObservationIgnored private let noteStore: NoteStore
+    private let transcriptStore: TranscriptStore
+    private let noteStore: NoteStore
     @ObservationIgnored private var queue: [URL] = []
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var job: MediaImportTranscriptionJob?

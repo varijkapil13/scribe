@@ -92,15 +92,15 @@ final class MobileRecordingController {
 
     // MARK: - Collaborators
 
-    @ObservationIgnored private let transcriptStore: TranscriptStore
-    @ObservationIgnored private let noteStore: NoteStore
-    @ObservationIgnored private let taskStore: TaskStore
-    @ObservationIgnored private let bookmarkStore: SessionBookmarkStore
-    @ObservationIgnored private let audioSession = MobileAudioSessionCoordinator()
-    @ObservationIgnored private let capture = MobileMicrophoneCapture()
-    @ObservationIgnored private let gate = MobileCaptureGate()
-    @ObservationIgnored private let levelBox = MobileLevelBox()
-    @ObservationIgnored private let liveActivity = RecordingLiveActivityController()
+    private let transcriptStore: TranscriptStore
+    private let noteStore: NoteStore
+    private let taskStore: TaskStore
+    private let bookmarkStore: SessionBookmarkStore
+    private let audioSession = MobileAudioSessionCoordinator()
+    private let capture = MobileMicrophoneCapture()
+    private let gate = MobileCaptureGate()
+    private let levelBox = MobileLevelBox()
+    private let liveActivity = RecordingLiveActivityController()
 
     // MARK: - Session state
 

@@ -144,8 +144,11 @@ final class BackgroundTaskToken {
     private var identifier: UIBackgroundTaskIdentifier = .invalid
 
     init(name: String) {
+        // UIKit calls the expiration handler on the main thread. Asserting
+        // that explicitly compiles whether the SDK types the handler as
+        // `@MainActor @Sendable` or as a plain `@Sendable` closure.
         identifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
-            self?.end()
+            MainActor.assumeIsolated { self?.end() }
         }
     }
 
