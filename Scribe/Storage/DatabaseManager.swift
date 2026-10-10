@@ -701,6 +701,23 @@ final class DatabaseManager: @unchecked Sendable {
 
         registerRemindersLinkMigration(in: &migrator)
 
+        // Meeting copilot: moments the user bookmarked during a recording
+        // (⌃⌥M / "Mark moment"). Offset is milliseconds into the session, on
+        // the same timeline as `segments.startMs`. Additive, own table.
+        migrator.registerMigration("v22_session_bookmarks") { db in
+            try db.create(table: "session_bookmarks") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("sessionId", .text).notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("offsetMs", .integer).notNull()
+                t.column("label", .text)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(index: "session_bookmarks_sessionId_idx",
+                          on: "session_bookmarks",
+                          columns: ["sessionId", "offsetMs"])
+        }
+
         return migrator
     }
 

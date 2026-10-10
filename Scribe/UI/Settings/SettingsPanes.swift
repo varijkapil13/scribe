@@ -18,6 +18,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case shortcuts
     case links
     case templates
+    case copilot
     case mcp
     case about
     case privacy
@@ -38,6 +39,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .shortcuts:    return "Shortcuts"
         case .links:        return "Links & Handoff"
         case .templates:    return "Templates"
+        case .copilot:      return "Meeting Copilot"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
         case .privacy:      return "Privacy"
@@ -58,6 +60,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .shortcuts:    return "keyboard"
         case .links:        return "link"
         case .templates:    return "doc.text.magnifyingglass"
+        case .copilot:      return "person.wave.2"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
         case .privacy:      return "hand.raised"
@@ -111,6 +114,7 @@ struct SettingsPaneView: View {
         case .shortcuts:    ShortcutsSettingsPane()
         case .links:        LinksSettingsPane()
         case .templates:    TemplatesSettingsPane()
+        case .copilot:      CopilotSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
         case .privacy:      PrivacySettingsPane()
@@ -154,7 +158,7 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
         switch self {
         case .general:      return [.general, .privacy]
         case .recording:    return [.calendar]
-        case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
+        case .intelligence: return [.intelligence, .templates, .copilot, .vocabulary, .hooks]
         case .dictation:    return [.dictation]
         case .storageSync:  return [.storage, .reminders, .backup]
         case .shortcuts:    return [.shortcuts, .links]
@@ -827,7 +831,8 @@ private struct ShortcutsSettingsPane: View {
                 KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
                 KeyboardShortcuts.Recorder("Dictate:", name: .dictation)
                 KeyboardShortcuts.Recorder("Quick Capture:", name: .quickCapture)
-                Text("Press these shortcuts from any app to start or stop recording, dictate into the focused app, or jot down a note or task, without opening Scribe.")
+                KeyboardShortcuts.Recorder("Mark Moment:", name: .markMoment)
+                Text("Press these shortcuts from any app to start or stop recording, dictate into the focused app, jot down a note or task, or mark a moment in the current recording, without opening Scribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
