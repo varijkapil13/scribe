@@ -164,6 +164,8 @@ struct MainWindowView: View {
             showUniversalSearch.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoBack)) { _ in nav.goBack() }
+        // scribe:// links, opened files and Handoff (ScribeEntryRouter).
+        .modifier(ScribeEntryPointsModifier(nav: nav, showCommandBar: $showUniversalSearch))
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoForward)) { _ in nav.goForward() }
         .onReceive(NotificationCenter.default.publisher(for: .scribeToggleSidebar)) { _ in
             withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {

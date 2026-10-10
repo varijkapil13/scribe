@@ -99,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         registerKeyboardShortcuts()
         observeMainWindowClose()
         observeSpeechErrors()
+        // scribe:// links, opened Markdown files, Dock + Services menus.
+        installEntryPoints()
 
         // Start MCP server if the user had it enabled in a previous session.
         if UserDefaults.standard.bool(forKey: "mcpEnabled") {

@@ -103,7 +103,14 @@ struct UniversalSearchView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
         .accessibilityElement(children: .contain)
-        .onAppear { fieldFocused = true }
+        .onAppear {
+            fieldFocused = true
+            if let query = ScribeEntryRouter.shared.takePendingSearchQuery() { vm.query = query }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeOpenCommandBar)) { _ in
+            // scribe://search while the bar is already open.
+            if let query = ScribeEntryRouter.shared.takePendingSearchQuery() { vm.query = query }
+        }
         .onChange(of: vm.query) { _, _ in
             vm.scheduleSearch()
             selectedIndex = 0
