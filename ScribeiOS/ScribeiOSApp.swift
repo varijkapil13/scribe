@@ -11,6 +11,7 @@ import SwiftUI
 struct ScribeiOSApp: App {
     @UIApplicationDelegateAdaptor(ScribeiOSAppDelegate.self) private var appDelegate
 
+    init() { TasksIOSBootstrap.start() } // ios-tasks: reminder actions, badge, Reminders sync
     var body: some Scene {
         // Main window. On iPad every new window (Stage Manager, Split View,
         // App Exposé "+") is another instance with its own tab selection.

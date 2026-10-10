@@ -68,6 +68,10 @@ final class TaskSyncCoordinator {
     private let remote: RemoteTaskSyncing
     private let cursor: SyncCursorStoring
 
+    /// Remote tasks the last pull skipped because their project isn't on this
+    /// device (projects don't sync yet). Surfaced by the iOS sync status.
+    private(set) var skippedForMissingProject = 0
+
     init(local: LocalTaskSyncing,
          remote: RemoteTaskSyncing,
          cursor: SyncCursorStoring = UserDefaultsSyncCursorStore()) {
@@ -89,10 +93,19 @@ final class TaskSyncCoordinator {
 
     /// Full round-trip. No-op unless the user opted into iCLoud sync.
     func sync() async throws {
-        guard CloudKitSyncService.isEnabled else { return }
+        _ = try await syncReportingSkipped()
+    }
+
+    /// `sync()`, returning how many remote tasks were skipped because their
+    /// project isn't on this device (a Sendable result, so callers needn't
+    /// touch the coordinator again after the round).
+    @discardableResult
+    func syncReportingSkipped() async throws -> Int {
+        guard CloudKitSyncService.isEnabled else { return 0 }
         try await remote.ensureZone()
         try await pullRemoteChanges()
         try await pushLocalChanges()
+        return skippedForMissingProject
     }
 
     /// Applies remote changes with per-record last-writer-wins, then advances
@@ -101,11 +114,21 @@ final class TaskSyncCoordinator {
         let result = try await remote.pullChanges(since: cursor.changeToken)
         let localSides = try local.localTaskSides()
 
+        skippedForMissingProject = 0
         for task in result.changed {
             let remoteSide = SyncMergePolicy.Side(updatedAt: task.updatedAt, isDeleted: false)
             if SyncMergePolicy.resolve(local: localSides[task.id], remote: remoteSide) == .applyRemoteUpsert {
-                try local.upsertFromSync(task)
+                do {
+                    try local.upsertFromSync(task)
+                } catch TaskStoreError.syncedTaskProjectMissing(_) {
+                    // One task in an unknown project must not abort the
+                    // round (every other change would be stuck behind it).
+                    skippedForMissingProject += 1
+                }
             }
+        }
+        if skippedForMissingProject > 0 {
+            Log.storage.info("Task sync skipped \(self.skippedForMissingProject, privacy: .public) task(s) in projects missing on this device.")
         }
         // CloudKit deletions carry no timestamp, so they're treated as
         // authoritative for the zone; a locally-newer edit re-uploads on the

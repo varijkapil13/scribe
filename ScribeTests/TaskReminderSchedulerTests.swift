@@ -172,6 +172,25 @@ final class TaskReminderSchedulerTests: XCTestCase {
         // A new request was added for the snoozed time.
         XCTAssertEqual(fake.added.last?.identifier, TaskReminderScheduler.identifier(for: task.id))
     }
+
+    @MainActor
+    func testDefaultTapOpensTaskOnlyWhenHandlerSet() async throws {
+        let manager = try DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: manager)
+        let task = try store.createTask(title: "Reply", remindAt: Date().addingTimeInterval(60))
+        let fake = FakeNotificationCenter(grantAuth: true)
+        let scheduler = TaskReminderScheduler(center: fake, taskStore: store)
+
+        // No handler (the Mac): a plain tap changes nothing.
+        await scheduler.handle(actionId: UNNotificationDefaultActionIdentifier, taskId: task.id)
+        XCTAssertNil(try XCTUnwrap(store.fetchTask(id: task.id)).completedAt)
+
+        let opened = OpenedTaskRecorder()
+        scheduler.openTaskHandler = { opened.ids.append($0) }
+        await scheduler.handle(actionId: UNNotificationDefaultActionIdentifier, taskId: task.id)
+        XCTAssertEqual(opened.ids, [task.id])
+        XCTAssertNil(try XCTUnwrap(store.fetchTask(id: task.id)).completedAt)
+    }
 }
 
 // MARK: - Fake adapter
@@ -200,4 +219,11 @@ private final class FakeNotificationCenter: UNUserNotificationCenterAdapter, @un
     func removePendingNotificationRequests(withIdentifiers ids: [String]) async {
         removed.append(contentsOf: ids)
     }
+}
+
+/// Main-actor box recording opened task ids (Sendable, so the main-actor
+/// handler closure can capture it).
+@MainActor
+private final class OpenedTaskRecorder {
+    var ids: [String] = []
 }

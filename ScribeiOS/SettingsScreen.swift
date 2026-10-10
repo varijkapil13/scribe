@@ -39,6 +39,7 @@ struct SettingsScreen: View {
                 // MARK: - Slot: notes (ios-notes)
 
                 // MARK: - Slot: tasks (ios-tasks)
+                Section { NavigationLink { TasksSettingsScreen() } label: { Label("Tasks", systemImage: "checklist") } }
 
                 // MARK: - Slot: recording (ios-recording)
 

@@ -245,6 +245,14 @@ targets:
       - path: Scribe/UI/Notes/Portable   # pure list / link / capture-naming logic
       - path: Scribe/Utilities/PlantUMLRenderingPreference.swift
       # --- end ios-notes ---
+      # ios-tasks: the Mac's pure board / planner / calendar-event logic, shared
+      # (not duplicated) by ScribeiOS/Tasks. All Foundation-only.
+      - path: Scribe/UI/Tasks/Board/TaskBoardModel.swift
+      - path: Scribe/UI/Tasks/Planner/TimeGridLayout.swift
+      - path: Scribe/UI/Tasks/Planner/PlannerScheduling.swift
+      - path: Scribe/UI/Tasks/Planner/PlannerMirroredEventFilter.swift
+      - path: Scribe/Calendar/CalendarEventMatcher.swift
+      - path: Scribe/Calendar/TaskCalendarMirrorPlanner.swift
     dependencies:
       - package: GRDB.swift
         product: GRDB
@@ -288,6 +296,13 @@ targets:
         # ios-notes (wave 5): camera attachments + Face ID for locked notes.
         INFOPLIST_KEY_NSCameraUsageDescription: "Scribe uses the camera to add photos and scanned documents to your notes."
         INFOPLIST_KEY_NSFaceIDUsageDescription: "Scribe uses Face ID to unlock your locked notes."
+        # ios-tasks: Apple Reminders two-way sync + calendar events in Today /
+        # the day planner. Access is only requested when the user turns these
+        # on under Settings → Tasks.
+        INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: "Scribe keeps your tasks and Apple Reminders in sync when you turn on Reminders sync."
+        INFOPLIST_KEY_NSRemindersUsageDescription: "Scribe keeps your tasks and Apple Reminders in sync when you turn on Reminders sync."
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner."
+        INFOPLIST_KEY_NSCalendarsUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner."
 
 schemes:
   Scribe:

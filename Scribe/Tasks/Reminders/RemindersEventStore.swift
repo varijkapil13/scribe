@@ -1,4 +1,4 @@
-#if os(macOS)
+#if canImport(EventKit)
 import EventKit
 import Foundation
 
