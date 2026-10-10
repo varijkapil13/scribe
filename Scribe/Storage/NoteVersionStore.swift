@@ -229,9 +229,10 @@ final class NoteVersionStore: @unchecked Sendable {
     /// A file-system-safe folder name for a note id.
     nonisolated static func folderName(forNoteId noteId: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let underscore: Unicode.Scalar = "_"
         var cleaned = ""
         for scalar in noteId.unicodeScalars {
-            cleaned.unicodeScalars.append(allowed.contains(scalar) ? scalar : Unicode.Scalar(0x5F))
+            cleaned.unicodeScalars.append(allowed.contains(scalar) ? scalar : underscore)
         }
         return cleaned.isEmpty ? "_" : cleaned
     }
