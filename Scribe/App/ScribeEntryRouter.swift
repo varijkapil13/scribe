@@ -180,8 +180,15 @@ final class ScribeEntryRouter {
             fail("Scribe can only open Markdown files.")
         case .importCopy:
             importMarkdownFile(url)
-        case .vaultNote:
-            guard let fileStore, let entry = try? fileStore.readEntry(at: fileURL) else {
+        case .vaultNote(let relativePath):
+            // Read through the store's own (unresolved) root so the entry's
+            // relative path — and so a path-derived id for a file without an
+            // `id:` line — matches what the vault indexer computes, even
+            // when the vault root sits behind a symlink.
+            guard let fileStore,
+                  let entry = try? fileStore.readEntry(
+                      at: fileStore.directory.root.appendingPathComponent(relativePath)
+                  ) else {
                 fail("Couldn't read “\(url.lastPathComponent)”.")
                 return
             }
