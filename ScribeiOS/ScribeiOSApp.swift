@@ -11,6 +11,7 @@ struct ScribeiOSApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView()
+                .scribeSystemIntegration() // ios-system: widgets, Share import, Spotlight, Quick Capture
         }
     }
 }

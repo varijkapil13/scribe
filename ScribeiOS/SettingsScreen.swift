@@ -39,6 +39,8 @@ struct SettingsScreen: View {
                     Text("Keep your tasks in sync across iPhone, iPad, and Mac. Requires being signed into iCloud. Notes sync via the iCloud Drive vault.")
                 }
 
+                ScribeiOSSystemSettingsSection() // ios-system: Siri, Spotlight & widgets
+
                 if iCloudSyncEnabled {
                     Section {
                         Button(action: runSync) {
