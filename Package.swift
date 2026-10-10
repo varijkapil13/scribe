@@ -15,6 +15,8 @@ let package = Package(
         // scripts/fetch-diarizer-models.sh pins the model revision this
         // version expects.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
+        // Auto-updates (Scribe/App/Updater.swift, guarded by canImport).
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
         // The SwiftPM target backs the logic-test job (`swift test`). The note
@@ -38,6 +40,7 @@ let package = Package(
                 "KeyboardShortcuts",
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Scribe"
         ),
