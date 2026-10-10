@@ -35,6 +35,14 @@ enum TaskCloudRecord {
         record["cancelledAt"] = task.cancelledAt.map { $0 as any CKRecordValueProtocol }
         record["sourceSessionId"] = task.sourceSessionId.map { $0 as any CKRecordValueProtocol }
         record["sourceActionItemId"] = task.sourceActionItemId.map { $0 as any CKRecordValueProtocol }
+        // v20 planning fields. Readers predating them ignore unknown keys, and
+        // `task(from:)` defaults each one when absent, so old and new clients
+        // interoperate.
+        record["startAt"] = task.startAt.map { $0 as any CKRecordValueProtocol }
+        record["scheduleBucket"] = task.scheduleBucket.rawValue
+        record["estimatedMinutes"] = task.estimatedMinutes.map { $0 as any CKRecordValueProtocol }
+        record["areaId"] = task.areaId.map { $0 as any CKRecordValueProtocol }
+        record["headingId"] = task.headingId.map { $0 as any CKRecordValueProtocol }
     }
 
     /// Reconstructs a `TodoTask` from a record. Returns `nil` if the record
@@ -62,7 +70,14 @@ enum TaskCloudRecord {
             sourceSessionId: record["sourceSessionId"] as? String,
             sourceActionItemId: record["sourceActionItemId"] as? String,
             cancelledAt: record["cancelledAt"] as? Date,
-            isPinned: ((record["isPinned"] as? Int) ?? 0) != 0
+            isPinned: ((record["isPinned"] as? Int) ?? 0) != 0,
+            // Missing (pre-v20 writer) or unknown values → defaults.
+            startAt: record["startAt"] as? Date,
+            scheduleBucket: (record["scheduleBucket"] as? String)
+                .flatMap(TaskScheduleBucket.init(rawValue:)) ?? .anytime,
+            estimatedMinutes: record["estimatedMinutes"] as? Int,
+            areaId: record["areaId"] as? String,
+            headingId: record["headingId"] as? String
         )
     }
 }

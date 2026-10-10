@@ -26,6 +26,7 @@ struct TaskDetailPanel: View {
     @State private var showDeleteConfirm = false
     @State private var showDueDatePicker = false
     @State private var showReminderPicker = false
+    @State private var showStartPicker = false
     @State private var hasReminder: Bool
     @State private var lastRemindDate: Date?
     /// Drives the fading "Saved" checkmark. Set when `viewModel.lastSavedAt`
@@ -340,8 +341,116 @@ struct TaskDetailPanel: View {
                     .controlSize(.small)
                 }
             }
+
+            planningRows
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
+    }
+
+    // MARK: - Planning (start date, when-bucket, duration, repeat)
+
+    @ViewBuilder
+    private var planningRows: some View {
+        Divider().padding(.leading, 40)
+        panelRow(icon: "moon.stars", label: "When") {
+            Picker("", selection: Binding(
+                get: { viewModel.scheduleBucket },
+                set: { viewModel.setScheduleBucket($0) }
+            )) {
+                ForEach(TaskScheduleBucket.allCases, id: \.self) { bucket in
+                    Label(bucket.title, systemImage: bucket.systemImage).tag(bucket)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: 140)
+            .accessibilityLabel("When")
+        }
+
+        Divider().padding(.leading, 40)
+        panelRow(icon: "calendar.badge.clock", label: "Start") {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Button { showStartPicker.toggle() } label: {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        Text(startDateLabel)
+                            .foregroundStyle(viewModel.startAt != nil ? .primary : .secondary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Hide this task from Today until this day")
+                .accessibilityLabel("Start date: \(startDateLabel)")
+                .popover(isPresented: $showStartPicker, arrowEdge: .trailing) {
+                    InlineDatePickerView(selectedDate: Binding(
+                        get: { viewModel.startAt },
+                        set: { newValue in
+                            viewModel.startAt = newValue.map { Calendar.current.startOfDay(for: $0) }
+                            if newValue != nil && viewModel.scheduleBucket == .someday {
+                                viewModel.scheduleBucket = .anytime
+                            }
+                        }
+                    ))
+                    .padding(DesignTokens.Spacing.xs)
+                    .scribeGlass(.hud, in: Rectangle())
+                }
+                if viewModel.startAt != nil {
+                    Button { viewModel.startAt = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear start date")
+                }
+            }
+        }
+
+        Divider().padding(.leading, 40)
+        panelRow(icon: "hourglass", label: "Duration") {
+            Menu {
+                ForEach(Self.durationPresets, id: \.self) { minutes in
+                    Button(TaskDurationFormat.short(minutes)) { viewModel.estimatedMinutes = minutes }
+                }
+                Divider()
+                Button("None") { viewModel.estimatedMinutes = nil }
+            } label: {
+                Text(viewModel.estimatedMinutes.map(TaskDurationFormat.short) ?? "None")
+                    .font(.callout)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityLabel("Duration: \(viewModel.estimatedMinutes.map(TaskDurationFormat.short) ?? "none")")
+        }
+
+        if let summary = recurrenceSummary {
+            Divider().padding(.leading, 40)
+            panelRow(icon: "repeat", label: "Repeat") {
+                Text(summary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private static let durationPresets: [Int] = [5, 10, 15, 30, 45, 60, 90, 120, 180, 240]
+
+    private var startDateLabel: String {
+        guard let date = viewModel.startAt else { return "Now" }
+        let cal = Calendar.current
+        if cal.isDateInToday(date)    { return "Today" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow" }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    /// Human summary of the task's recurrence rule (read-only in the panel).
+    private var recurrenceSummary: String? {
+        guard let raw = task.recurrenceRule else { return nil }
+        return (try? RecurrenceRule.parse(raw))?.summary ?? raw
     }
 
     // MARK: - Organization
@@ -363,7 +472,10 @@ struct TaskDetailPanel: View {
 
             Divider().padding(.leading, 40)
             panelRow(icon: "folder", label: "Project") {
-                Picker("", selection: $viewModel.projectId) {
+                Picker("", selection: Binding(
+                    get: { viewModel.projectId },
+                    set: { viewModel.selectProject($0) }
+                )) {
                     Text("Inbox").tag(String?.none)
                     ForEach(viewModel.availableProjects) { project in
                         Text(project.name).tag(Optional(project.id))
@@ -373,6 +485,46 @@ struct TaskDetailPanel: View {
                 .controlSize(.small)
                 .frame(maxWidth: 140)
                 .accessibilityLabel("Project")
+            }
+
+            if !viewModel.availableHeadings.isEmpty {
+                Divider().padding(.leading, 40)
+                panelRow(icon: "list.bullet.indent", label: "Heading") {
+                    Picker("", selection: $viewModel.headingId) {
+                        Text("None").tag(String?.none)
+                        ForEach(viewModel.availableHeadings) { heading in
+                            Text(heading.title).tag(Optional(heading.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(maxWidth: 140)
+                    .accessibilityLabel("Heading")
+                }
+            }
+
+            if !viewModel.availableAreas.isEmpty {
+                Divider().padding(.leading, 40)
+                panelRow(icon: "square.stack.3d.up", label: "Area") {
+                    if viewModel.projectId != nil {
+                        // A project task lives in its project's area.
+                        Text(areaName(viewModel.effectiveAreaId) ?? "None")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .help("Set by the task's project")
+                    } else {
+                        Picker("", selection: $viewModel.areaId) {
+                            Text("None").tag(String?.none)
+                            ForEach(viewModel.availableAreas) { area in
+                                Text(area.name).tag(Optional(area.id))
+                            }
+                        }
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .frame(maxWidth: 140)
+                        .accessibilityLabel("Area")
+                    }
+                }
             }
 
             Divider().padding(.leading, 40)
@@ -506,6 +658,11 @@ struct TaskDetailPanel: View {
         if cal.isDateInToday(date)     { return "Today" }
         if cal.isDateInTomorrow(date)  { return "Tomorrow" }
         return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func areaName(_ id: String?) -> String? {
+        guard let id else { return nil }
+        return viewModel.availableAreas.first { $0.id == id }?.name
     }
 
     private var reminderLabel: String {

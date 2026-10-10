@@ -51,6 +51,8 @@ struct TaskListView: View {
     @State private var collapsedBuckets: Set<String> = []
     /// Active sort, persisted per filter (TickTick parity).
     @State private var sortMode: TaskListViewModel.TaskSort = .smart
+    /// Add / rename heading prompt (project lists).
+    @State private var headingPrompt: HeadingPrompt?
 
     init(
         filter: TaskStore.Filter,
@@ -74,6 +76,8 @@ struct TaskListView: View {
         case .completed:       return "completed"
         case .project(let id): return "project.\(id)"
         case .tag(let tag):    return "tag.\(tag)"
+        case .someday:         return "someday"
+        case .area(let id):    return "area.\(id)"
         }
     }
 
@@ -111,6 +115,14 @@ struct TaskListView: View {
                 batchControls
             } else {
                 Spacer()
+                if case .project = filter {
+                    Button { headingPrompt = .add } label: {
+                        Label("Heading", systemImage: "plus.rectangle.on.rectangle").font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Add a heading to this project")
+                }
                 Button { viewModel.enterSelectMode() } label: {
                     Label("Select", systemImage: "checkmark.circle").font(.caption)
                 }
@@ -278,6 +290,12 @@ struct TaskListView: View {
         }
         .toolbar { projectHeaderToolbar }
         .background(shortcutButtons)
+        .modifier(HeadingPromptModifier(prompt: $headingPrompt) { prompt, text in
+            switch prompt {
+            case .add:                 viewModel.addHeading(title: text)
+            case .rename(let heading): viewModel.renameHeading(heading, to: text)
+            }
+        })
     }
 
     /// For a `.project` filter, surfaces the project's color swatch + name in
@@ -444,6 +462,8 @@ struct TaskListView: View {
             // Falls back to "Project" until the project list has loaded.
             return viewModel.project(id: id)?.name ?? "Project"
         case .tag(let tag):    return "#\(tag)"
+        case .someday:         return "Someday"
+        case .area(let id):    return viewModel.area(id: id)?.name ?? "Area"
         }
     }
 
@@ -602,6 +622,9 @@ struct TaskListView: View {
                 row(token: "#tag", meaning: "add a tag")
                 row(token: "+Project", meaning: "file under project")
                 row(token: "!high · !med · !low", meaning: "priority")
+                row(token: "every 2 weeks · after completion", meaning: "repeat")
+                row(token: "starting fri · someday · tonight", meaning: "plan")
+                row(token: "~30m · for 1h", meaning: "duration")
                 row(token: "Return", meaning: "newline (in notes)")
                 row(token: "⌘ Return", meaning: "save task")
             }
@@ -662,7 +685,7 @@ struct TaskListView: View {
         guard filter == .today, !todayUpcomingExpanded else { return viewModel.groups }
         return viewModel.groups.filter { group in
             switch group.bucket {
-            case .overdue, .today, .noDate: return true
+            case .overdue, .today, .evening, .noDate, .someday, .heading: return true
             case .tomorrow, .thisWeek, .later, .completed: return false
             }
         }
@@ -790,6 +813,14 @@ struct TaskListView: View {
             Label("Reschedule to", systemImage: "calendar")
         }
 
+        TaskWhenMenu(task: task) { viewModel.setScheduleBucket($0, for: task) }
+
+        if case .project = filter, !viewModel.headings.isEmpty {
+            TaskHeadingMenu(task: task, headings: viewModel.headings) {
+                viewModel.setHeading($0, for: task)
+            }
+        }
+
         Menu {
             Button { viewModel.setPriority(.high, for: task) } label: {
                 Label("High", systemImage: DesignTokens.Palette.prioritySymbolHigh)
@@ -869,6 +900,12 @@ struct TaskListView: View {
         case .tag(let tag):
             return ("number", "No tasks tagged #\(tag)",
                     "Tasks tagged #\(tag) will appear here.", true)
+        case .someday:
+            return ("archivebox", "Nothing parked for someday",
+                    "Tasks you set to Someday wait here, out of Inbox and Today.", true)
+        case .area:
+            return ("square.stack.3d.up", "No tasks in this area",
+                    "Tasks in this area's projects, or filed directly under it, appear here.", true)
         }
     }
 
@@ -904,6 +941,18 @@ struct TaskListView: View {
                 .padding(.vertical, DesignTokens.Spacing.xs)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                if let heading = bucket.heading {
+                    HeadingSectionMenu(
+                        heading: heading,
+                        isFirst: viewModel.headings.first?.id == heading.id,
+                        isLast: viewModel.headings.last?.id == heading.id,
+                        onRename: { headingPrompt = .rename(heading) },
+                        onMove: { viewModel.moveHeading(heading, by: $0) },
+                        onDelete: { viewModel.deleteHeading(heading) }
+                    )
+                }
+            }
             .accessibilityLabel("\(bucket.title), \(tasks.count) tasks")
             .accessibilityHint(isCollapsed ? "Collapsed. Activate to expand." : "Expanded. Activate to collapse.")
 
@@ -926,7 +975,7 @@ struct TaskListView: View {
                             .modifier(RowReorderDropModifier(
                                 enabled: reorderEnabled,
                                 onTargeted: { reorderInsertionId = $0 ? task.id : (reorderInsertionId == task.id ? nil : reorderInsertionId) },
-                                onDrop: { payload in handleReorderDrop(payload, before: task, in: tasks) }
+                                onDrop: { payload in handleReorderDrop(payload, before: task, in: tasks, bucket: bucket) }
                             ))
                     }
                 }
@@ -938,7 +987,8 @@ struct TaskListView: View {
         )
         .modifier(BucketDropModifier(
             bucket: bucket,
-            isEnabled: dropDate(for: bucket) != nil || bucket == .noDate,
+            isEnabled: dropDate(for: bucket) != nil || bucket == .noDate
+                || bucket == .someday || bucket.heading != nil,
             onDrop: { payload in handleBucketDrop(payload, into: bucket) },
             isTargeted: { targeted in
                 dropTargetBucket = targeted ? bucket.title : (dropTargetBucket == bucket.title ? nil : dropTargetBucket)
@@ -964,9 +1014,20 @@ struct TaskListView: View {
 
     /// Persists a reorder that drops `payload`'s task immediately before
     /// `target` within the bucket. No-op when dropping a task on itself.
-    private func handleReorderDrop(_ payload: TaskDragPayload, before target: TodoTask, in tasks: [TodoTask]) {
+    private func handleReorderDrop(_ payload: TaskDragPayload,
+                                   before target: TodoTask,
+                                   in tasks: [TodoTask],
+                                   bucket: TaskListViewModel.Bucket? = nil) {
         reorderInsertionId = nil
         guard reorderEnabled, payload.id != target.id else { return }
+        // Dropping across heading sections re-files the task under the
+        // target section's heading (or none for the un-headed sections).
+        if !viewModel.headings.isEmpty, let dragged = viewModel.task(id: payload.id) {
+            let targetHeading = bucket?.heading?.id
+            if dragged.headingId != targetHeading {
+                viewModel.setHeading(targetHeading, for: dragged)
+            }
+        }
         var ids = tasks.map(\.id)
         ids.removeAll { $0 == payload.id }
         guard let insertAt = ids.firstIndex(of: target.id) else { return }
@@ -985,10 +1046,10 @@ struct TaskListView: View {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         switch bucket {
-        case .overdue, .today: return today
+        case .overdue, .today, .evening: return today
         case .tomorrow:        return cal.date(byAdding: .day, value: 1, to: today)
         case .noDate:          return nil
-        case .thisWeek, .later, .completed: return nil
+        case .thisWeek, .later, .completed, .someday, .heading: return nil
         }
     }
 
@@ -996,7 +1057,13 @@ struct TaskListView: View {
         dropTargetBucket = nil
         guard let task = viewModel.task(id: payload.id) else { return }
         withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
-            if bucket == .noDate {
+            if let heading = bucket.heading {
+                viewModel.setHeading(heading.id, for: task)
+            } else if bucket == .someday {
+                viewModel.setScheduleBucket(.someday, for: task)
+            } else if bucket == .evening {
+                viewModel.planForEvening(task)
+            } else if bucket == .noDate {
                 viewModel.setDueDate(nil, for: task)
             } else if let date = dropDate(for: bucket) {
                 // Preserve any existing time-of-day on a reschedule.
@@ -1010,7 +1077,11 @@ struct TaskListView: View {
                 } else {
                     merged = date
                 }
-                viewModel.setDueDate(merged, for: task)
+                if task.scheduleBucket == .anytime {
+                    viewModel.setDueDate(merged, for: task)
+                } else {
+                    viewModel.setDueDate(merged, bucket: .anytime, for: task)
+                }
             }
         }
     }
@@ -1223,7 +1294,33 @@ struct TaskRowView: View {
 
             subtaskChip
 
+            planningChips
+
             dueControl
+        }
+    }
+
+    /// Duration estimate, recurrence glyph, and a "starts <day>" hint for
+    /// deferred tasks (v20 planning fields).
+    @ViewBuilder
+    private var planningChips: some View {
+        if task.recurrenceRule != nil {
+            Image(systemName: "repeat")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .accessibilityLabel("Repeats")
+        }
+        if let minutes = task.estimatedMinutes, minutes > 0 {
+            Text(TaskDurationFormat.short(minutes))
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Estimated \(TaskDurationFormat.short(minutes))")
+        }
+        if let start = task.startAt, start > Date() {
+            Text("Starts \(start.formatted(.dateTime.month(.abbreviated).day()))")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
         }
     }
 
