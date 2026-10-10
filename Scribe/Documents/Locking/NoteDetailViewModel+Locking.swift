@@ -148,8 +148,15 @@ extension NoteDetailViewModel {
                 reason: "unlock the note \u{201C}\(displayTitle)\u{201D}",
                 creatingKeyIfNeeded: false
             )
-            let plaintext = try LockedNoteEnvelope.open(note.body, key: key)
-            lockState.key = key
+            // A note locked on iPhone / iPad may be sealed with a key synced
+            // through iCloud Keychain rather than this Mac's own.
+            var noteKey = key
+            if LockedNoteKeySelection.key(for: note.body, among: [key]) == nil,
+               let synced = LockedNoteKeySelection.key(for: note.body, among: LockedNoteSyncedKeyStore.loadAll()) {
+                noteKey = synced
+            }
+            let plaintext = try LockedNoteEnvelope.open(note.body, key: noteKey)
+            lockState.key = noteKey
             note.body = plaintext
             lockPhase = .unlocked
         } catch LockedNoteKeychainError.cancelled {

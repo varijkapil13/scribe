@@ -1,10 +1,11 @@
 // Scribe/Documents/Locking/LockedNoteKeychain.swift
 //
 // The locked-notes key: one random 256-bit AES key per Mac, kept in the
-// login Keychain (service `com.varij.scribe.locked-notes`), never written
-// anywhere else. Reading it is gated by LocalAuthentication
-// (`.deviceOwnerAuthentication`: Touch ID, Apple Watch or the Mac's login
-// password) in `LockedNoteSession`.
+// login Keychain (service `com.varij.scribe.locked-notes`), plus a
+// synchronizable copy in iCloud Keychain when available (see
+// LockedNoteSyncedKeyStore) so the same notes unlock on iPhone / iPad.
+// Reading it is gated by LocalAuthentication (`.deviceOwnerAuthentication`:
+// Touch ID, Apple Watch or the Mac's login password) in `LockedNoteSession`.
 //
 // Why not a `.userPresence` access-control item: those live in the
 // data-protection keychain, which needs a keychain-access-group entitlement
@@ -117,9 +118,22 @@ enum LockedNoteKeychain {
     }
 
     /// The stored key, creating one first when `create` is true.
+    ///
+    /// Cross-device: this Mac's key is also published to iCloud Keychain
+    /// (`LockedNoteSyncedKeyStore`, best effort) so notes locked here open on
+    /// iPhone / iPad; a Mac without its own key yet adopts one synced from
+    /// another device. Both are no-ops when iCloud Keychain isn't available.
     nonisolated static func key(creatingIfNeeded create: Bool) throws -> SymmetricKey? {
-        if let existing = try loadKey() { return existing }
+        if let existing = try loadKey() {
+            LockedNoteSyncedKeyStore.publish(existing)
+            return existing
+        }
+        if let synced = LockedNoteKeySelection.preferredSealingKey(LockedNoteSyncedKeyStore.loadAll()) {
+            return synced
+        }
         guard create else { return nil }
-        return try createKey()
+        let key = try createKey()
+        LockedNoteSyncedKeyStore.publish(key)
+        return key
     }
 }

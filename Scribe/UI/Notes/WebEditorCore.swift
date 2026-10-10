@@ -248,6 +248,22 @@ enum WebEditorFeedback {
     }
 }
 
+// MARK: - Imported files
+
+/// A file handed to the editor by a device source (photo library, camera,
+/// document scanner) to be saved as an attachment and inserted at the caret.
+struct EditorImportedFile: Sendable {
+    var data: Data
+    var filename: String
+    var mimeType: String
+
+    init(data: Data, filename: String, mimeType: String) {
+        self.data = data
+        self.filename = filename
+        self.mimeType = mimeType
+    }
+}
+
 // MARK: - Coordinator
 
 /// The native peer of one CodeMirror editor page: receives its messages,
@@ -433,6 +449,24 @@ final class WebEditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigation
                 base64: nil, data: data, filename: filename, mimeType: mimeType, noteId: noteId, root: root
             )
             self?.finishAttachment(outcome, replyID: nil)
+        }
+    }
+
+    /// Saves several imported files (e.g. the pages of a document scan) one
+    /// after another and inserts them at the caret in the given order.
+    func importDeviceFiles(_ files: [EditorImportedFile]) {
+        guard !files.isEmpty else { return }
+        let noteId = attachmentNoteId
+        let root = AttachmentsDirectory.defaultRoot()
+        Task { [weak self] in
+            for file in files {
+                let outcome = await WebEditorCoordinator.saveDetached(
+                    base64: nil, data: file.data, filename: file.filename, mimeType: file.mimeType,
+                    noteId: noteId, root: root
+                )
+                guard let self else { return }
+                self.finishAttachment(outcome, replyID: nil)
+            }
         }
     }
 

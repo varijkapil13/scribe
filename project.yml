@@ -220,6 +220,22 @@ targets:
       - path: Scribe/Intelligence/MeetingModels.swift
       - path: Scribe/Intelligence/TranscriptAnalyzer.swift   # ExtractedEntity + NaturalLanguage (iOS-ok)
       - path: Scribe/App/AppLaunchEnvironment.swift
+      # --- ios-notes (wave 5): the shared CodeMirror editor + notes browser ---
+      # The CodeMirror bundle, as the same preserved folder reference the macOS
+      # target uses (chunks/ must keep its subtree — see the Scribe target).
+      - path: Scribe/Resources/Editor
+        type: folder
+        buildPhase: resources
+      # Portable editor host core + bridge types (AppKit bits are #if os(macOS)).
+      - path: Scribe/UI/Notes/WebEditorCore.swift
+      - path: Scribe/UI/Notes/WebEditorBridge.swift
+      - path: Scribe/UI/Notes/EditorCommandBridge.swift
+      - path: Scribe/UI/Notes/EditorAttachmentFiles.swift
+      - path: Scribe/UI/Notes/PowerNotes/NoteEmbedContentProvider.swift
+      - path: Scribe/UI/Notes/PowerNotes/NotePowerEditorCommands.swift
+      - path: Scribe/UI/Notes/Portable   # pure list / link / capture-naming logic
+      - path: Scribe/Utilities/PlantUMLRenderingPreference.swift
+      # --- end ios-notes ---
     dependencies:
       - package: GRDB.swift
         product: GRDB
@@ -234,6 +250,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: U8A3QH6Y84
         CODE_SIGN_STYLE: Automatic
+        # ios-notes (wave 5): camera attachments + Face ID for locked notes.
+        INFOPLIST_KEY_NSCameraUsageDescription: "Scribe uses the camera to add photos and scanned documents to your notes."
+        INFOPLIST_KEY_NSFaceIDUsageDescription: "Scribe uses Face ID to unlock your locked notes."
 
 schemes:
   Scribe:
