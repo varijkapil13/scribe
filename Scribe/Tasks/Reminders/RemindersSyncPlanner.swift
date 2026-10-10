@@ -44,8 +44,10 @@ struct RemindersSyncPlanInput {
 /// - **Tombstone-safe deletes**: a side is deleted only when its partner
 ///   vanished AND a link proves they were paired. If the surviving side was
 ///   edited after the last sync, the edit wins and the partner is recreated
-///   instead. A burst of deletions (or an empty Reminders snapshot) is held
-///   back entirely — see `exceedsDeleteSafetyLimit`.
+///   instead. A finished (completed / "Won't do") task is never deleted
+///   because its reminder vanished — that's usually "Clear Completed" in
+///   Reminders — it's just unpaired. A burst of deletions (or an empty
+///   Reminders snapshot) is held back entirely — see `exceedsDeleteSafetyLimit`.
 /// - **Unlinked items** (including the very first sync) never delete
 ///   anything: incomplete items in mapped lists/projects are paired when title
 ///   and due date match (filling only empty fields), otherwise imported or
@@ -172,6 +174,12 @@ enum RemindersSyncPlanner {
                 if direction.writesReminders, let listId {
                     return [recreateReminder(for: task, listId: listId, calendar: calendar)]
                 }
+                return [.unlink(taskId: task.id)]
+            }
+            if RemindersFieldMapping.isDone(task) {
+                // A finished reminder disappearing is usually Reminders'
+                // "Clear Completed" housekeeping, not a request to erase the
+                // task's history in Scribe: keep the task, drop the pairing.
                 return [.unlink(taskId: task.id)]
             }
             return [.deleteTask(taskId: task.id, calendarItemIdentifier: link.calendarItemIdentifier)]
@@ -327,7 +335,12 @@ enum RemindersSyncPlanner {
         // Scribe requires a due date on recurring tasks.
         if desired.dueAt == nil { desired.recurrenceRule = nil }
 
-        if let target = mapping.projectTarget(forListId: reminder.listId) {
+        // Follow a list move only while the task lives in a mapped scope. A
+        // task the user moved into an unmapped project keeps its reminder in
+        // the old list (push never moves it), so that list says nothing about
+        // where the task belongs — don't pull the task back out of its project.
+        if mapping.listId(forProjectId: task.projectId) != nil,
+           let target = mapping.projectTarget(forListId: reminder.listId) {
             desired.projectId = target.projectId
         }
 

@@ -435,6 +435,17 @@ final class RemindersSyncPlannerTests: XCTestCase {
         ])
     }
 
+    func testClearedCompletedReminderKeepsFinishedTask() {
+        // "Clear Completed" in Reminders must not erase Scribe's history.
+        let done = task("t1", "Done", completedAt: before, updatedAt: synced)
+        let wontDo = task("t3", "Skipped", cancelledAt: before, updatedAt: synced)
+        let result = plan(tasks: [done, task("t2", "Y", updatedAt: synced), wontDo],
+                          reminders: [reminder("r2", "Y", modified: synced)],
+                          links: [link("t1", "r1"), link("t2", "r2"), link("t3", "r3")])
+        XCTAssertFalse(hasDelete(result))
+        XCTAssertEqual(result.actions, [.unlink(taskId: "t1"), .unlink(taskId: "t3")])
+    }
+
     func testBothSidesGoneDropsLink() {
         let result = plan(tasks: [task("t2", "Y", updatedAt: synced)],
                           reminders: [reminder("r2", "Y", modified: synced)],
@@ -599,6 +610,20 @@ final class RemindersSyncPlannerTests: XCTestCase {
             return XCTFail("expected a task update, got \(actions)")
         }
         XCTAssertEqual(changes.projectId, "p-work")
+        XCTAssertEqual(changes.title, "New")
+    }
+
+    func testReminderEditDoesNotPullTaskOutOfUnmappedProject() {
+        // The task was moved into an unmapped project in Scribe; its reminder
+        // stayed in the Inbox list. Editing the reminder must not drag the
+        // task back into the Inbox.
+        let t = task("t1", "Old", project: "p-unmapped", updatedAt: synced)
+        let r = reminder("r1", "New", list: Self.inboxList, modified: later)
+        let actions = plan(tasks: [t], reminders: [r], links: [link("t1", "r1")], mapping: inboxAndWork).actions
+        guard case .updateTask(_, _, let changes) = actions.first else {
+            return XCTFail("expected a task update, got \(actions)")
+        }
+        XCTAssertEqual(changes.projectId, "p-unmapped")
         XCTAssertEqual(changes.title, "New")
     }
 

@@ -116,6 +116,12 @@ final class RemindersSyncScheduler {
         let signature = settingsSignature()
         guard signature != lastSignature else { return }
         lastSignature = signature
+        guard !policy.isSyncing else {
+            // The running round read the old settings; the policy would drop
+            // a request now, so follow up once it finishes instead.
+            if isSyncAllowed() { pendingChange = true }
+            return
+        }
         request(.enabled)
     }
 
