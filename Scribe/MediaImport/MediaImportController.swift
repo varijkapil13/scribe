@@ -47,7 +47,7 @@ final class MediaImportController: ObservableObject {
 
     private var queue: [URL] = []
     private var worker: Task<Void, Never>?
-    private var job: ImportJob?
+    private var job: MediaImportTranscriptionJob?
     /// The task running the current file's import (cancelled by ``cancel()``).
     private var currentImport: Task<Result<String, any Error>, Never>?
 
@@ -162,11 +162,11 @@ final class MediaImportController: ObservableObject {
         let sessionId = UUID().uuidString
         let directory = SessionAudioStorage.directory(forSessionId: sessionId, root: SessionAudioStorage.defaultRoot())
 
-        let job = ImportJob(
+        let job = MediaImportTranscriptionJob(
             pipeline: TranscriptionPipeline(speaker: Self.importedSpeaker),
-            recorder: SessionAudioRecorder(directory: directory),
-            activity: SystemActivityAssertion(reason: "Importing and transcribing a recording")
+            recorder: SessionAudioRecorder(directory: directory)
         )
+        let activity = SystemActivityAssertion(reason: "Importing and transcribing a recording")
         self.job = job
         defer { self.job = nil }
 
@@ -195,10 +195,7 @@ final class MediaImportController: ObservableObject {
             try Task.checkCancellation()
 
             setStage(.saving, fraction: nil)
-            let pieces = job.segments.map {
-                ImportedTranscriptCoalescer.Piece(startMs: $0.startMs, endMs: $0.endMs, speaker: $0.speaker, text: $0.text)
-            }
-            let merged = ImportedTranscriptCoalescer.coalesce(pieces)
+            let merged = job.mergedPieces(speaker: nil)
             guard !merged.isEmpty else { throw ScribeMediaImportError.nothingTranscribed }
             for piece in merged {
                 try store.addSegment(sessionId: sessionId, startMs: piece.startMs, endMs: piece.endMs,
@@ -210,7 +207,7 @@ final class MediaImportController: ObservableObject {
         } catch {
             await job.pipeline.stop()
             await Self.finishRecorder(job.recorder)
-            job.activity.end()
+            activity.end()
             // Removes the session, its segments and its audio folder too.
             do {
                 try NoteStore.shared.deleteNote(id: note.id)
@@ -225,7 +222,6 @@ final class MediaImportController: ObservableObject {
         let capture = makeDiarizationCapture(sessionId: sessionId, directory: directory, segments: job.segments)
         let work = appState.runPostRecordingProcessing(sessionId: sessionId, diarization: capture)
         MeetingHooks.sessionDidStop(sessionId: sessionId, appState: appState)
-        let activity = job.activity
         Task { @MainActor in
             for task in work { await task.value }
             activity.end()
@@ -248,18 +244,11 @@ final class MediaImportController: ObservableObject {
         try Task.checkCancellation()
         if let error = job.error { throw error }
         guard let buffer = MediaImportDecoder.makeBuffer(samples) else { return }
-        job.recorder.appendSystem(buffer)
-        job.pipeline.append(buffer)
-        job.fedFrames += samples.count
+        job.feed(buffer, frames: samples.count)
         setStage(.transcribing, fraction: ImportPacing.fraction(
             fedFrames: job.fedFrames, totalSeconds: job.durationSeconds, sampleRate: MediaImportDecoder.sampleRate))
 
-        var waitedMs = 0
-        while ImportPacing.shouldWait(fedMs: job.fedMs, transcribedMs: job.transcribedMs, quietForMs: job.quietForMs),
-              waitedMs < ImportPacing.maxWaitMs {
-            try await Task.sleep(for: .milliseconds(100))
-            waitedMs += 100
-        }
+        try await job.waitWhileRecognizerIsBehind()
     }
 
     private func setStage(_ stage: Stage, fraction: Double?) {
@@ -312,68 +301,5 @@ final class MediaImportController: ObservableObject {
     nonisolated static func noteHeader(for url: URL, date: Date) -> String {
         let when = date.formatted(date: .abbreviated, time: .shortened)
         return "Imported from *\(url.lastPathComponent)* on \(when).\n"
-    }
-}
-
-// MARK: - Job state
-
-/// Everything one running import owns. Main-actor only.
-@MainActor
-private final class ImportJob {
-    let pipeline: TranscriptionPipeline
-    let recorder: SessionAudioRecorder
-    let activity: SystemActivityAssertion
-
-    var durationSeconds: Double = 0
-    var fedFrames = 0
-    private(set) var segments: [TranscriptionSegment] = []
-    private(set) var error: Error?
-    private var lastSegmentEndMs = 0
-    private var lastActivity = ContinuousClock.now
-
-    init(pipeline: TranscriptionPipeline, recorder: SessionAudioRecorder, activity: SystemActivityAssertion) {
-        self.pipeline = pipeline
-        self.recorder = recorder
-        self.activity = activity
-    }
-
-    var fedMs: Int { Int(Double(fedFrames) / MediaImportDecoder.sampleRate * 1_000) }
-    var transcribedMs: Int { lastSegmentEndMs }
-    var quietForMs: Int {
-        let elapsed = ContinuousClock.now - lastActivity
-        return Int(elapsed.components.seconds * 1_000) + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
-
-    func wire(onPreview: @escaping (String) -> Void) {
-        pipeline.onSegment = { [weak self] segment in
-            guard let self else { return }
-            self.segments.append(segment)
-            self.lastSegmentEndMs = max(self.lastSegmentEndMs, segment.endMs)
-            self.lastActivity = ContinuousClock.now
-            onPreview(segment.text)
-        }
-        pipeline.onPartialUpdate = { [weak self] text in
-            guard let self else { return }
-            self.lastActivity = ContinuousClock.now
-            if !text.isEmpty { onPreview(text) }
-        }
-        pipeline.onError = { [weak self] error in
-            self?.error = error
-        }
-    }
-
-    /// Feeds trailing silence so the recognizer finalizes the last words,
-    /// then waits until it has been quiet for a moment (it caught up).
-    func drain() async throws {
-        if let silence = MediaImportDecoder.makeBuffer([Float](repeating: 0, count: Int(MediaImportDecoder.sampleRate * 2))) {
-            pipeline.append(silence)
-        }
-        lastActivity = ContinuousClock.now
-        var waitedMs = 0
-        while !ImportPacing.isDrained(quietForMs: quietForMs, waitedMs: waitedMs) {
-            try await Task.sleep(for: .milliseconds(250))
-            waitedMs += 250
-            if error != nil { return }
-        }
     }
 }
