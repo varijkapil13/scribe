@@ -127,11 +127,39 @@ final class SpeakerDiarizationCapture {
         ))
     }
 
-    /// A temporary folder for audio kept only for diarization.
-    nonisolated static func scratchDirectory(for sessionId: String) -> URL {
+    /// Parent of every per-session scratch folder.
+    nonisolated static var scratchRoot: URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ScribeDiarization", isDirectory: true)
-            .appendingPathComponent(sessionId, isDirectory: true)
+    }
+
+    /// A temporary folder for audio kept only for diarization.
+    nonisolated static func scratchDirectory(for sessionId: String) -> URL {
+        scratchRoot.appendingPathComponent(sessionId, isDirectory: true)
+    }
+
+    /// Deletes every scratch folder under `root` (default: ``scratchRoot``).
+    /// Called at launch, when no recording can be using one: anything left
+    /// over is from a crash, a quit mid-diarization or a deferred job that
+    /// never ran. Returns how many entries were removed.
+    @discardableResult
+    nonisolated static func removeLeftoverScratch(in root: URL = scratchRoot) -> Int {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: []
+        ) else { return 0 }
+        var removed = 0
+        for entry in entries {
+            do {
+                try fileManager.removeItem(at: entry)
+                removed += 1
+            } catch {
+                Log.speech.error("Couldn't remove diarization scratch \(entry.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return removed
     }
 }
 
@@ -158,43 +186,115 @@ enum SpeakerDiarizationCoordinator {
         )
     }
 
+    /// One finished recording waiting to be diarized.
+    struct Job: Sendable {
+        let sessionId: String
+        let pieces: [DiarizedSegmentRebuilder.Piece]
+        let directory: URL
+        let isScratch: Bool
+    }
+
+    /// Jobs deferred because the Mac was hot or in Low Power Mode.
+    private static var deferredJobs: [Job] = []
+    private static var deferredStore: TranscriptStore?
+    private static var conditionObservers: [NSObjectProtocol] = []
+    private static var drainTask: Task<Void, Never>?
+
     /// Runs diarization in the background once the recording's files are
     /// closed, applies the result, and suggests names. Failures only log —
     /// the transcript simply stays "Remote".
-    static func sessionDidStop(_ capture: SpeakerDiarizationCapture, store: TranscriptStore) {
-        let sessionId = capture.sessionId
-        let pieces = capture.pieces
-        let directory = capture.audioDirectory
-        let isScratch = capture.isScratch
+    ///
+    /// When the Mac is thermally stressed or in Low Power Mode the job is
+    /// queued and runs once conditions improve (see ``HeavyWorkConditions``).
+    ///
+    /// - Returns: The task doing the work now (finishes immediately when the
+    ///   job was deferred), so the caller can keep the Mac awake until it ends.
+    @discardableResult
+    static func sessionDidStop(_ capture: SpeakerDiarizationCapture, store: TranscriptStore) -> Task<Void, Never> {
+        let job = Job(
+            sessionId: capture.sessionId,
+            pieces: capture.pieces,
+            directory: capture.audioDirectory,
+            isScratch: capture.isScratch
+        )
+        if HeavyWorkConditions.shouldDeferNow() {
+            Log.speech.info("Deferring speaker diarization for session \(job.sessionId, privacy: .public): \(HeavyWorkConditions.describeCurrent(), privacy: .public).")
+            deferredJobs.append(job)
+            deferredStore = store
+            observeConditions()
+            return Task {}
+        }
+        return Task { @MainActor in
+            await SpeakerDiarizationCoordinator.run(job, store: store)
+        }
+    }
+
+    /// Diarizes one recording. Deletes scratch audio afterwards either way.
+    private static func run(_ job: Job, store: TranscriptStore) async {
+        let sessionId = job.sessionId
+        let directory = job.directory
+        let isScratch = job.isScratch
         let audioURL = SessionAudioStorage.systemFileURL(in: directory)
+        defer {
+            if isScratch { try? FileManager.default.removeItem(at: directory) }
+        }
+        guard FileManager.default.fileExists(atPath: audioURL.path) else { return }
+        do {
+            let stored = try store.fetchDiarizableSegments(sessionId: sessionId)
+            guard !stored.isEmpty else { return }
 
-        Task { @MainActor in
-            defer {
-                if isScratch { try? FileManager.default.removeItem(at: directory) }
+            let turns = try await Task.detached(priority: .utility) {
+                try await SpeakerDiarizationRunner.turns(forAudioAt: audioURL)
+            }.value
+
+            let changes = DiarizedSegmentRebuilder.changes(stored: stored, pieces: job.pieces, turns: turns)
+            guard !changes.isEmpty else {
+                Log.speech.info("Diarization found a single remote speaker; transcript unchanged.")
+                return
             }
-            guard FileManager.default.fileExists(atPath: audioURL.path) else { return }
-            do {
-                let stored = try store.fetchDiarizableSegments(sessionId: sessionId)
-                guard !stored.isEmpty else { return }
+            try store.applyDiarization(changes, sessionId: sessionId)
+            Log.speech.info("Diarization split remote audio for session \(sessionId, privacy: .public).")
 
-                let turns = try await Task.detached(priority: .utility) {
-                    try await SpeakerDiarizationRunner.turns(forAudioAt: audioURL)
-                }.value
+            if SpeakerDiarizationSettings.suggestNames {
+                await SpeakerNameSuggester.applySuggestions(sessionId: sessionId, store: store)
+            }
+            NotificationCenter.default.post(name: .scribeSpeakersDidChange, object: sessionId)
+        } catch {
+            Log.speech.error("Diarization failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
-                let changes = DiarizedSegmentRebuilder.changes(stored: stored, pieces: pieces, turns: turns)
-                guard !changes.isEmpty else {
-                    Log.speech.info("Diarization found a single remote speaker; transcript unchanged.")
-                    return
+    /// Watches thermal state and Low Power Mode while jobs are deferred.
+    private static func observeConditions() {
+        guard conditionObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        for name in [ProcessInfo.thermalStateDidChangeNotification, Notification.Name.NSProcessInfoPowerStateDidChange] {
+            let observer = center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { SpeakerDiarizationCoordinator.drainDeferredIfPossible() }
+            }
+            conditionObservers.append(observer)
+        }
+    }
+
+    /// Runs deferred jobs one after another once conditions allow.
+    private static func drainDeferredIfPossible() {
+        guard drainTask == nil, !deferredJobs.isEmpty else { return }
+        guard !HeavyWorkConditions.shouldDeferNow() else { return }
+        guard let store = deferredStore else { return }
+        let count = deferredJobs.count
+        Log.speech.info("Running \(count) deferred speaker diarization job(s).")
+        drainTask = Task { @MainActor in
+            while !SpeakerDiarizationCoordinator.deferredJobs.isEmpty, !HeavyWorkConditions.shouldDeferNow() {
+                let job = SpeakerDiarizationCoordinator.deferredJobs.removeFirst()
+                await SpeakerDiarizationCoordinator.run(job, store: store)
+            }
+            SpeakerDiarizationCoordinator.drainTask = nil
+            if SpeakerDiarizationCoordinator.deferredJobs.isEmpty {
+                for observer in SpeakerDiarizationCoordinator.conditionObservers {
+                    NotificationCenter.default.removeObserver(observer)
                 }
-                try store.applyDiarization(changes, sessionId: sessionId)
-                Log.speech.info("Diarization split remote audio for session \(sessionId, privacy: .public).")
-
-                if SpeakerDiarizationSettings.suggestNames {
-                    await SpeakerNameSuggester.applySuggestions(sessionId: sessionId, store: store)
-                }
-                NotificationCenter.default.post(name: .scribeSpeakersDidChange, object: sessionId)
-            } catch {
-                Log.speech.error("Diarization failed: \(error.localizedDescription, privacy: .public)")
+                SpeakerDiarizationCoordinator.conditionObservers.removeAll()
+                SpeakerDiarizationCoordinator.deferredStore = nil
             }
         }
     }
