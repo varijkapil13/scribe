@@ -40,7 +40,6 @@ final class LockedNoteSession: ObservableObject {
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
-    private var windowCloseCancellable: AnyCancellable?
 
     private init() {}
 
@@ -69,23 +68,28 @@ final class LockedNoteSession: ObservableObject {
             MainActor.assumeIsolated { LockedNoteSession.shared.lock() }
         })
         // Closing a document window (a titled, non-panel, non-sheet window:
-        // the main window or a note window) locks again. Same Combine pattern
-        // as `AppDelegate.observeMainWindowClose`.
-        windowCloseCancellable = NotificationCenter.default
-            .publisher(for: NSWindow.willCloseNotification)
-            .receive(on: RunLoop.main)
-            .sink { notification in
-                guard let window = notification.object as? NSWindow,
-                      Self.isDocumentWindow(window) else { return }
+        // the main window or a note window) locks again. Observed
+        // synchronously (queue nil: NSWindow closes on the main thread), so
+        // the window is classified while it is still attached — a closing
+        // sheet still has its `sheetParent` — and open editors seal before
+        // their views go away.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: nil
+        ) { notification in
+            guard Thread.isMainThread, let window = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                guard LockedNoteSession.isDocumentWindow(window) else { return }
                 LockedNoteSession.shared.lock()
             }
+        })
     }
 
     /// True for the windows whose closing re-locks notes: titled windows
-    /// that aren't panels (open/save panels, inspectors, popovers) or sheets.
+    /// that can become main and aren't panels (open/save panels, alerts,
+    /// inspectors) or sheets.
     private static func isDocumentWindow(_ window: NSWindow) -> Bool {
-        guard !(window is NSPanel), window.sheetParent == nil else { return false }
-        return window.styleMask.contains(.titled)
+        guard !(window is NSPanel), !window.isSheet, window.sheetParent == nil else { return false }
+        return window.styleMask.contains(.titled) && window.canBecomeMain
     }
 
     var idleMinutes: Int {
