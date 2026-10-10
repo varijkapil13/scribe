@@ -887,8 +887,11 @@ private struct AboutSettingsPane: View {
                 Label("PlantUML diagrams are sent to plantuml.com only if you enable it in General.", systemImage: "point.3.connected.trianglepath.dotted")
             }
 
+            UpdatesSettingsSection()
+            DiagnosticsSettingsSection()
+
             Section("Acknowledgements") {
-                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, FoundationModels, and FluidAudio. Speaker separation uses the pyannote community-1 models (CC BY 4.0) converted to Core ML by FluidInference.")
+                Text("Built with GRDB, KeyboardShortcuts, Sparkle, Apple SpeechAnalyzer, FoundationModels, and FluidAudio. Speaker separation uses the pyannote community-1 models (CC BY 4.0) converted to Core ML by FluidInference.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(copyright)

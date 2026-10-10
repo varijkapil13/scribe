@@ -188,6 +188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !AppLaunchEnvironment.isUITesting {
             DocumentsServices.start()
         }
+        // Sparkle updates, on-device MetricKit diagnostics, and periodic
+        // maintenance (each self-gates on UI-test / fixture launches).
+        ScribeUpdater.shared.start()
+        if !AppLaunchEnvironment.isUITesting { ScribeMetricKitCollector.shared.start() }
+        ScribeBackgroundMaintenance.shared.start(transcriptStore: appState.transcriptStore)
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently

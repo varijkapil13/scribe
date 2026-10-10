@@ -255,6 +255,13 @@ final class SpotlightIndexer {
 
     // MARK: - Passes
 
+    /// Periodic pass from `ScribeBackgroundMaintenance`: becomes a full
+    /// reindex once `fullReindexInterval` has passed, so a Mac that keeps
+    /// Scribe running for days still gets its daily full reindex.
+    func runMaintenancePass() {
+        runPass()
+    }
+
     private func storeDidChange() {
         guard started else { return }
         debounceTask?.cancel()

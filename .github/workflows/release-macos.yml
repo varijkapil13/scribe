@@ -6,11 +6,26 @@ name: Release macOS
 # Release from the chosen commit; without one it only builds + uploads a
 # workflow artifact.
 #
-# NOTE ON SIGNING: CI has no "Developer ID Application" certificate (see
-# BUILD.md), so the app is ad-hoc signed (CODE_SIGN_IDENTITY="-") and NOT
-# notarized. It runs locally (right-click → Open, or strip the quarantine
-# attribute) but is not Gatekeeper-clean for wide distribution. Wire a
-# Developer-ID cert + notary profile into a secret later to upgrade this.
+# NOTE ON SIGNING: the app is always built ad-hoc signed (CODE_SIGN_IDENTITY="-").
+# When Developer ID secrets are configured it is then re-signed with Developer
+# ID + Hardened Runtime (scripts/codesign-developer-id.sh), notarized
+# (scripts/notarize.sh), stapled and checked with spctl; without them the
+# release stays ad-hoc signed and NOT notarized, exactly as before:
+#   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PASSWORD  its export password
+#   APPLE_TEAM_ID               team ID (picks the identity; Apple-ID notarization)
+#   NOTARY_API_KEY, NOTARY_API_KEY_ID, NOTARY_API_ISSUER_ID   (preferred), or
+#   APPLE_ID, APPLE_APP_PASSWORD                              (app-specific password)
+#
+# SPARKLE UPDATES: with a SPARKLE_PRIVATE_KEY secret (EdDSA private key from
+# Sparkle's generate_keys), the release .zip is signed with sign_update and an
+# appcast.xml is attached to the Release (the app's SUFeedURL reads
+# releases/latest/download/appcast.xml). The matching public key goes in the
+# SPARKLE_PUBLIC_ED_KEY repository variable (or secret); it is compiled into
+# Info.plist SUPublicEDKey. Without it the app's updater stays disabled.
+#
+# Secrets are only ever mapped into step `env:`; `if:` conditions read the
+# outputs of the "Detect signing + update secrets" step.
 on:
   push:
     tags: ["v*"]
@@ -79,7 +94,10 @@ jobs:
         # Manual ad-hoc signing ("-") with no team/profile: xcodebuild signs the
         # app + nested frameworks and embeds the entitlements during the build,
         # so the result actually runs. CODE_SIGNING_REQUIRED=NO keeps a signing
-        # hiccup from failing the build.
+        # hiccup from failing the build. SPARKLE_PUBLIC_ED_KEY (empty when
+        # unset) becomes Info.plist SUPublicEDKey.
+        env:
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY || secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: |
           xcodebuild \
             -project Scribe.xcodeproj \
@@ -92,7 +110,116 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
+            SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}" \
             build
+
+      - name: Detect signing + update secrets
+        # Maps secrets into env and reports which optional stages can run.
+        # Every later signing / notarization / Sparkle step keys off these
+        # outputs, so an unconfigured repo keeps the plain ad-hoc flow.
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY || secrets.SPARKLE_PUBLIC_ED_KEY }}
+        run: |
+          developer_id=false
+          notarize=false
+          sparkle=false
+          if [ -n "${MACOS_CERTIFICATE_P12:-}" ] && [ -n "${MACOS_CERTIFICATE_PASSWORD:-}" ]; then
+            developer_id=true
+            if [ -n "${NOTARY_API_KEY:-}" ] && [ -n "${NOTARY_API_KEY_ID:-}" ] && [ -n "${NOTARY_API_ISSUER_ID:-}" ]; then
+              notarize=true
+            elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+              notarize=true
+            else
+              echo "::warning::Developer ID certificate found but no notarization credentials; the app will be signed but not notarized"
+            fi
+          else
+            echo "::notice::No Developer ID secrets; building an ad-hoc signed, non-notarized release"
+          fi
+          if [ -n "${SPARKLE_PRIVATE_KEY:-}" ]; then
+            sparkle=true
+            if [ -z "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
+              echo "::warning::SPARKLE_PRIVATE_KEY is set but SPARKLE_PUBLIC_ED_KEY is not; this build's updater is disabled"
+            fi
+          else
+            echo "::notice::No SPARKLE_PRIVATE_KEY; skipping update signing + appcast"
+          fi
+          {
+            echo "developer_id=${developer_id}"
+            echo "notarize=${notarize}"
+            echo "sparkle=${sparkle}"
+          } >> "$GITHUB_OUTPUT"
+          echo "developer_id=${developer_id} notarize=${notarize} sparkle=${sparkle}"
+
+      - name: Sign app with Developer ID
+        # Temporary keychain (removed in the last step), then inside-out
+        # re-signing with Hardened Runtime + secure timestamp + entitlements.
+        if: steps.signing.outputs.developer_id == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          APP="build/dd/Build/Products/Release/Scribe.app"
+          KEYCHAIN="$RUNNER_TEMP/scribe-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          CERT="$RUNNER_TEMP/scribe-developer-id.p12"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "KEYCHAIN_PATH=$KEYCHAIN" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$CERT"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # Put the temporary keychain first in the search list (codesign
+          # needs it there to build the certificate chain).
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep 'Developer ID Application' || true)"
+          if [ -n "${APPLE_TEAM_ID:-}" ]; then
+            IDENTITIES="$(printf '%s\n' "$IDENTITIES" | grep "(${APPLE_TEAM_ID})" || true)"
+          fi
+          IDENTITY="$(printf '%s\n' "$IDENTITIES" | head -1 | awk '{print $2}')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::MACOS_CERTIFICATE_P12 holds no usable 'Developer ID Application' identity"
+            exit 1
+          fi
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+          scripts/codesign-developer-id.sh "$APP" "$IDENTITY" Scribe/Resources/Scribe.entitlements "$KEYCHAIN"
+
+      - name: Notarize + staple app
+        if: steps.signing.outputs.notarize == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          APP="build/dd/Build/Products/Release/Scribe.app"
+          SUBMISSION="$RUNNER_TEMP/Scribe-notarize.zip"
+          ditto -c -k --keepParent "$APP" "$SUBMISSION"
+          scripts/notarize.sh "$SUBMISSION"
+          rm -f "$SUBMISSION"
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
 
       - name: Package app (.zip + .dmg)
         id: package
@@ -120,6 +247,101 @@ jobs:
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           ls -lh dist
 
+      - name: Sign + notarize DMG
+        # The app inside is already signed (and stapled when notarized); this
+        # signs the disk image itself so Gatekeeper accepts the download.
+        if: steps.signing.outputs.developer_id == 'true'
+        env:
+          NOTARIZE: ${{ steps.signing.outputs.notarize }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          DMG="dist/Scribe-${{ steps.package.outputs.name }}.dmg"
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" --keychain "$KEYCHAIN_PATH" "$DMG"
+          if [ "$NOTARIZE" = "true" ]; then
+            scripts/notarize.sh "$DMG"
+            xcrun stapler staple "$DMG"
+            spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+          fi
+
+      - name: Sign update + generate appcast (Sparkle)
+        # sign_update from the Sparkle release matching the linked package
+        # (Package.resolved), falling back to a pinned version. The appcast
+        # has one item — the feed URL always serves the latest release's copy.
+        if: steps.signing.outputs.sparkle == 'true' && env.RELEASE_TAG != ''
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_FALLBACK_VERSION: "2.6.4"
+        run: |
+          set -euo pipefail
+          APP="build/dd/Build/Products/Release/Scribe.app"
+          ZIP="dist/Scribe-${RELEASE_TAG}.zip"
+          [ -f "$ZIP" ] || { echo "::error::$ZIP not found"; exit 1; }
+
+          RESOLVED="Scribe.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+          SPARKLE_VERSION=""
+          if [ -f "$RESOLVED" ]; then
+            SPARKLE_VERSION="$(python3 -c 'import json,sys
+          data = json.load(open(sys.argv[1]))
+          pins = data.get("pins") or data.get("object", {}).get("pins", [])
+          for pin in pins:
+              name = (pin.get("identity") or pin.get("package") or "").lower()
+              if name == "sparkle":
+                  print(pin.get("state", {}).get("version") or "")
+                  break' "$RESOLVED" || true)"
+          fi
+          SPARKLE_VERSION="${SPARKLE_VERSION:-$SPARKLE_FALLBACK_VERSION}"
+          echo "Using Sparkle tools ${SPARKLE_VERSION}"
+
+          TOOLS="$RUNNER_TEMP/sparkle-tools"
+          rm -rf "$TOOLS"; mkdir -p "$TOOLS"
+          curl -fsSL -o "$TOOLS/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xJf "$TOOLS/sparkle.tar.xz" -C "$TOOLS"
+          SIGN_UPDATE="$TOOLS/bin/sign_update"
+          [ -x "$SIGN_UPDATE" ] || { echo "::error::sign_update not found in the Sparkle ${SPARKLE_VERSION} tools"; exit 1; }
+
+          # Prints: sparkle:edSignature="…" length="…"
+          SIGNATURE_ATTRS="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - "$ZIP")"
+          case "$SIGNATURE_ATTRS" in
+            *edSignature=*) ;;
+            *) echo "::error::sign_update produced no signature"; exit 1 ;;
+          esac
+
+          SHORT_VERSION="${RELEASE_TAG#v}"
+          BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist")"
+          MIN_SYSTEM="$(/usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
+          PUB_DATE="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+          REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
+          ZIP_URL="${REPO_URL}/releases/download/${RELEASE_TAG}/$(basename "$ZIP")"
+
+          cat > dist/appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Scribe</title>
+              <link>${REPO_URL}</link>
+              <description>Scribe releases</description>
+              <language>en</language>
+              <item>
+                <title>Scribe ${SHORT_VERSION}</title>
+                <pubDate>${PUB_DATE}</pubDate>
+                <sparkle:version>${BUILD_VERSION}</sparkle:version>
+                <sparkle:shortVersionString>${SHORT_VERSION}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>${MIN_SYSTEM}</sparkle:minimumSystemVersion>
+                <sparkle:fullReleaseNotesLink>${REPO_URL}/releases/tag/${RELEASE_TAG}</sparkle:fullReleaseNotesLink>
+                <enclosure url="${ZIP_URL}" type="application/octet-stream" ${SIGNATURE_ATTRS} />
+              </item>
+            </channel>
+          </rss>
+          EOF
+          cat dist/appcast.xml
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -131,13 +353,20 @@ jobs:
         if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTARIZED: ${{ steps.signing.outputs.notarize }}
         run: |
           set -euo pipefail
           TAG="${RELEASE_TAG}"
           NOTES="dist/RELEASE_NOTES.md"
 
-          # Download / Gatekeeper blurb (the artifact is not notarized).
-          cat > "$NOTES" <<'EOF'
+          # Download / Gatekeeper blurb.
+          if [ "${NOTARIZED:-false}" = "true" ]; then
+            cat > "$NOTES" <<'EOF'
+          > Signed with a Developer ID and notarized by Apple.
+
+          EOF
+          else
+            cat > "$NOTES" <<'EOF'
           > **Not notarized.** Built and ad-hoc signed by CI (no Apple Developer ID
           > signature). On first launch macOS Gatekeeper will warn — right-click the
           > app and choose **Open**, or run:
@@ -146,6 +375,10 @@ jobs:
           > xattr -dr com.apple.quarantine /Applications/Scribe.app
           > ```
 
+          EOF
+          fi
+
+          cat >> "$NOTES" <<'EOF'
           Apple Silicon, macOS 27+. Install with Homebrew:
 
           ```sh
@@ -191,6 +424,18 @@ jobs:
             --title "Scribe ${TAG}" \
             --notes-file "$NOTES"
 
+      - name: Upload appcast (Sparkle)
+        if: env.RELEASE_TAG != '' && steps.signing.outputs.sparkle == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -f dist/appcast.xml ]; then
+            gh release upload "${RELEASE_TAG}" dist/appcast.xml --clobber
+          else
+            echo "::warning::dist/appcast.xml missing; the in-app updater won't see this release"
+          fi
+
       - name: Update Homebrew cask (varijkapil13/homebrew-tap)
         # Runs after the GitHub Release exists, so the cask never points at a
         # missing download. Needs a HOMEBREW_TAP_TOKEN secret (a fine-grained
@@ -225,3 +470,10 @@ jobs:
           git commit -m "scribe ${VERSION}"
           git push origin HEAD
           echo "::notice::Homebrew cask updated to ${VERSION}"
+
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "${KEYCHAIN_PATH}" ]; then
+            security delete-keychain "${KEYCHAIN_PATH}" || true
+          fi

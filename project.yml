@@ -54,6 +54,8 @@ targets:
       - target: ScribeWidgets
       - target: ScribeQuickLook
       - target: ScribeShare
+      # Sparkle 2 auto-updates (Scribe/App/Updater.swift).
+      - package: Sparkle
       # The note editor is now the CodeMirror 6 bundle hosted in a WKWebView
       # (WebMarkdownEditor + Scribe/Resources/Editor/). The old native
       # CodeEditSourceEditor engine has been removed, so it is no longer a
@@ -89,6 +91,10 @@ targets:
         # with compiler-extracted keys.
         LOCALIZATION_PREFERS_STRING_CATALOGS: "YES"
         SWIFT_EMIT_LOC_STRINGS: "YES"
+        # Sparkle EdDSA public key, expanded into Info.plist SUPublicEDKey.
+        # Empty (the default) disables the updater gracefully; the release
+        # workflow passes the real key on the xcodebuild command line.
+        SPARKLE_PUBLIC_ED_KEY: ""
     postBuildScripts:
       # Bundle the speaker-diarization models when they've been fetched
       # (scripts/fetch-diarizer-models.sh; release builds always do). Without
@@ -273,3 +279,6 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     exactVersion: "0.17.7"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
