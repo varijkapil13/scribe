@@ -82,7 +82,11 @@ struct TaskSyncTriggerPolicy {
 @MainActor
 final class TaskSyncScheduler {
 
+    // Arguments are passed explicitly: default arguments of a main-actor
+    // init can't be evaluated from this static initializer.
     static let shared = TaskSyncScheduler(
+        policy: TaskSyncTriggerPolicy(),
+        localChangeDebounce: .seconds(5),
         isSyncAllowed: { CloudKitAvailability.canSyncTasks },
         isToggleOn: { CloudKitSyncService.isEnabled },
         runSync: { try await TaskSyncCoordinator.live.sync() }
@@ -110,8 +114,8 @@ final class TaskSyncScheduler {
     var isSyncing: Bool { policy.isSyncing }
 
     init(
-        policy: TaskSyncTriggerPolicy = TaskSyncTriggerPolicy(),
-        localChangeDebounce: Duration = .seconds(5),
+        policy: TaskSyncTriggerPolicy,
+        localChangeDebounce: Duration,
         isSyncAllowed: @escaping @MainActor () -> Bool,
         isToggleOn: @escaping @MainActor () -> Bool,
         runSync: @escaping @MainActor () async throws -> Void
