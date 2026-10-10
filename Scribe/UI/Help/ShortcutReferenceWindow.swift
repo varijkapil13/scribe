@@ -29,6 +29,7 @@ enum ShortcutReferenceCatalog {
             entry("Command Bar", "⌘", "K"),
             entry("New Note", "⌘", "N"),
             entry("New Daily Note", "⌃", "⌘", "N"),
+            entry("New Note from Template", "⌥", "⌘", "N"),
             entry("Open Note in New Window", "⌥", "⌘", "O"),
             entry("Print Note", "⌘", "P"),
             entry("Settings", "⌘", ","),
@@ -51,6 +52,7 @@ enum ShortcutReferenceCatalog {
             entry("Find and Replace", "⌥", "⌘", "F"),
             entry("Find Next", "⌘", "G"),
             entry("Find Previous", "⇧", "⌘", "G"),
+            entry("Copy Block Link", "⌥", "⇧", "⌘", "C"),
         ]),
         ShortcutReferenceSection(title: "Format", entries: [
             entry("Bold", "⌘", "B"),

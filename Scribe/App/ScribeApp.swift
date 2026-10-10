@@ -25,6 +25,9 @@ struct ScribeApp: App {
         }
         .commands { scribeCommands }
         .commands { ScribeMenuCommands() }
+        .commands { MediaAICommands() }
+        .commands { NotePowerMenuCommands() }
+        .commands { DocumentsMenuCommands() }
 
         // Standalone note windows (File › Open in New Window, ⌥⌘O). Restored
         // with their note on relaunch.
@@ -33,6 +36,12 @@ struct ScribeApp: App {
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
         }
+
+        // File › Translate Note… / Translate Transcript….
+        WindowGroup("Translate", id: ScribeTranslationRequest.windowID, for: ScribeTranslationRequest.self) { $request in
+            if let request { TranslationWindowView(request: request) }
+        }
+        .windowResizability(.contentSize)
 
         // Help › Keyboard Shortcuts.
         Window("Keyboard Shortcuts", id: ShortcutReferenceWindow.windowID) {

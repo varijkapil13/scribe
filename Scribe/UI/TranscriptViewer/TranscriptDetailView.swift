@@ -15,6 +15,9 @@ struct TranscriptDetailView: View {
     @State var openedTask: TodoTask?
     /// Playback of the session's retained audio (inert when it has none).
     @StateObject private var audioPlayer = SessionAudioPlayer()
+    /// Bookmarked moments (meeting copilot): Highlights + timeline markers.
+    @StateObject private var highlights = SessionHighlightsModel(store: .shared)
+    @State private var showFollowUp = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -62,6 +65,7 @@ struct TranscriptDetailView: View {
 
             if audioPlayer.hasAudio {
                 SessionAudioPlayerBar(player: audioPlayer)
+                    .environment(\.playbackBookmarkOffsets, highlights.bookmarks.map(\.offsetMs))
                     .padding(.horizontal, DesignTokens.Spacing.xl)
                     .padding(.bottom, DesignTokens.Spacing.md)
             }
@@ -70,7 +74,7 @@ struct TranscriptDetailView: View {
                 Group {
                     switch selectedTab {
                     case .transcript:  transcriptSection
-                    case .summary:     summarySection
+                    case .summary:     summaryTabContent
                     case .actionItems: actionItemsSection
                     case .insights:    insightsSection
                     }
@@ -81,6 +85,17 @@ struct TranscriptDetailView: View {
         .frame(minWidth: 600, minHeight: 480)
         .sheet(isPresented: $showExportSheet) {
             ExportSheetView(session: session, segments: viewModel.segments)
+        }
+        .sheet(isPresented: $showFollowUp) {
+            FollowUpEmailSheet(
+                session: viewModel.session,
+                summary: viewModel.meetingSummary,
+                highlights: highlights.plainLines(
+                    segments: viewModel.segments,
+                    speakerName: { viewModel.speakerName(for: $0) }
+                ),
+                onClose: { showFollowUp = false }
+            )
         }
         .sheet(isPresented: $showMoveSheet) {
             MoveSegmentsSheet(viewModel: viewModel) {
@@ -106,6 +121,7 @@ struct TranscriptDetailView: View {
             // search, omit) its audio folder.
             viewModel.reloadSession()
             audioPlayer.load(session: viewModel.session)
+            highlights.load(sessionId: session.id)
         }
         .onDisappear { audioPlayer.stop() }
         // Background diarization finished: segments were split/relabelled.
@@ -263,6 +279,12 @@ struct TranscriptDetailView: View {
                 SessionTemplateActionsMenu(session: viewModel.session)
                     .disabled(viewModel.segments.isEmpty)
 
+                Button { showFollowUp = true } label: {
+                    Label("Follow-up", systemImage: "envelope")
+                }
+                .disabled(viewModel.segments.isEmpty)
+                .help("Draft a follow-up email to the attendees")
+
                 Spacer()
 
                 SpeakersButton(viewModel: viewModel)
@@ -415,6 +437,52 @@ struct TranscriptDetailView: View {
     }
 
     // MARK: - Summary
+
+    /// Summary tab: share row, bookmarked highlights, then the summary.
+    /// Kept out of `body` to spare the type checker.
+    private var summaryTabContent: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+            summaryShareRow
+            SessionHighlightsSection(
+                model: highlights,
+                segments: viewModel.segments,
+                speakerName: { viewModel.speakerName(for: $0) },
+                onPlay: highlightPlayAction
+            )
+            summarySection
+        }
+    }
+
+    /// Seek-and-play for a highlight, or nil without audio.
+    private var highlightPlayAction: ((Int) -> Void)? {
+        guard audioPlayer.hasAudio else { return nil }
+        let player = audioPlayer
+        return { ms in player.playFrom(ms: ms) }
+    }
+
+    /// "Share" for the stored summary (sharing picker via ShareLink).
+    @ViewBuilder
+    private var summaryShareRow: some View {
+        if let summary = viewModel.meetingSummary {
+            HStack {
+                Spacer()
+                ShareLink(
+                    item: FollowUpEmailComposer.summaryShareText(
+                        title: session.title,
+                        summary: summary,
+                        highlights: highlights.plainLines(
+                            segments: viewModel.segments,
+                            speakerName: { viewModel.speakerName(for: $0) }
+                        )
+                    ),
+                    subject: Text(session.title)
+                ) {
+                    Label("Share Summary", systemImage: "square.and.arrow.up")
+                }
+                .controlSize(.small)
+            }
+        }
+    }
 
     @ViewBuilder
     private var summarySection: some View {

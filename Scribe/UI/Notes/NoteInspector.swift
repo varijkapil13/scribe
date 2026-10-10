@@ -153,6 +153,8 @@ struct NoteInspectorView: View {
                     }
                 }
             }
+
+            NotePowerInspectorSections(vm: vm, onNavigate: onNavigate)
         }
         .formStyle(.grouped)
         .accessibilityLabel("Note inspector")

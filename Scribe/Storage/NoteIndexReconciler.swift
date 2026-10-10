@@ -240,9 +240,7 @@ struct NoteIndexReconciler: Sendable {
         try db.execute(sql: "DELETE FROM note_links WHERE sourceNoteId = ?", arguments: [file.id])
         let anchors = NoteStore.parseWikiLinks(from: file.body)
         for anchor in anchors {
-            if let target = try Note
-                .filter(sql: "LOWER(title) = LOWER(?)", arguments: [anchor])
-                .fetchOne(db) {
+            if let target = try NoteStore.resolveLinkTarget(db, anchor: anchor) {
                 let link = NoteLinkRow(
                     sourceNoteId: file.id,
                     targetNoteId: target.id,

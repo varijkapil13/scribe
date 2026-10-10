@@ -199,6 +199,9 @@ struct NoteAIFeaturesModifier: ViewModifier {
             Label(controller.busyLabel ?? "Notes AI",
                   systemImage: controller.isBusy ? "hourglass" : "sparkles")
         }
+        // Locked notes stay out of AI features (their stored body is
+        // ciphertext, so AI edits written to the note would be dropped).
+        .disabled(vm.isLockedNote)
         .help(controller.busyLabel ?? "Enhance your notes with the recording, or run a recipe")
     }
 }

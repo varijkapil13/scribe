@@ -69,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     Log.app.info("Removed \(removed) leftover diarization scratch folder(s).")
                 }
             }
+            // On-device semantic index (follows Settings → Intelligence).
+            SemanticIndexScheduler.shared.start()
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves
@@ -103,6 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         VaultCoordinator.shared.start()
 
         registerKeyboardShortcuts()
+        // Meeting copilot: live summary / Ask now / ⌃⌥M bookmarks + pre-meeting briefs.
+        MeetingCopilot.install(appState: appState)
         // App Intents (Shortcuts / Siri) entry points + Spotlight indexing.
         ScribeIntentsBridge.didFinishLaunching(self)
         observeMainWindowClose()
@@ -176,6 +180,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // write (or prune) archives in the user's backup folder.
         if !AppLaunchEnvironment.isUITesting && !AppLaunchEnvironment.usesUITestFixtures {
             ScribeAutoBackupScheduler.shared.start()
+        }
+
+        // Documents: background OCR of attachments + locked-note re-locking.
+        if !AppLaunchEnvironment.isUITesting {
+            DocumentsServices.start()
         }
 
         // Proactively request microphone and speech-recognition authorization
@@ -422,7 +431,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 now: now,
                 meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:)),
                 explicitTitle: namesNote ? event.map { CalendarNoteFormatter.noteTitle(for: $0, date: now) } : nil,
-                initialBody: namesNote ? (event.map(CalendarNoteFormatter.noteHeader(for:)) ?? "") : ""
+                initialBody: Self.meetingNoteInitialBody(event: event, namesNote: namesNote,
+                                                         meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:)),
+                                                         now: now)
             )
         } catch {
             // Surface the underlying createNote error to the user instead of

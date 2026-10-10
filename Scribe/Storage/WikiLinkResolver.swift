@@ -11,11 +11,9 @@ import Foundation
 ///     (`LOWER(title) = LOWER(anchor)` in `NoteStore.upsertNote` /
 ///     `NoteStore.resolveTitle` / `NoteIndexReconciler`).
 ///
-/// Alias form (`[[Title|alias]]`) is tolerated: the portion before the first
-/// `|` is used as the lookup title. `NoteStore` does not itself split on `|`
-/// today, so a stored anchor of `"Title|alias"` never resolves there; splitting
-/// here is strictly more lenient and never reports a link as broken that
-/// `NoteStore` would have stored as resolved.
+/// Alias form (`[[Title|alias]]`) and heading / block links
+/// (`[[Title#Heading]]`, `[[Title#^id]]`) resolve on their title, exactly as
+/// `NoteStore` resolves them (see `WikiLinkTarget.lookupCandidates`).
 enum WikiLinkResolver {
 
     /// Same pattern as `NoteStore.wikiLinkRegex` — captures the inner text of a
@@ -50,13 +48,13 @@ enum WikiLinkResolver {
             let anchor = String(body[r]).trimmingCharacters(in: .whitespaces)
             guard !anchor.isEmpty else { continue }
 
-            // Resolve against the part before an optional `|alias`.
-            let lookup = anchor
-                .split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)[0]
-                .trimmingCharacters(in: .whitespaces)
-                .lowercased()
-
-            guard !known.contains(lookup) else { continue }
+            // Resolve against the part before an optional `|alias`, then the
+            // title without a `#Heading` / `#^block` fragment. A same-note
+            // link (`[[#Heading]]`) always resolves.
+            if WikiLinkTarget.parse(anchor).refersToSameNote { continue }
+            let candidates = WikiLinkTarget.lookupCandidates(forAnchor: anchor)
+            guard !candidates.isEmpty else { continue }
+            guard !candidates.contains(where: { known.contains($0.lowercased()) }) else { continue }
             guard seen.insert(anchor.lowercased()).inserted else { continue }
             result.append(anchor)
         }

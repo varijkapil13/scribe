@@ -267,7 +267,7 @@ extension NoteFrontmatter {
     /// generic property pane.
     static let reservedPropertyKeys: Set<String> = [
         "id", "title", "created", "updated", "notebookId", "tags",
-        "isDailyNote", "dailyDate", "font", "cover", "icon",
+        "isDailyNote", "dailyDate", "font", "cover", "icon", "locked",
     ]
 
     /// The note's user-defined typed properties, derived from `extra`,

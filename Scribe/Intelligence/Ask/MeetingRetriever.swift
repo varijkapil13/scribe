@@ -14,10 +14,17 @@ struct MeetingRetriever: Sendable {
 
     let dbManager: DatabaseManager
     var budget: Int = MeetingRetrieval.defaultBudget
+    /// Semantic (embedding) candidates to fuse with full-text ones. nil uses
+    /// the shared on-device index when "Semantic search" is on (see
+    /// `MeetingRetriever+Semantic.swift`).
+    var semantic: (any SemanticCandidateProviding)?
 
-    init(dbManager: DatabaseManager = .shared, budget: Int = MeetingRetrieval.defaultBudget) {
+    init(dbManager: DatabaseManager = .shared,
+         budget: Int = MeetingRetrieval.defaultBudget,
+         semantic: (any SemanticCandidateProviding)? = nil) {
         self.dbManager = dbManager
         self.budget = budget
+        self.semantic = semantic
     }
 
     /// Retrieves ranked, budgeted snippets for `question` within `scope`.
@@ -38,8 +45,13 @@ struct MeetingRetriever: Sendable {
             return found
         }
 
-        var result = MeetingRetrieval.assemble(candidates: candidates, terms: terms,
-                                               filter: filter, now: now, budget: budget)
+        // Hybrid: fuse with on-device semantic matches when available.
+        let semanticMatches = (try? self.semanticCandidates(for: question)) ?? []
+        var result = semanticMatches.isEmpty
+            ? MeetingRetrieval.assemble(candidates: candidates, terms: terms,
+                                        filter: filter, now: now, budget: budget)
+            : HybridRetrieval.assemble(lexical: candidates, semantic: semanticMatches, terms: terms,
+                                       filter: filter, now: now, budget: budget)
         if result.snippets.isEmpty {
             // Nothing matched (or the question had no usable terms, e.g.
             // "what happened?"): fall back to the most recent meetings in
@@ -126,6 +138,8 @@ struct MeetingRetriever: Sendable {
         }
     }
 
+    /// Locked notes (excerpt = `LockedNoteEnvelope.excerptPlaceholder`) never
+    /// reach Ask / the MCP server, not even by their clear title.
     private static func noteCandidates(_ db: Database, ftsQuery: String) throws -> [RetrievedSnippet] {
         let rows = try Row.fetchAll(db, sql: """
             SELECT n.id AS noteId, n.title AS noteTitle, n.notebookId AS notebookId,
@@ -134,9 +148,10 @@ struct MeetingRetriever: Sendable {
             FROM notes_fts
             JOIN notes n ON n.id = notes_fts.noteId
             WHERE notes_fts MATCH ?
+              AND (n.bodyExcerpt IS NULL OR n.bodyExcerpt != ?)
             ORDER BY bm25(notes_fts)
             LIMIT 60
-            """, arguments: [ftsQuery])
+            """, arguments: [ftsQuery, LockedNoteEnvelope.excerptPlaceholder])
         return rows.compactMap { row -> RetrievedSnippet? in
             let noteId: String = row["noteId"]
             let title: String = (row["noteTitle"] as String?) ?? ""

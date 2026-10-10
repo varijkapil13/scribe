@@ -142,6 +142,10 @@ final class NotePrintRenderer: NSObject, WKNavigationDelegate {
             AppState.shared.report("This note couldn't be found — it may have been deleted.")
             return nil
         }
+        guard !LockedNoteEnvelope.isLocked(note.body) else {
+            AppState.shared.report("This note is locked. Unlock it and use its Document menu to export it.")
+            return nil
+        }
         return LoadedDocument(note: note,
                               html: NotePrintHTML.document(for: note, transcriptStore: .shared))
     }

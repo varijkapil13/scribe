@@ -17,6 +17,9 @@ enum NoteAIEdit: Sendable, Equatable {
     case appendSection(heading: String, markdown: String)
     /// Append plain text at the end of the note (Shortcuts "Append to Note").
     case appendText(String)
+    /// Insert/replace any Scribe block `(kind, id)` (e.g. a session's
+    /// bookmarked highlights).
+    case upsertBlock(kind: String, id: String, markdown: String)
 
     static let userInfoKey = "edit"
 
@@ -28,6 +31,8 @@ enum NoteAIEdit: Sendable, Equatable {
             return NoteScribeBlocks.appendSection(body: body, heading: heading, content: markdown)
         case .appendText(let text):
             return ScribeIntentsText.append(text, to: body)
+        case .upsertBlock(let kind, let id, let markdown):
+            return NoteScribeBlocks.upsert(body: body, kind: kind, id: id, content: markdown)
         }
     }
 }
@@ -38,11 +43,14 @@ enum NoteAIEdit: Sendable, Equatable {
 enum NoteAIEditWriter {
     static func apply(_ edit: NoteAIEdit, toNoteId noteId: String, noteStore: NoteStore = .shared) throws {
         guard var note = try noteStore.fetchNote(id: noteId) else { return }
+        // Never write into a locked note's ciphertext.
+        guard !LockedNoteEnvelope.isLocked(note.body) else { return }
         let updated = edit.apply(to: note.body)
         if updated != note.body {
             note.body = updated
             let tags = try noteStore.tags(for: noteId)
-            try noteStore.updateNote(note, tags: tags)
+            // Always keep the pre-edit content in version history.
+            try noteStore.updateNote(note, tags: tags, versionReason: .aiEdit)
         }
         NotificationCenter.default.post(
             name: .scribeNoteAIEditApplied,

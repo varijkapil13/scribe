@@ -45,7 +45,13 @@ final class NoteStore: @unchecked Sendable {
     nonisolated static let shared: NoteStore = {
         let dir = try? NotesDirectory.defaultLocation()
         let fileStore = dir.map { NoteFileStore(directory: $0) }
-        return NoteStore(databaseManager: .shared, fileStore: fileStore)
+        let store = NoteStore(databaseManager: .shared, fileStore: fileStore,
+                              versionStore: NoteVersionStore.makeDefault(dbManager: .shared))
+        // Settings › Templates › daily note template.
+        store.setDailyNoteSeed { fileStore, date, title in
+            NoteTemplateDefaults.dailyNoteBody(fileStore: fileStore, date: date, title: title)
+        }
+        return store
     }()
 
     /// `fileStore` is optional so logic-only tests can opt out of disk
@@ -53,9 +59,33 @@ final class NoteStore: @unchecked Sendable {
     /// every successful DB write is mirrored to a `.md` file under
     /// `fileStore.directory.root`, and `fetchNote(id:)` prefers the
     /// disk body over the DB column when both exist.
-    init(databaseManager: DatabaseManager = .shared, fileStore: NoteFileStore? = nil) {
+    init(databaseManager: DatabaseManager = .shared, fileStore: NoteFileStore? = nil,
+         versionStore: NoteVersionStore? = nil) {
         self.dbManager = databaseManager
         self._fileStore = fileStore
+        self.versionStore = versionStore
+    }
+
+    /// Version history (snapshots of previous content before saves). nil in
+    /// logic-only tests that don't opt in.
+    let versionStore: NoteVersionStore?
+
+    /// Supplies the initial body of a daily note this store creates (the
+    /// Settings-chosen daily template): `(fileStore, date, title) -> body`.
+    typealias DailyNoteSeed = @Sendable (NoteFileStore?, Date, String) -> String?
+    private let seedLock = NSLock()
+    private var _dailyNoteSeed: DailyNoteSeed?
+
+    func setDailyNoteSeed(_ seed: DailyNoteSeed?) {
+        seedLock.lock()
+        _dailyNoteSeed = seed
+        seedLock.unlock()
+    }
+
+    private var dailyNoteSeed: DailyNoteSeed? {
+        seedLock.lock()
+        defer { seedLock.unlock() }
+        return _dailyNoteSeed
     }
 
     // MARK: - CRUD
@@ -84,7 +114,12 @@ final class NoteStore: @unchecked Sendable {
         return created
     }
 
-    func updateNote(_ note: Note, tags: [String]) throws {
+    /// Saves `note` (DB row, tags, links, FTS and its `.md` file). Before the
+    /// file is overwritten, its previous content is snapshotted into version
+    /// history per `NoteVersionPolicy` (`versionReason` other than `.edit`
+    /// bypasses the five-minute throttle).
+    func updateNote(_ note: Note, tags: [String], versionReason: NoteVersionReason = .edit) throws {
+        recordVersionBeforeSave(of: note, reason: versionReason)
         try db.write { database in
             var mutable = note
             mutable.updatedAt = Date()
@@ -103,9 +138,7 @@ final class NoteStore: @unchecked Sendable {
             try database.execute(sql: "DELETE FROM note_links WHERE sourceNoteId = ?",
                                  arguments: [note.id])
             for anchor in anchors {
-                if let target = try Note
-                    .filter(sql: "LOWER(title) = LOWER(?)", arguments: [anchor])
-                    .fetchOne(database) {
+                if let target = try Self.resolveLinkTarget(database, anchor: anchor) {
                     let link = NoteLinkRow(sourceNoteId: note.id,
                                           targetNoteId: target.id,
                                           anchorText: anchor)
@@ -188,9 +221,7 @@ final class NoteStore: @unchecked Sendable {
                 try NoteTagRow(noteId: note.id, tag: tag).insert(database)
             }
             for anchor in Self.parseWikiLinks(from: note.body) {
-                if let target = try Note
-                    .filter(sql: "LOWER(title) = LOWER(?)", arguments: [anchor])
-                    .fetchOne(database) {
+                if let target = try Self.resolveLinkTarget(database, anchor: anchor) {
                     let link = NoteLinkRow(sourceNoteId: note.id,
                                            targetNoteId: target.id,
                                            anchorText: anchor)
@@ -337,16 +368,24 @@ final class NoteStore: @unchecked Sendable {
             guard let note = try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne(database) else {
                 throw NoteStoreError.dailyNoteNotFound(key)
             }
+            var result = note
             if created {
-                // Seed FTS for the new daily note with the title only — body
-                // is empty at creation time.
-                try Self.upsertFTS(database, noteId: note.id, title: title, body: "")
+                // A new daily note starts from the Settings-chosen daily
+                // template, if any; otherwise empty.
+                let seed = dailyNoteSeed?(fileStore, date, title) ?? ""
+                if !seed.isEmpty {
+                    result.body = seed
+                    result.bodyExcerpt = Note.makeExcerpt(from: seed)
+                    try database.execute(sql: "UPDATE notes SET bodyExcerpt = ? WHERE id = ?",
+                                         arguments: [result.bodyExcerpt, note.id])
+                }
+                try Self.upsertFTS(database, noteId: note.id, title: title, body: result.body)
                 // Only mirror on actual creation. The fetched `note` carries an
                 // empty body placeholder (bodies live on disk, not in the DB), so
                 // mirroring an *existing* daily note would clobber its content.
-                try mirrorToDisk(note: note, tags: [])
+                try mirrorToDisk(note: result, tags: [])
             }
-            return (note, created)
+            return (result, created)
         }
         return (note, didCreate)
     }
@@ -436,15 +475,37 @@ final class NoteStore: @unchecked Sendable {
         guard !q.isEmpty else { return try fetchAllNotes() }
         let sanitized = Self.ftsQuery(from: q)
         guard !sanitized.isEmpty else { return [] }
-        return try db.read { database in
-            try Note.fetchAll(database, sql: """
+        return try db.read { database -> [Note] in
+            let notes = try Note.fetchAll(database, sql: """
                 SELECT notes.* FROM notes
                 JOIN notes_fts ON notes.id = notes_fts.noteId
                 WHERE notes_fts MATCH ?
                 ORDER BY bm25(notes_fts)
                 LIMIT 100
                 """, arguments: [sanitized])
+            // Then notes whose images / scanned PDFs contain the text.
+            return try Self.appendingAttachmentMatches(to: notes, ftsQuery: sanitized, limit: 100, in: database)
         }
+    }
+
+    /// `notes` followed by notes matched only through recognized attachment
+    /// text (`AttachmentTextStore`), skipping duplicates and locked notes.
+    static func appendingAttachmentMatches(
+        to notes: [Note],
+        ftsQuery: String,
+        limit: Int,
+        in database: Database
+    ) throws -> [Note] {
+        guard notes.count < limit else { return notes }
+        let seen = Set(notes.map(\.id))
+        let ids = try AttachmentTextStore.matchingNoteIds(database, ftsQuery: ftsQuery, limit: limit)
+            .filter { !seen.contains($0) }
+        guard !ids.isEmpty else { return notes }
+        let fetched = try Note.filter(keys: ids).fetchAll(database)
+        let byId = Dictionary(fetched.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let extra = ids.compactMap { byId[$0] }
+            .filter { $0.bodyExcerpt != LockedNoteEnvelope.excerptPlaceholder }
+        return Array((notes + extra).prefix(limit))
     }
 
     /// Thin wrapper kept for source-compatibility. Real logic lives in
@@ -566,9 +627,12 @@ final class NoteStore: @unchecked Sendable {
     /// disk-side body.
     static func upsertFTS(_ db: Database, noteId: String, title: String, body: String) throws {
         try db.execute(sql: "DELETE FROM notes_fts WHERE noteId = ?", arguments: [noteId])
+        // Locked notes are searchable by their (clear) title only — the body
+        // is ciphertext, and its plaintext never reaches the index.
+        let indexedBody = LockedNoteEnvelope.isLocked(body) ? "" : body
         try db.execute(
             sql: "INSERT INTO notes_fts(noteId, title, body) VALUES (?, ?, ?)",
-            arguments: [noteId, title, body]
+            arguments: [noteId, title, indexedBody]
         )
     }
 

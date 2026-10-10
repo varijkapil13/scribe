@@ -263,6 +263,9 @@ struct SessionAudioPlayerBar: View {
     /// periodic progress updates don't fight the drag.
     @State private var scrubPosition: TimeInterval?
 
+    /// Bookmarked moments drawn as ticks on the timeline (meeting copilot).
+    @Environment(\.playbackBookmarkOffsets) private var bookmarkOffsets
+
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.md) {
             Button(action: { player.togglePlayPause() }) {
@@ -292,6 +295,11 @@ struct SessionAudioPlayerBar: View {
                 }
             )
             .controlSize(.small)
+            .overlay {
+                if !bookmarkOffsets.isEmpty {
+                    BookmarkMarkersOverlay(offsetsMs: bookmarkOffsets, durationSeconds: player.duration)
+                }
+            }
             .accessibilityLabel("Playback position")
 
             Text(PlaybackTimeline.format(player.duration))

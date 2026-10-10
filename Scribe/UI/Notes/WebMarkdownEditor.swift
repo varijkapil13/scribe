@@ -437,7 +437,8 @@ struct WebMarkdownEditor: NSViewRepresentable {
                 log.error("WebMarkdownEditor: attachment \(name, privacy: .private) rejected (over the size limit)")
                 NSSound.beep()
             default:
-                break
+                // Embeds, block links, templates (editor-web/src/notepower.js).
+                NotePowerEditorBridge.handle(type: type, body: body, coordinator: self)
             }
         }
 

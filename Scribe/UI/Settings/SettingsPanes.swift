@@ -18,10 +18,12 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case shortcuts
     case links
     case templates
+    case copilot
     case mcp
     case about
     case privacy
     case backup
+    case documents
 
     var id: String { rawValue }
 
@@ -38,10 +40,12 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .shortcuts:    return "Shortcuts"
         case .links:        return "Links & Handoff"
         case .templates:    return "Templates"
+        case .copilot:      return "Meeting Copilot"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
         case .privacy:      return "Privacy"
         case .backup:       return "Backup"
+        case .documents:    return "Documents"
         }
     }
 
@@ -58,10 +62,12 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .shortcuts:    return "keyboard"
         case .links:        return "link"
         case .templates:    return "doc.text.magnifyingglass"
+        case .copilot:      return "person.wave.2"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
         case .privacy:      return "hand.raised"
         case .backup:       return "externaldrive.badge.timemachine"
+        case .documents:    return "doc.on.doc"
         }
     }
 }
@@ -111,10 +117,12 @@ struct SettingsPaneView: View {
         case .shortcuts:    ShortcutsSettingsPane()
         case .links:        LinksSettingsPane()
         case .templates:    TemplatesSettingsPane()
+        case .copilot:      CopilotSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
         case .privacy:      PrivacySettingsPane()
         case .backup:       BackupSettingsPane()
+        case .documents:    DocumentsSettingsPane()
         }
     }
 }
@@ -154,9 +162,9 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
         switch self {
         case .general:      return [.general, .privacy]
         case .recording:    return [.calendar]
-        case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
+        case .intelligence: return [.intelligence, .templates, .copilot, .vocabulary, .hooks]
         case .dictation:    return [.dictation]
-        case .storageSync:  return [.storage, .reminders, .backup]
+        case .storageSync:  return [.storage, .reminders, .backup, .documents]
         case .shortcuts:    return [.shortcuts, .links]
         case .mcp:          return [.mcp]
         case .about:        return [.about]
@@ -533,6 +541,8 @@ private struct IntelligenceSettingsPane: View {
                     caption: "Score overall and per-speaker sentiment from -1.0 to +1.0."
                 )
             }
+
+            SemanticSearchSettingsSection()
         }
         .formStyle(.grouped)
     }
@@ -827,7 +837,8 @@ private struct ShortcutsSettingsPane: View {
                 KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
                 KeyboardShortcuts.Recorder("Dictate:", name: .dictation)
                 KeyboardShortcuts.Recorder("Quick Capture:", name: .quickCapture)
-                Text("Press these shortcuts from any app to start or stop recording, dictate into the focused app, or jot down a note or task, without opening Scribe.")
+                KeyboardShortcuts.Recorder("Mark Moment:", name: .markMoment)
+                Text("Press these shortcuts from any app to start or stop recording, dictate into the focused app, jot down a note or task, or mark a moment in the current recording, without opening Scribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

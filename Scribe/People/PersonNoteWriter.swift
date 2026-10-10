@@ -124,6 +124,8 @@ struct PersonNoteService {
         let block = PersonNoteContent.autoBlock(for: person)
 
         if var existing = try existingNote(for: person) {
+            // Never write into a locked note's ciphertext.
+            guard !LockedNoteEnvelope.isLocked(existing.body) else { return existing }
             let updated = PersonNoteContent.upsert(block: block, into: existing.body)
             guard updated != existing.body else { return existing }
             existing.body = updated

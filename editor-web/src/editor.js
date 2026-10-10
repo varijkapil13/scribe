@@ -67,6 +67,7 @@ import {
   clearPendingAttachments,
 } from "./attachments.js";
 import { imageExtensions } from "./images.js";
+import { notePowerExtensions } from "./notepower.js";
 
 // ── Lazy KaTeX ───────────────────────────────────────────────────────────────
 // KaTeX (the JS engine ~0.6 MB plus its inlined-font CSS) is LAZY-LOADED via a
@@ -684,11 +685,26 @@ function decorateInlinePatterns(view, deco, known, lineActive, isConsumed) {
       const start = from + m.index;
       const end = start + m[0].length;
       if (isConsumed(start)) continue;
+      // `![[…]]` embeds are rendered by notepower.js.
+      if (start > 0 && state.doc.sliceString(start - 1, start) === "!") continue;
       const inner = m[1];
       const pipe = inner.indexOf("|");
       const target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
-      const label = (pipe >= 0 ? inner.slice(pipe + 1) : inner).trim();
-      const resolved = known.has(target.toLowerCase());
+      // `[[Note#Heading]]` / `[[Note#^block]]` resolve on the note title;
+      // `[[#Heading]]` points into this note.
+      const hash = target.indexOf("#");
+      const noteTitle = hash >= 0 ? target.slice(0, hash).trim() : target;
+      const fragment = hash >= 0 ? target.slice(hash + 1).trim().replace(/^\^/, "") : "";
+      const label =
+        pipe >= 0
+          ? inner.slice(pipe + 1).trim()
+          : fragment
+          ? noteTitle
+            ? `${noteTitle} \u203A ${fragment}`
+            : fragment
+          : target;
+      const resolved =
+        known.has(target.toLowerCase()) || noteTitle === "" || known.has(noteTitle.toLowerCase());
       if (lineActive(start)) {
         // Active line: keep raw text editable, just tint it.
         deco.push({
@@ -793,6 +809,8 @@ const SLASH_COMMANDS = [
   { id: "math", label: "Math Block", hint: "$$", run: (v) => insertBlock(v, "$$\n", "\n$$") },
   { id: "mermaid", label: "Mermaid Diagram", hint: "</>", run: (v) => insertBlock(v, "```mermaid\n", "\n```") },
   { id: "wikilink", label: "Wiki Link", hint: "[[ ]]", run: (v) => insertInline(v, "[[", "]]") },
+  { id: "embed", label: "Embed Note", hint: "![[ ]]", run: (v) => insertInline(v, "![[", "]]") },
+  { id: "template", label: "Template\u2026", hint: "{{ }}", run: () => postToNative({ type: "insertTemplateRequest" }) },
 ];
 
 // Replace the active line's leading text up to the cursor with `prefix`.
@@ -999,6 +1017,7 @@ const state = EditorState.create({
     outlineExtensions(),
     attachmentExtensions(),
     imageExtensions(),
+    notePowerExtensions(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     markdown({ base: markdownLanguage }),
     EditorView.lineWrapping,

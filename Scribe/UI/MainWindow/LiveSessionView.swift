@@ -28,6 +28,10 @@ struct LiveSessionView: View {
     /// disabled and rapid clicks can't queue multiple `resumeRecording()` calls.
     @State private var isResuming = false
 
+    /// True while the copilot's "Ask now" field has focus: the bare-Space
+    /// pause shortcut is lifted so typing a question can't pause recording.
+    @FocusState private var copilotTextFocused: Bool
+
     private enum RecordingFeedback: Equatable {
         case none, started, stopped, paused, resumed
     }
@@ -39,9 +43,16 @@ struct LiveSessionView: View {
                 .padding(.top, DesignTokens.Spacing.xl)
                 .padding(.bottom, DesignTokens.Spacing.lg)
 
+            // Meeting copilot: rolling summary, Ask now, bookmarks.
+            LiveCopilotPanel(controller: LiveCopilotController.shared, askFocus: $copilotTextFocused)
+                .padding(.horizontal, DesignTokens.Spacing.xl)
+                .padding(.bottom, DesignTokens.Spacing.md)
+
             Divider()
 
             transcriptFeed
+
+            LiveCaptionTranslationBar(segments: appState.overlaySegments)
         }
         .background(DesignTokens.Palette.surface)
         // Transport shortcuts (Space = pause/resume, ⌘. = stop) live on the
@@ -180,7 +191,7 @@ struct LiveSessionView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
-            .keyboardShortcut(.space, modifiers: [])
+            .keyboardShortcut(copilotTextFocused ? nil : KeyboardShortcut(.space, modifiers: []))
             .disabled(!appState.isTranscribing || isResuming)
             .accessibilityLabel(appState.audioManager.isPaused ? "Resume recording" : "Pause recording")
             .accessibilityHint("Space")

@@ -183,17 +183,31 @@ struct NoteDetailView: View {
             }
 
             // ── Body editor (full width) ───────────────────────────────────
-            NoteEditorView(
-                text: Binding(
-                    get: { vm.note.body },
-                    set: { vm.note.body = $0; vm.markDirty() }
-                ),
-                noteStore: .shared,
-                noteId: vm.note.id,
-                onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) },
-                focusModeEnabled: focusMode
-            )
-            .padding(.vertical, DesignTokens.Spacing.xs)
+            // A locked note shows its unlock view until Touch ID releases it.
+            if vm.lockPhase == .locked {
+                LockedNoteUnlockView(title: vm.note.title) {
+                    Task { await vm.unlockNote() }
+                }
+            } else {
+                NoteEditorView(
+                    text: Binding(
+                        get: { vm.note.body },
+                        set: {
+                            // A late edit from the editor (its debounced
+                            // change) after the note re-locked must not put
+                            // plaintext back into the locked body.
+                            guard vm.lockPhase != .locked else { return }
+                            vm.note.body = $0
+                            vm.markDirty()
+                        }
+                    ),
+                    noteStore: .shared,
+                    noteId: vm.note.id,
+                    onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) },
+                    focusModeEnabled: focusMode
+                )
+                .padding(.vertical, DesignTokens.Spacing.xs)
+            }
 
             // ── Backlinks (collapsible, only when non-empty) ───────────────
             if !vm.backlinks.isEmpty && !focusMode {
@@ -233,6 +247,8 @@ struct NoteDetailView: View {
         .modifier(NoteAIFeaturesModifier(vm: vm))
         // Handoff / search activity + Reveal in Finder / Copy Link menu.
         .modifier(NoteEntryPointsModifier(noteId: vm.note.id, title: vm.note.title))
+        // Lock / unlock, attachments with Live Text, HTML export.
+        .modifier(NoteDocumentsModifier(vm: vm))
         .sheet(item: $openedTaskFromAction) { task in
             TaskInspectorSheet(task: task) { openedTaskFromAction = nil }
         }
