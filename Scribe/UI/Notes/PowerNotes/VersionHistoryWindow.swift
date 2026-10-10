@@ -248,7 +248,7 @@ struct VersionDiffView: View {
     let lines: [NoteLineDiff.Line]
 
     var body: some View {
-        ScrollView([.vertical, .horizontal]) {
+        ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
