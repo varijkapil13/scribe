@@ -699,9 +699,24 @@ private struct DraftDailyNoteView: View {
             guard !hasCreated else { return }
             guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             do {
-                var note = try NoteStore.shared.dailyNote(for: date)
-                note.body = newValue
-                try NoteStore.shared.updateNote(note, tags: [])
+                let store = NoteStore.shared
+                let (fetched, didCreate) = try store.dailyNoteCreatingIfNeeded(for: date)
+                // If the day's note already exists (another window, iCloud,
+                // an external editor created it since this draft appeared),
+                // bind to it as-is — never overwrite its body with the
+                // draft's first keystroke.
+                var note = fetched
+                if !didCreate, let full = try store.fetchNote(id: fetched.id) {
+                    note = full   // real body from disk, not the DB placeholder
+                }
+                if let body = NoteStore.dailyDraftBodyToWrite(
+                    created: didCreate,
+                    existingBody: note.body,
+                    draft: newValue
+                ) {
+                    note.body = body
+                    try store.updateNote(note, tags: (try? store.tags(for: note.id)) ?? [])
+                }
                 hasCreated = true
                 onCreated(note)
             } catch {
