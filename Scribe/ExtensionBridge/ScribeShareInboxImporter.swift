@@ -5,6 +5,9 @@
 // appended to the "Inbox" note, or a task — images saved as note
 // attachments — and deletes the folder. Stores and roots are injected so
 // tests run against an in-memory database and temp folders.
+//
+// Portable: compiled into the macOS app and the iOS app (project.yml →
+// ScribeiOS); the iOS side runs it from ScribeiOS/System/IOSSystemIntegration.
 
 import Foundation
 
@@ -35,8 +38,9 @@ enum ScribeShareComposer {
         return fallbackTitle
     }
 
-    /// Markdown for the shared text, links and images (in that order),
-    /// separated by blank lines. `dropFirstLine` omits the text's first line
+    /// Markdown for the shared text, links and attachments (in that order),
+    /// separated by blank lines. Images embed (`![](…)`); other files (a
+    /// shared PDF) become links. `dropFirstLine` omits the text's first line
     /// when it already became the title.
     static func body(for payload: ScribeSharePayload, imageLinks: [String], dropFirstLine: Bool = false) -> String {
         var sections: [String] = []
@@ -47,7 +51,7 @@ enum ScribeShareComposer {
         if !text.isEmpty { sections.append(text) }
         let links = payload.urls.map { "- <\($0)>" }
         if !links.isEmpty { sections.append(links.joined(separator: "\n")) }
-        let images = imageLinks.map { "![](\($0))" }
+        let images = imageLinks.map(attachmentMarkdown)
         if !images.isEmpty { sections.append(images.joined(separator: "\n")) }
         return sections.joined(separator: "\n\n")
     }
@@ -77,6 +81,15 @@ enum ScribeShareComposer {
             of: "\\s+$", with: "", options: .regularExpression
         )
         return trimmed.isEmpty ? entry + "\n" : trimmed + "\n\n" + entry + "\n"
+    }
+
+    /// `![](path)` for an image, `[file.pdf](path)` for any other file.
+    static func attachmentMarkdown(_ path: String) -> String {
+        if EditorAttachmentFiles.isImage(filename: path, mimeType: nil) {
+            return "![](\(path))"
+        }
+        let name = path.split(separator: "/").last.map(String.init) ?? path
+        return "[\(name)](\(path))"
     }
 
     // MARK: - Helpers
@@ -113,10 +126,21 @@ struct ScribeShareImportOutcome: Equatable {
     let destination: Destination
     let message: String
 
+    #if os(macOS)
     var selection: MainSelection {
         switch destination {
         case .note(let id): return .note(id)
         case .task(let id): return .task(id)
+        }
+    }
+    #endif
+
+    /// The `scribe://note/<id>` / `scribe://task/<id>` link to the result
+    /// (how the iOS app opens it).
+    var deepLinkURL: URL {
+        switch destination {
+        case .note(let id): return ScribeAppGroup.noteURL(id: id)
+        case .task(let id): return ScribeAppGroup.taskURL(id: id)
         }
     }
 }
@@ -247,12 +271,13 @@ struct ScribeShareInboxImporter {
         let task = try taskStore.createTask(title: title, notes: notes)
         let message = payload.imageFileNames.isEmpty
             ? "Added task “\(title)”"
-            : "Added task “\(title)” (images can only be saved to notes)"
+            : "Added task “\(title)” (images and files can only be saved to notes)"
         return ScribeShareImportOutcome(destination: .task(id: task.id), message: message)
     }
 
-    /// Copies the payload's images into the note's attachments folder and
-    /// returns their vault-relative paths. Unsafe names, missing files and
+    /// Copies the payload's images (and other shared files, e.g. a PDF from
+    /// the iOS Share sheet) into the note's attachments folder and returns
+    /// their vault-relative paths. Unsafe names, missing files and
     /// failed copies are skipped.
     private func saveImages(_ payload: ScribeSharePayload, in folder: URL, noteId: String) -> [String] {
         var links: [String] = []
