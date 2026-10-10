@@ -150,13 +150,13 @@ final class SemanticVectorMathTests: XCTestCase {
 
 final class HybridRankingTests: XCTestCase {
 
-    func testReciprocalRankFusionSumsRanks() {
+    func testReciprocalRankFusionSumsRanks() throws {
         let fused = ReciprocalRankFusion.fuse([["a", "b", "c"], ["c", "a", "d"]], k: 60)
         XCTAssertEqual(fused.first?.id, "a")  // 1/61 + 1/62
         XCTAssertEqual(fused.map(\.id).sorted(), ["a", "b", "c", "d"])
-        let a = fused.first { $0.id == "a" }!.score
+        let a = try XCTUnwrap(fused.first(where: { $0.id == "a" })).score
         XCTAssertEqual(a, 1.0 / 61 + 1.0 / 62, accuracy: 1e-12)
-        let d = fused.first { $0.id == "d" }!.score
+        let d = try XCTUnwrap(fused.first(where: { $0.id == "d" })).score
         XCTAssertEqual(d, 1.0 / 63, accuracy: 1e-12)
     }
 

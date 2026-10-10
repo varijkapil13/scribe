@@ -43,7 +43,7 @@ enum ImportedTranscriptCoalescer {
                 if lhs.element.startMs != rhs.element.startMs { return lhs.element.startMs < rhs.element.startMs }
                 return lhs.offset < rhs.offset
             }
-            .map(\.element)
+            .map { $0.element }
 
         var out: [Piece] = []
         for piece in sorted {
