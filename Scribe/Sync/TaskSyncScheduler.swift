@@ -21,9 +21,10 @@ struct TaskSyncTriggerPolicy {
     /// apps doesn't hammer CloudKit.
     var activationInterval: TimeInterval = 5 * 60
 
-    /// Local-change notifications arriving this soon after a round finished
-    /// are treated as the echo of that round's own writes (pulled remote
-    /// changes land in the local tables too) and ignored.
+    /// A `.localChange` round may not start this soon after a round finished
+    /// (pulled remote changes land in the local tables too, so changes right
+    /// after a round are often its own echo). `TaskSyncScheduler` debounces
+    /// local changes for at least this long, so a real edit is never lost.
     var postSyncQuietPeriod: TimeInterval = 3
 
     private(set) var isSyncing = false
@@ -50,8 +51,8 @@ struct TaskSyncTriggerPolicy {
         }
     }
 
-    /// Whether a local-change notification at `now` should (re)arm the
-    /// debounce. Changes during a round or in its quiet period are echoes.
+    /// Whether a local-change notification at `now` falls outside a round
+    /// and its quiet period (i.e. is unlikely to be that round's echo).
     func acceptsLocalChange(now: Date) -> Bool {
         guard !isSyncing else { return false }
         guard let lastFinish else { return true }
@@ -98,6 +99,9 @@ final class TaskSyncScheduler {
     private var defaultsObserver: (any NSObjectProtocol)?
     private var taskObservation: AnyDatabaseCancellable?
     private var debounceTask: Task<Void, Never>?
+    /// A local change arrived while a round was running; run one follow-up
+    /// round (debounced) after it finishes so the edit isn't left unsynced.
+    private var pendingLocalChange = false
 
     /// The running round, if any (exposed for tests to await).
     private(set) var inFlight: Task<Void, Never>?
@@ -137,7 +141,9 @@ final class TaskSyncScheduler {
         }
 
         taskObservation = Self.observeLocalTaskChanges(in: database) { [weak self] in
-            Task { @MainActor in self?.localTasksDidChange() }
+            // Re-capture weakly by value: a nested Sendable closure may not
+            // capture the outer closure's `weak var self` by reference.
+            Task { @MainActor [weak self] in self?.localTasksDidChange() }
         }
 
         request(.launch)
@@ -161,13 +167,34 @@ final class TaskSyncScheduler {
 
     /// A local task (or tombstone) row changed: (re)arm the debounce.
     func localTasksDidChange() {
-        guard isSyncAllowed(), policy.acceptsLocalChange(now: Date()) else { return }
+        guard isSyncAllowed() else { return }
+        guard !policy.isSyncing else {
+            // A round is running: this may be its own pulled writes, or a real
+            // user edit made after the round already read the local changes.
+            // Don't drop it — run one follow-up round once this one ends.
+            pendingLocalChange = true
+            return
+        }
+        // Not filtered by the post-round quiet period: an edit made right
+        // after a round must still sync. The debounce delay is at least the
+        // quiet period, so at worst a late echo costs one extra (no-op) round.
+        armLocalChangeDebounce()
+    }
+
+    private func armLocalChangeDebounce() {
         debounceTask?.cancel()
-        let delay = localChangeDebounce
+        // Never fire inside the post-round quiet period, where the policy
+        // would reject (and so lose) the `.localChange` request.
+        let delay = max(localChangeDebounce, .seconds(policy.postSyncQuietPeriod))
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled else { return }
-            self?.request(.localChange)
+            guard !Task.isCancelled, let self else { return }
+            if self.policy.isSyncing {
+                // Another trigger started a round meanwhile; follow up after it.
+                self.pendingLocalChange = true
+            } else {
+                self.request(.localChange)
+            }
         }
     }
 
@@ -186,6 +213,10 @@ final class TaskSyncScheduler {
             }
             self.policy.didFinish(at: Date())
             self.inFlight = nil
+            if self.pendingLocalChange {
+                self.pendingLocalChange = false
+                if self.isSyncAllowed() { self.armLocalChangeDebounce() }
+            }
         }
     }
 

@@ -69,14 +69,18 @@ final class TaskSyncSchedulerTests: XCTestCase {
     private func makeScheduler(
         allowed: Bool = true,
         counter: Counter,
-        debounce: Duration = .milliseconds(50)
+        debounce: Duration = .milliseconds(50),
+        syncDuration: Duration? = nil
     ) -> TaskSyncScheduler {
         TaskSyncScheduler(
             policy: TaskSyncTriggerPolicy(activationInterval: 300, postSyncQuietPeriod: 0),
             localChangeDebounce: debounce,
             isSyncAllowed: { allowed },
             isToggleOn: { counter.toggle },
-            runSync: { counter.runs += 1 }
+            runSync: {
+                counter.runs += 1
+                if let syncDuration { try await Task.sleep(for: syncDuration) }
+            }
         )
     }
 
@@ -145,5 +149,26 @@ final class TaskSyncSchedulerTests: XCTestCase {
         }
         await scheduler.inFlight?.value
         XCTAssertEqual(counter.runs, baseline + 1, "Three quick edits should coalesce into one round")
+    }
+
+    func testLocalEditDuringARoundTriggersAFollowUpRound() async throws {
+        let counter = Counter()
+        let manager = try DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: manager)
+        let scheduler = makeScheduler(counter: counter, syncDuration: .milliseconds(200))
+        scheduler.start(database: manager.database)   // launch round, still running
+        XCTAssertTrue(scheduler.isSyncing)
+
+        // Edit while the launch round is in flight: it must not be dropped.
+        _ = try store.createTask(title: "Edited mid-sync")
+        await scheduler.inFlight?.value
+        XCTAssertEqual(counter.runs, 1)
+
+        let deadline = Date().addingTimeInterval(3)
+        while counter.runs == 1, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        await scheduler.inFlight?.value
+        XCTAssertEqual(counter.runs, 2, "An edit made during a round should get one follow-up round")
     }
 }
