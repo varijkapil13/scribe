@@ -3,8 +3,16 @@ import Combine
 import SwiftUI
 
 /// Plays back a session's retained audio: the mic and system tracks are two
-/// `AVAudioPlayer`s started together on the same device clock, so they stay
-/// in sync and are heard mixed. Seek, play/pause and speed apply to both.
+/// `AVAudioPlayer`s scheduled on the same device clock, so they stay in sync
+/// and are heard mixed. Seek, play/pause and speed apply to both.
+///
+/// Positions are on the session clock (the timeline transcript segments use).
+/// Each file starts at its track's offset on that clock, read from the
+/// session's `timing.json` (``SessionAudioTiming``) — system audio typically
+/// starts a few hundred ms after the mic — so a track is started at the
+/// matching point in its file, or scheduled to start later when the position
+/// is before its first sample. Sessions without `timing.json` play both files
+/// from 0, as before.
 @MainActor
 final class SessionAudioPlayer: ObservableObject {
 
@@ -12,13 +20,26 @@ final class SessionAudioPlayer: ObservableObject {
     @Published private(set) var isPlaying = false
     /// Current position in seconds.
     @Published private(set) var currentTime: TimeInterval = 0
-    /// Length of the longer track, in seconds.
+    /// Length of the session audio (end of the latest-ending track), in seconds.
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var rate: Float = 1.0
 
-    private var players: [AVAudioPlayer] = []
+    /// One file and where it starts on the session clock.
+    private struct Track {
+        let player: AVAudioPlayer
+        let offset: TimeInterval
+        var end: TimeInterval { offset + player.duration }
+    }
+
+    private var tracks: [Track] = []
     private var loadedDirectory: String?
     private var progressTimer: Timer?
+
+    /// Session position and device time at which the current playback run
+    /// starts; the live position is derived from these and the rate, so it
+    /// is right even while a track is still waiting for its scheduled start.
+    private var runStartPosition: TimeInterval = 0
+    private var runStartDeviceTime: TimeInterval = 0
 
     /// Current position in milliseconds (segment time base).
     var currentTimeMs: Int { Int(currentTime * 1000) }
@@ -28,30 +49,31 @@ final class SessionAudioPlayer: ObservableObject {
     /// Loads the session's tracks. Cheap to call repeatedly: does nothing if
     /// the same folder is already loaded.
     func load(session: Session) {
-        guard session.audioDirectory != loadedDirectory || players.isEmpty else { return }
+        guard session.audioDirectory != loadedDirectory || tracks.isEmpty else { return }
         unload()
         loadedDirectory = session.audioDirectory
         guard let path = session.audioDirectory else { return }
 
         let directory = URL(fileURLWithPath: path, isDirectory: true)
-        let urls = [
-            SessionAudioStorage.micFileURL(in: directory),
-            SessionAudioStorage.systemFileURL(in: directory)
+        let timing = SessionAudioTiming.load(from: directory)
+        let files: [(url: URL, offset: TimeInterval)] = [
+            (SessionAudioStorage.micFileURL(in: directory), timing?.micStartOffsetSeconds ?? 0),
+            (SessionAudioStorage.systemFileURL(in: directory), timing?.systemStartOffsetSeconds ?? 0)
         ]
-        var loaded: [AVAudioPlayer] = []
-        for url in urls where FileManager.default.fileExists(atPath: url.path) {
+        var loaded: [Track] = []
+        for file in files where FileManager.default.fileExists(atPath: file.url.path) {
             do {
-                let player = try AVAudioPlayer(contentsOf: url)
+                let player = try AVAudioPlayer(contentsOf: file.url)
                 player.enableRate = true
                 player.rate = rate
                 player.prepareToPlay()
-                loaded.append(player)
+                loaded.append(Track(player: player, offset: max(0, file.offset)))
             } catch {
-                Log.ui.error("Couldn't open session audio \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .private)")
+                Log.ui.error("Couldn't open session audio \(file.url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .private)")
             }
         }
-        players = loaded
-        duration = loaded.map(\.duration).max() ?? 0
+        tracks = loaded
+        duration = loaded.map(\.end).max() ?? 0
         currentTime = 0
         hasAudio = !loaded.isEmpty && duration > 0
     }
@@ -59,7 +81,7 @@ final class SessionAudioPlayer: ObservableObject {
     /// Stops playback and releases the files.
     func unload() {
         stop()
-        players = []
+        tracks = []
         loadedDirectory = nil
         hasAudio = false
         duration = 0
@@ -73,7 +95,7 @@ final class SessionAudioPlayer: ObservableObject {
     }
 
     func play() {
-        guard hasAudio, !players.isEmpty else { return }
+        guard hasAudio, !tracks.isEmpty else { return }
         if currentTime >= duration - 0.05 {
             currentTime = 0
         }
@@ -83,7 +105,16 @@ final class SessionAudioPlayer: ObservableObject {
     func pause() {
         guard isPlaying else { return }
         currentTime = livePosition()
-        for player in players { player.pause() }
+        for track in tracks {
+            // A track still waiting for its scheduled start (`play(atTime:)`)
+            // is stopped rather than paused so it can't start on its own
+            // later; play() re-schedules every track from `currentTime`.
+            if currentTime < track.offset {
+                track.player.stop()
+            } else {
+                track.player.pause()
+            }
+        }
         isPlaying = false
         stopProgressTimer()
     }
@@ -93,7 +124,7 @@ final class SessionAudioPlayer: ObservableObject {
         if isPlaying {
             currentTime = livePosition()
         }
-        for player in players { player.stop() }
+        for track in tracks { track.player.stop() }
         isPlaying = false
         stopProgressTimer()
     }
@@ -105,7 +136,14 @@ final class SessionAudioPlayer: ObservableObject {
         if isPlaying {
             startPlayers(at: target)
         } else {
-            for player in players { player.currentTime = min(target, player.duration) }
+            for track in tracks {
+                let plan = TrackPlaybackPlan.make(
+                    sessionPosition: target,
+                    trackOffset: track.offset,
+                    trackDuration: track.player.duration
+                )
+                track.player.currentTime = plan?.filePosition ?? track.player.duration
+            }
         }
     }
 
@@ -120,42 +158,60 @@ final class SessionAudioPlayer: ObservableObject {
     }
 
     func setRate(_ newRate: Float) {
-        rate = newRate
-        for player in players { player.rate = newRate }
+        guard newRate > 0 else { return }
+        if isPlaying {
+            // Re-schedule from the current position so tracks still waiting
+            // for their start keep the right delay at the new speed.
+            let position = livePosition()
+            rate = newRate
+            startPlayers(at: position)
+        } else {
+            rate = newRate
+            for track in tracks { track.player.rate = newRate }
+        }
     }
 
     // MARK: - Private
 
-    /// (Re)starts every track at `position`, scheduled on the shared device
-    /// clock a moment ahead so all tracks begin on the same sample.
+    /// (Re)starts every track at session position `position`, scheduled on
+    /// the shared device clock a moment ahead so all tracks begin on the
+    /// same sample. A track that starts later in the session is scheduled
+    /// that much later (scaled by the playback rate).
     private func startPlayers(at position: TimeInterval) {
-        for player in players { player.stop() }
-        guard let reference = players.first else { return }
+        for track in tracks { track.player.stop() }
+        guard let reference = tracks.first?.player else { return }
         let startAt = reference.deviceCurrentTime + 0.05
+        let speed = TimeInterval(max(rate, 0.01))
         var started = false
-        for player in players {
-            // A shorter track (e.g. system audio that started late) only plays
-            // while the position is inside it.
-            guard position < player.duration else { continue }
-            player.currentTime = position
-            player.rate = rate
-            if player.play(atTime: startAt) { started = true }
+        for track in tracks {
+            // A track that already ended (e.g. system audio switched off
+            // early) only plays while the position is inside it.
+            guard let plan = TrackPlaybackPlan.make(
+                sessionPosition: position,
+                trackOffset: track.offset,
+                trackDuration: track.player.duration
+            ) else { continue }
+            track.player.currentTime = plan.filePosition
+            track.player.rate = rate
+            if track.player.play(atTime: startAt + plan.delay / speed) { started = true }
         }
         guard started else {
             isPlaying = false
             stopProgressTimer()
             return
         }
+        runStartPosition = position
+        runStartDeviceTime = startAt
         isPlaying = true
         startProgressTimer()
     }
 
-    /// Position of the furthest-along playing track (falls back to the stored
-    /// position when nothing is playing).
+    /// Session position now, derived from the device clock (falls back to
+    /// the stored position when nothing is playing).
     private func livePosition() -> TimeInterval {
-        let playing = players.filter(\.isPlaying)
-        guard !playing.isEmpty else { return currentTime }
-        return playing.map(\.currentTime).max() ?? currentTime
+        guard isPlaying, let reference = tracks.first?.player else { return currentTime }
+        let elapsed = max(0, reference.deviceCurrentTime - runStartDeviceTime)
+        return min(duration, runStartPosition + elapsed * TimeInterval(rate))
     }
 
     private func startProgressTimer() {
@@ -177,13 +233,21 @@ final class SessionAudioPlayer: ObservableObject {
             stopProgressTimer()
             return
         }
-        if players.contains(where: \.isPlaying) {
-            currentTime = livePosition()
-        } else {
+        let position = livePosition()
+        // Right after scheduling, and while a track is still waiting for its
+        // scheduled start, count it as running: playback only ends once the
+        // position has passed every track.
+        let deviceNow = tracks.first?.player.deviceCurrentTime ?? 0
+        let warmingUp = deviceNow < runStartDeviceTime + 0.25
+        let anyRunning = warmingUp || tracks.contains { $0.player.isPlaying || position < $0.offset }
+        if position >= duration || !anyRunning {
             // Every track reached its end.
-            currentTime = duration
+            for track in tracks { track.player.stop() }
+            currentTime = position >= duration - 0.5 ? duration : position
             isPlaying = false
             stopProgressTimer()
+        } else {
+            currentTime = position
         }
     }
 }
