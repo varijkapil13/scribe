@@ -97,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         VaultCoordinator.shared.start()
 
         registerKeyboardShortcuts()
+        // App Intents (Shortcuts / Siri) entry points + Spotlight indexing.
+        ScribeIntentsBridge.didFinishLaunching(self)
         observeMainWindowClose()
         observeSpeechErrors()
         // scribe:// links, opened Markdown files, Dock + Services menus.
@@ -181,6 +183,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 _ = await SpeechRecognizerEngine.checkAuthorization()
             }
         }
+    }
+
+    /// Spotlight results (and other continued activities) — routed to the
+    /// note / task they point at.
+    func application(
+        _ application: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        SpotlightIndexer.handle(userActivity)
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
