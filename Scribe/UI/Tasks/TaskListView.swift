@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 
 /// Detail-pane view for the Tasks layer (slice 2). Renders a quick-add field
 /// at the top followed by a vertical list of tasks bucketed by due date.
@@ -537,6 +538,7 @@ struct TaskListView: View {
                     viewModel.commitQuickAdd()
                     quickAddFieldHeight = 24
                     dismissQuickAddSyntaxHint()
+                    ScribeTips.taskQuickAddUsed()
                 }
             )
             .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
@@ -549,6 +551,7 @@ struct TaskListView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Quick-add syntax help")
+            .popoverTip(ScribeTips.taskQuickAdd)
             .popover(isPresented: $showQuickAddSyntaxHelp, arrowEdge: .bottom) {
                 quickAddSyntaxHelp
                     .scribeGlass(.hud, in: Rectangle())

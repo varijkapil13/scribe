@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 
 // `MainSelection`, `NotesFilter`, and `Surface` live in MainSelection.swift so
 // they stay in the SwiftPM test target while this view file is excluded from it
@@ -95,8 +96,17 @@ struct MainWindowView: View {
                             nav.navigate(to: .live)
                         }
                     }
+                    .popoverTip(ScribeTips.dictation)
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showUniversalSearch = true
+                    ScribeTips.quickSearchUsed()
+                } label: {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .help("Search and commands (⌘K)")
+                .popoverTip(ScribeTips.quickSearch)
                 recordingToolbar
             }
         }
@@ -113,7 +123,7 @@ struct MainWindowView: View {
             // regardless of when the fixture sets `hasCompletedOnboarding`
             // (avoids a set-vs-read race that left the Welcome sheet — and its
             // mic-permission step — covering every captured screen).
-            if !hasCompletedOnboarding && !AppLaunchEnvironment.usesUITestFixtures {
+            if OnboardingGate.shouldShow() && !AppLaunchEnvironment.usesUITestFixtures {
                 showOnboarding = true
             }
         }
@@ -162,6 +172,7 @@ struct MainWindowView: View {
         // Menu-bar commands (the shortcut owners) route here.
         .onReceive(NotificationCenter.default.publisher(for: .scribeToggleCommandBar)) { _ in
             showUniversalSearch.toggle()
+            ScribeTips.quickSearchUsed()
         }
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoBack)) { _ in nav.goBack() }
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoForward)) { _ in nav.goForward() }
@@ -251,6 +262,7 @@ struct MainWindowView: View {
         }
 
         Button {
+            ScribeTips.recordUsed()
             Task { await appDelegate.toggleRecording() }
         } label: {
             Label(
@@ -260,6 +272,7 @@ struct MainWindowView: View {
             .foregroundStyle(isRecording ? DesignTokens.Palette.recording : .primary)
         }
         .help(isRecording ? "Stop the current session" : "Start a new recording")
+        .popoverTip(ScribeTips.record)
     }
 
     // MARK: - Sidebar

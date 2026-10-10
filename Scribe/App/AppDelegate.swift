@@ -160,6 +160,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             TaskSyncScheduler.shared.start()
         }
 
+        // Automatic daily backups (off unless enabled in Settings → Backup)
+        // and TipKit tips.
+        if !AppLaunchEnvironment.isUITesting {
+            ScribeAutoBackupScheduler.shared.start()
+        }
+        ScribeTips.configure()
+
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
         // failing the first time the user hits Record.
