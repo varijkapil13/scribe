@@ -382,7 +382,8 @@ final class SummaryTemplateStoreTests: XCTestCase {
     }
 }
 
-/// `Templates/` must never be imported as notes.
+/// Scribe's own `Templates/Summaries` and `Templates/Recipes` must never be
+/// imported as notes — but a user's other notes under `Templates/` must be.
 final class TemplatesFolderExclusionTests: XCTestCase {
 
     private var root: URL!
@@ -401,9 +402,16 @@ final class TemplatesFolderExclusionTests: XCTestCase {
 
     func testIsInExcludedFolder() {
         let r = URL(fileURLWithPath: "/vault", isDirectory: true)
-        XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates"), root: r))
+        XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates/Summaries"), root: r))
         XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates/Summaries/a.md"), root: r))
-        XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/private/vault/Templates/x.md"), root: r))
+        XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates/Recipes/r.md"), root: r))
+        XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/templates/recipes/r.md"), root: r),
+                      "match is case-insensitive")
+        XCTAssertTrue(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/private/vault/Templates/Summaries/x.md"), root: r))
+        // The Templates folder itself and the user's own notes in it are not excluded.
+        XCTAssertFalse(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates"), root: r))
+        XCTAssertFalse(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates/x.md"), root: r))
+        XCTAssertFalse(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates/Meetings/standup.md"), root: r))
         XCTAssertFalse(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Templates.md"), root: r))
         XCTAssertFalse(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Projects/Templates/a.md"), root: r))
         XCTAssertFalse(NoteFileStore.isInExcludedFolder(URL(fileURLWithPath: "/vault/Daily/2026-01-01.md"), root: r))
