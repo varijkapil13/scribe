@@ -369,6 +369,8 @@ final class TaskDetailModel: ObservableObject {
 
     private let taskId: String
     private let store: TaskStore
+    /// The stored row `task`'s edits are relative to (see `TaskEditMerge`).
+    private var baseline: TodoTask
     private var loaded = false
     private var dirty = false
     private var saveTask: Task<Void, Never>?
@@ -378,13 +380,20 @@ final class TaskDetailModel: ObservableObject {
     init(taskId: String, store: TaskStore) {
         self.taskId = taskId
         self.store = store
-        self.task = TodoTask(id: taskId, title: "")
+        let placeholder = TodoTask(id: taskId, title: "")
+        self.task = placeholder
+        self.baseline = placeholder
         reload()
     }
 
     func start() {
         guard !started else { return }
         started = true
+        // Follow the row: completion from the list beside the editor (iPad),
+        // a snooze, or a sync round must show here and not be overwritten.
+        cancellables.append(store.observeTask(id: taskId)
+            .receive(on: DispatchQueue.main)
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] in self?.storeDidChange($0) }))
         cancellables.append(store.observeSubtasks(taskId: taskId)
             .replaceError(with: [])
             .sink { [weak self] in self?.subtasks = $0 })
@@ -406,8 +415,32 @@ final class TaskDetailModel: ObservableObject {
             return
         }
         isMissing = false
+        baseline = fresh
         task = fresh
         tags = (try? store.tags(for: taskId)) ?? []
+    }
+
+    /// The stored row changed (here or elsewhere). Pending edits are replayed
+    /// onto it; without any, the editor simply shows it.
+    private func storeDidChange(_ fresh: TodoTask?) {
+        guard let fresh else {
+            // Deleted elsewhere: drop pending edits instead of re-saving.
+            saveTask?.cancel()
+            dirty = false
+            isMissing = true
+            return
+        }
+        isMissing = false
+        let shown = dirty ? TaskEditMerge.rebased(edited: task, baseline: baseline, onto: fresh) : fresh
+        let projectChanged = shown.projectId != task.projectId
+        baseline = fresh
+        if shown != task {
+            loaded = false
+            task = shown
+            loaded = true
+        }
+        tags = (try? store.tags(for: taskId)) ?? tags
+        if projectChanged { loadHeadings() }
     }
 
     private func loadHeadings() {
@@ -435,12 +468,19 @@ final class TaskDetailModel: ObservableObject {
         guard dirty, !isMissing else { return }
         dirty = false
         do {
-            var toSave = task
+            // Replay only this editor's edits onto the row as stored now, so
+            // changes made elsewhere since it loaded aren't overwritten.
+            guard let current = try store.fetchTask(id: taskId) else {
+                isMissing = true
+                return
+            }
+            var toSave = TaskEditMerge.rebased(edited: task, baseline: baseline, onto: current)
             if toSave.projectId != nil { toSave.areaId = nil }
             if toSave.recurrenceRule != nil, toSave.dueAt == nil {
                 toSave.dueAt = Calendar.current.startOfDay(for: Date())
             }
             try store.updateTask(toSave)
+            baseline = toSave
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

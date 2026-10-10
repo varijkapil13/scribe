@@ -686,6 +686,15 @@ final class TaskStore {
         return observation.publisher(in: db, scheduling: .async(onQueue: .main))
     }
 
+    /// Emits one task (nil once it's gone) whenever the `tasks` table changes,
+    /// so an open editor sees completions / edits made elsewhere.
+    func observeTask(id: String) -> DatabasePublishers.Value<TodoTask?> {
+        let observation = ValueObservation.tracking { database -> TodoTask? in
+            try TodoTask.fetchOne(database, key: id)
+        }
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
     /// Batch-fetches tags for a set of task ids. Returns a dictionary keyed by
     /// task id so callers can do O(1) lookups per row. Tasks with no tags are
     /// absent from the result (treat a missing key as an empty array).

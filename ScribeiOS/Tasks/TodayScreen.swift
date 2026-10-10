@@ -9,7 +9,10 @@ struct TodayScreen: View {
     @StateObject private var library = TasksLibraryModel(store: TaskStore.shared)
     @StateObject private var model = TodayTasksModel(store: TaskStore.shared, noteStore: NoteStore.shared)
     @ObservedObject private var calendarEvents = TasksCalendarEventsModel.shared
+    @ObservedObject private var openRequest = TasksOpenRequest.shared
     @State private var path = NavigationPath()
+    /// On screen (not a hidden tab), so a tapped reminder opens here.
+    @State private var isVisible = false
     @State private var events: [CalendarEventInfo] = []
     @State private var showQuickAdd = false
 
@@ -79,12 +82,16 @@ struct TodayScreen: View {
             .refreshable { reloadEvents() }
         }
         .onAppear {
+            isVisible = true
             TasksIOSBootstrap.start()
             library.start()
             model.start()
             calendarEvents.refreshAccess()
             reloadEvents()
+            consumeOpenRequest()
         }
+        .onDisappear { isVisible = false }
+        .onChange(of: openRequest.taskId) { consumeOpenRequest() }
         .onChange(of: calendarEvents.revision) { reloadEvents() }
         .onChange(of: calendarEvents.isGranted) { reloadEvents() }
     }
@@ -104,6 +111,14 @@ struct TodayScreen: View {
                 TasksCalendarPromptRow(calendar: calendarEvents)
             }
         }
+    }
+
+    /// A tapped task reminder opens its task here while Today is the
+    /// visible tab (the Tasks tab handles it otherwise).
+    private func consumeOpenRequest() {
+        guard isVisible, let taskId = openRequest.taskId else { return }
+        openRequest.taskId = nil
+        path.append(TaskRouteID(id: taskId))
     }
 
     private func reloadEvents() {

@@ -23,6 +23,8 @@ struct TasksRootView: View {
     @State private var quickAdd: TasksQuickAddRequest?
     /// iPhone: a task editor is on top (the + button hides there).
     @State private var phoneDetailVisible = false
+    /// On screen (not a hidden tab), so a tapped reminder opens here.
+    @State private var isVisible = false
 
     var body: some View {
         Group {
@@ -41,10 +43,12 @@ struct TasksRootView: View {
             TaskQuickAddSheet(destination: request.destination, headingId: request.headingId, library: library)
         }
         .onAppear {
+            isVisible = true
             TasksIOSBootstrap.start()
             library.start()
             consumeOpenRequest()
         }
+        .onDisappear { isVisible = false }
         .onChange(of: openRequest.taskId) { consumeOpenRequest() }
     }
 
@@ -118,7 +122,9 @@ struct TasksRootView: View {
     }
 
     private func consumeOpenRequest() {
-        guard let taskId = openRequest.taskId else { return }
+        // Only while visible: with both tabs alive, the visible one (Today
+        // or Tasks) opens it; a hidden one would swallow the request.
+        guard isVisible, let taskId = openRequest.taskId else { return }
         openRequest.taskId = nil
         if sizeClass == .regular {
             selectedTaskId = taskId
