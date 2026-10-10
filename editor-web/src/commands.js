@@ -5,11 +5,9 @@
 //
 //   window.scribeCommand(name, arg) -> boolean (true when handled)
 //
-// (Swift side: Scribe/UI/Notes/EditorCommandBridge.swift.) Handlers live in a
-// shared registry, `window.scribeCommandHandlers`, so other modules can add
-// commands (e.g. "find" / "replace" / "findNext" / "findPrevious") without
-// touching this file: `registerScribeCommands({ find: () => … })`. Unknown
-// names return false and are otherwise ignored.
+// (Swift side: Scribe/UI/Notes/EditorCommandBridge.swift.) Handlers go into
+// the shared registry in bridge.js, which also holds the find/fold/outline
+// commands. Unknown names return false and are otherwise ignored.
 //
 // Format commands implemented here (all toggle, all multi-selection aware):
 //   bold, italic, strikethrough, code, link,
@@ -17,25 +15,14 @@
 //   blockquote
 
 import { EditorSelection } from "@codemirror/state";
+import { registerCommand } from "./bridge.js";
 
-/** Adds `handlers` (name → fn(arg, view)) to the shared registry and makes
- *  sure the dispatcher exists. Safe to call more than once. */
+/** Adds `handlers` (name → fn(arg, view)) to the shared command registry in
+ *  bridge.js, which owns `window.scribeCommand`. */
 export function registerScribeCommands(view, handlers) {
-  const registry = (window.scribeCommandHandlers = window.scribeCommandHandlers || {});
   for (const name of Object.keys(handlers)) {
     const fn = handlers[name];
-    registry[name] = (arg) => fn(arg, view);
-  }
-  if (typeof window.scribeCommand !== "function") {
-    window.scribeCommand = function (name, arg) {
-      const handler = (window.scribeCommandHandlers || {})[name];
-      if (typeof handler !== "function") return false;
-      try {
-        return handler(arg) !== false;
-      } catch (e) {
-        return false;
-      }
-    };
+    registerCommand(name, (v, arg) => fn(arg, v) !== false);
   }
 }
 

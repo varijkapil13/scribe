@@ -19,13 +19,21 @@
 //                  - {type:"ready"}             once the editor is mounted
 //                  - {type:"change", text}      debounced, on every doc edit
 //                  - {type:"wikilink", target}  user clicked a [[wiki link]]
+//                  - {type:"outline", headings:[{level,text,line}]}  (outline.js)
+//                  - {type:"attachment", id, filename, mime, data}    (attachments.js)
+//                  - {type:"attachmentRejected", filename, reason}    (attachments.js)
+//                  - {type:"requestCompletionData"}                   (completion.js)
 //   native -> JS:  window.scribeSetDoc(text)    replace the whole document
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px) optional body font-size override
 //                  window.scribeSetPlantUMLRemote(bool) allow plantuml.com rendering
 //                  window.scribeFocus()         focus the editor
-//                  window.scribeCommand(name, arg) menu-bar format/find commands
-//                                               (see commands.js)
+//                  window.scribeCommand(name, arg)  format (commands.js),
+//                                   find/replace/fold/scrollToLine… (bridge.js
+//                                   registry; see modules)
+//                  window.scribeSetCompletionData({titles, tags})  (completion.js)
+//                  window.scribeAttachmentSaved(id, info) / scribeAttachmentFailed(id)
+//                  window.scribeInsertAttachment(info)             (attachments.js)
 //   config:        window.scribeConfig = { plantUMLRemote: bool } injected by
 //                  native at document start (read once at module load)
 
@@ -47,6 +55,18 @@ import {
   setPlantUMLRemoteEnabled,
 } from "./diagrams.js";
 import { installFormatCommands } from "./commands.js";
+import { postToNative, setCommandView } from "./bridge.js";
+import { searchExtensions } from "./search.js";
+import { foldingExtensions } from "./folding.js";
+import { completionExtensions, setCompletionTitles } from "./completion.js";
+import { outlineExtensions } from "./outline.js";
+import { tableExtensions } from "./tables.js";
+import {
+  attachmentExtensions,
+  setAttachmentView,
+  clearPendingAttachments,
+} from "./attachments.js";
+import { imageExtensions } from "./images.js";
 
 // ── Lazy KaTeX ───────────────────────────────────────────────────────────────
 // KaTeX (the JS engine ~0.6 MB plus its inlined-font CSS) is LAZY-LOADED via a
@@ -79,14 +99,7 @@ function ensureKatex() {
 }
 
 // ── Native bridge helpers ────────────────────────────────────────────────
-function postToNative(message) {
-  try {
-    window.webkit.messageHandlers.scribe.postMessage(message);
-  } catch (e) {
-    // Running outside the WKWebView host (e.g. a plain browser for previews).
-    // Swallow — the editor still works, it just has no native peer.
-  }
-}
+// postToNative + the window.scribeCommand dispatcher live in bridge.js.
 
 // Debounce so we don't flood the native side on every keystroke.
 let changeTimer = null;
@@ -121,7 +134,7 @@ const proseBase = EditorView.theme({
     caretColor: "var(--scribe-caret)",
   },
   ".cm-line": { padding: "0 0" },
-  ".cm-gutters": { display: "none" },
+  // The only gutter is the fold gutter (folding.js), styled there.
   "&.cm-focused": { outline: "none" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--scribe-caret)" },
 });
@@ -977,6 +990,15 @@ const state = EditorState.create({
   doc: "",
   extensions: [
     history(),
+    // Feature modules. Order matters among equal-precedence keymaps: the
+    // completion popup's keys win over table Tab/Enter handling.
+    completionExtensions(),
+    tableExtensions(),
+    searchExtensions(),
+    foldingExtensions(),
+    outlineExtensions(),
+    attachmentExtensions(),
+    imageExtensions(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     markdown({ base: markdownLanguage }),
     EditorView.lineWrapping,
@@ -1000,6 +1022,8 @@ const view = new EditorView({
 
 // Menu-bar Format commands (window.scribeCommand) — see commands.js.
 installFormatCommands(view);
+setCommandView(view);
+setAttachmentView(view);
 
 // Re-decorate when an async diagram (mermaid/plantuml) finishes rendering.
 onDiagramRendered(() => {
@@ -1027,6 +1051,8 @@ window.scribeSetDoc = function (text) {
   slashMenu.close();
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: next },
+    // In-flight pasted/dropped files belong to the previous document.
+    effects: clearPendingAttachments.of(null),
   });
 };
 
@@ -1072,6 +1098,8 @@ window.scribeSetKnownTitles = function (titles) {
     for (const titleString of titles) {
       if (typeof titleString === "string") set.add(titleString.trim().toLowerCase());
     }
+    // Same list seeds `[[` autocomplete (original casing).
+    setCompletionTitles(titles);
   }
   view.dispatch({ effects: setKnownTitles.of(set) });
 };
