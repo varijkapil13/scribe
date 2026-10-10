@@ -709,10 +709,15 @@ private struct DraftDailyNoteView: View {
                 if !didCreate, let full = try store.fetchNote(id: fetched.id) {
                     note = full   // real body from disk, not the DB placeholder
                 }
+                // A daily template seeded the new note: keep it, with the
+                // draft typed so far after it.
+                let draft = didCreate
+                    ? NoteTemplateRenderer.appendingDraft(newValue, toSeed: note.body)
+                    : newValue
                 if let body = NoteStore.dailyDraftBodyToWrite(
                     created: didCreate,
                     existingBody: note.body,
-                    draft: newValue
+                    draft: draft
                 ) {
                     note.body = body
                     try store.updateNote(note, tags: (try? store.tags(for: note.id)) ?? [])

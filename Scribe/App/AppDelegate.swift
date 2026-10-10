@@ -422,7 +422,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 now: now,
                 meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:)),
                 explicitTitle: namesNote ? event.map { CalendarNoteFormatter.noteTitle(for: $0, date: now) } : nil,
-                initialBody: namesNote ? (event.map(CalendarNoteFormatter.noteHeader(for:)) ?? "") : ""
+                initialBody: Self.meetingNoteInitialBody(event: event, namesNote: namesNote,
+                                                         meetingName: detectedMeeting.map(MeetingDetector.meetingPhrase(for:)),
+                                                         now: now)
             )
         } catch {
             // Surface the underlying createNote error to the user instead of

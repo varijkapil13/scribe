@@ -52,6 +52,7 @@ final class NoteDetailViewModel: ObservableObject {
         let noteId: String
     }
     private var inAppChangeCancellable: AnyCancellable?
+    private var willChangeInAppCancellable: AnyCancellable?
 
     /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
     /// across chip selections so analysis state survives expansion-collapse
@@ -105,6 +106,16 @@ final class NoteDetailViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] ids in
                 self?.handleInAppChange(noteIds: ids)
+            }
+        // Delivered synchronously (no `receive(on:)`): a version restore or a
+        // mention link is about to rewrite this note — save unsaved edits
+        // first so the rewrite builds on them.
+        willChangeInAppCancellable = NotificationCenter.default
+            .publisher(for: .scribeNoteWillChangeInApp)
+            .sink { [weak self] notification in
+                guard let self else { return }
+                if let ids = NoteVaultChange.noteIds(from: notification), !ids.contains(self.note.id) { return }
+                self.flushPendingSave()
             }
         autosaveCancellable = $isDirty
             .filter { $0 }
@@ -230,6 +241,7 @@ final class NoteDetailViewModel: ObservableObject {
             case .write:
                 break
             case .reloadFromDisk:
+                snapshotBeforeAdoptingExternalChange()
                 reloadFromDisk()
                 return
             case .keepBoth:
@@ -249,7 +261,10 @@ final class NoteDetailViewModel: ObservableObject {
             }
         }
         do {
-            try store.updateNote(note, tags: tags)
+            // Overwriting an external edit (kept as a conflict copy) always
+            // snapshots the disk version first; ordinary saves are throttled.
+            try store.updateNote(note, tags: tags,
+                                 versionReason: keptConflictCopy ? .externalChange : .edit)
             loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
             peerSavedSinceLoad = false
             backlinks = (try? store.backlinks(for: note.id)) ?? []
@@ -281,8 +296,15 @@ final class NoteDetailViewModel: ObservableObject {
             hasUnsavedChanges: false
         )
         if decision == .reloadFromDisk {
+            snapshotBeforeAdoptingExternalChange()
             reloadFromDisk()
         }
+    }
+
+    /// Keeps the editor's current content in version history before an
+    /// external change replaces it.
+    private func snapshotBeforeAdoptingExternalChange() {
+        store.snapshotVersion(noteId: note.id, title: note.title, body: note.body, reason: .externalChange)
     }
 
     /// Another editor of this note saved. Without unsaved edits, adopt its
@@ -361,9 +383,31 @@ final class NoteDetailViewModel: ObservableObject {
         ).count
     }
 
+    /// Follows a clicked `[[link]]`, including `[[Note#Heading]]`,
+    /// `[[Note#^block]]` and same-note `[[#Heading]]` links (which scroll the
+    /// editor to the heading / block).
     func handleWikiLinkNavigate(anchor: String) {
-        guard let target = try? store.resolveTitle(anchor) else { return }
-        onNavigate(target.id)
+        let parsed = WikiLinkTarget.parse(anchor)
+        if parsed.refersToSameNote {
+            if let line = NoteBlockReference.lineIndex(for: parsed, in: note.body) {
+                WebEditorCommandCenter.shared.send(.scrollToLine(line + 1))
+            }
+            return
+        }
+        guard let resolved = try? store.resolveLinkTarget(anchor: anchor) else { return }
+        let target = NoteEmbedExpander.effectiveTarget(parsed, anchor: anchor, resolvedTitle: resolved.title)
+        if resolved.id == note.id {
+            if let line = NoteBlockReference.lineIndex(for: target, in: note.body) {
+                WebEditorCommandCenter.shared.send(.scrollToLine(line + 1))
+            }
+            return
+        }
+        onNavigate(resolved.id)
+        if target.hasFragment,
+           let body = (try? store.fetchNote(id: resolved.id))?.body,
+           let line = NoteBlockReference.lineIndex(for: target, in: body) {
+            NoteEditorDeferredScroll.scroll(toLine: line + 1)
+        }
     }
 
     func markDirty() { isDirty = true }
