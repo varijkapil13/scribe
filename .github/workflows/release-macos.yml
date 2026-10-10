@@ -167,7 +167,10 @@ jobs:
                      | grep -E "$1" \
                      | sed -E 's/^[a-z]+(\([^)]+\))?!?: //; s/ \(#[0-9]+\)$//' \
                      | sed 's/^/- /' || true)"
-            [ -n "$items" ] && printf '### %s\n%s\n\n' "$2" "$items" >> "$NOTES"
+            # An empty section must not end the function non-zero (set -e).
+            if [ -n "$items" ]; then
+              printf '### %s\n%s\n\n' "$2" "$items" >> "$NOTES"
+            fi
           }
           echo "## What's changed" >> "$NOTES"
           if [ -n "$PREV" ]; then
