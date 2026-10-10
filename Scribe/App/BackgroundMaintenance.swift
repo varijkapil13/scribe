@@ -89,7 +89,7 @@ final class ScribeBackgroundMaintenance {
         store: TranscriptStore
     ) {
         scheduler.schedule { @Sendable completion in
-            run(job, store: store)
+            ScribeBackgroundMaintenance.run(job, store: store)
             completion(.finished)
         }
     }

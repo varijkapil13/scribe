@@ -141,10 +141,15 @@ struct ScribeDiagnosticsStore: Sendable {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let destination = parent.appendingPathComponent(
-            "Scribe Diagnostics \(formatter.string(from: date))", isDirectory: true
-        )
         let fileManager = FileManager.default
+        let baseName = "Scribe Diagnostics \(formatter.string(from: date))"
+        var destination = parent.appendingPathComponent(baseName, isDirectory: true)
+        // Two exports in the same second must not collide on copyItem.
+        var attempt = 2
+        while fileManager.fileExists(atPath: destination.path) {
+            destination = parent.appendingPathComponent("\(baseName) \(attempt)", isDirectory: true)
+            attempt += 1
+        }
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
         for file in files() {
             try fileManager.copyItem(
