@@ -55,6 +55,8 @@ struct CalendarSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
             .disabled(!enabled)
+
+            TaskTimeBlockingSettingsSection()
         }
         .formStyle(.grouped)
         .onAppear { calendar.refreshAccessState() }

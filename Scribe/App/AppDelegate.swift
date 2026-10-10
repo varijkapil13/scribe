@@ -167,6 +167,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 await self?.startRecording(calendarEvent: event)
             }
             CalendarService.shared.start()
+            // Time blocking (Settings → Calendar): mirrors scheduled tasks as events.
+            TaskCalendarMirrorService.shared.start()
         }
 
         // iCloud task sync on the Mac: launch / toggle-on / app-active

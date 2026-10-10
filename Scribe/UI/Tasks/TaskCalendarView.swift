@@ -19,13 +19,26 @@ struct TaskCalendarView: View {
     @Environment(\.scribeAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Display mode toggle: a full month grid, or a scrollable agenda (week-
-    /// at-a-glance) list anchored at the selected day.
+    /// Display mode toggle: a full month grid, a scrollable agenda (week-
+    /// at-a-glance) list anchored at the selected day, or the day planner
+    /// (time grid with events and scheduled task blocks).
     private enum Mode: String, CaseIterable, Identifiable {
-        case month, agenda
+        case month, agenda, day
         var id: String { rawValue }
-        var label: String { self == .month ? "Month" : "Week" }
-        var symbol: String { self == .month ? "calendar" : "list.bullet" }
+        var label: String {
+            switch self {
+            case .month:  return "Month"
+            case .agenda: return "Week"
+            case .day:    return "Day"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .month:  return "calendar"
+            case .agenda: return "list.bullet"
+            case .day:    return "clock"
+            }
+        }
     }
 
     /// Short localized weekday symbols rotated to honour `Calendar.firstWeekday`.
@@ -61,13 +74,16 @@ struct TaskCalendarView: View {
                     Divider()
 
                     calendarGrid
-                } else {
+                } else if mode == .agenda {
                     agendaList
+                } else {
+                    TaskPlannerView(day: plannerDay) { editingTask = $0 }
                 }
             }
 
             // ── Day detail panel ────────────────────────────────────────────
-            if let day = viewModel.selectedDay {
+            // (The planner has its own side list of the day's tasks.)
+            if mode != .day, let day = viewModel.selectedDay {
                 Divider()
                 dayPanel(for: day)
                     .frame(width: 290)
@@ -102,14 +118,14 @@ struct TaskCalendarView: View {
 
     private var calendarHeader: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            Button { viewModel.navigateMonth(by: -1) } label: {
+            Button { navigate(by: -1) } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Previous month")
+            .accessibilityLabel(mode == .day ? "Previous day" : "Previous month")
 
             Button(action: jumpToToday) {
                 Text("Today")
@@ -127,10 +143,15 @@ struct TaskCalendarView: View {
             Spacer()
 
             VStack(spacing: DesignTokens.Spacing.xxs) {
-                Text(viewModel.displayMonth, format: .dateTime.month(.wide).year())
-                    .font(.system(.title3, weight: .semibold))
+                if mode == .day {
+                    Text(plannerDay, format: .dateTime.weekday(.wide).month(.wide).day().year())
+                        .font(.system(.title3, weight: .semibold))
+                } else {
+                    Text(viewModel.displayMonth, format: .dateTime.month(.wide).year())
+                        .font(.system(.title3, weight: .semibold))
+                }
                 let total = viewModel.tasksByDay.values.reduce(0) { $0 + $1.count }
-                if total > 0 {
+                if mode != .day && total > 0 {
                     Text("\(total) task\(total == 1 ? "" : "s") this month")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -149,14 +170,30 @@ struct TaskCalendarView: View {
             .fixedSize()
             .accessibilityLabel("Calendar view mode")
 
-            Button { viewModel.navigateMonth(by: 1) } label: {
+            Button { navigate(by: 1) } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Next month")
+            .accessibilityLabel(mode == .day ? "Next day" : "Next month")
+        }
+    }
+
+    /// The day the planner shows: the selected day, else today.
+    private var plannerDay: Date {
+        viewModel.selectedDay ?? viewModel.cal.startOfDay(for: Date())
+    }
+
+    /// Chevrons: a month at a time, or a day at a time in the planner.
+    private func navigate(by step: Int) {
+        guard mode == .day else {
+            viewModel.navigateMonth(by: step)
+            return
+        }
+        if let next = viewModel.cal.date(byAdding: .day, value: step, to: plannerDay) {
+            viewModel.focus(on: next)
         }
     }
 

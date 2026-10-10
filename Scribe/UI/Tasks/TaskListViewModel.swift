@@ -106,8 +106,10 @@ final class TaskListViewModel: ObservableObject {
 
     // MARK: - Properties
 
-    private let store: TaskStore
-    private let reminderScheduler: TaskReminderScheduling
+    /// Internal (not private) so the board extension (`TaskListViewModel+Board`)
+    /// can write through the same store and reminder scheduler.
+    let store: TaskStore
+    let reminderScheduler: TaskReminderScheduling
     private var cancellable: AnyCancellable?
     private var headingsCancellable: AnyCancellable?
     /// Headings of the project being shown (`.project` filter only), in order.
