@@ -82,15 +82,20 @@ struct TaskSyncTriggerPolicy {
 @MainActor
 final class TaskSyncScheduler {
 
-    // Arguments are passed explicitly: default arguments of a main-actor
-    // init can't be evaluated from this static initializer.
-    static let shared = TaskSyncScheduler(
-        policy: TaskSyncTriggerPolicy(),
-        localChangeDebounce: .seconds(5),
-        isSyncAllowed: { CloudKitAvailability.canSyncTasks },
-        isToggleOn: { CloudKitSyncService.isEnabled },
-        runSync: { try await TaskSyncCoordinator.live.sync() }
-    )
+    static let shared: TaskSyncScheduler = makeShared()
+
+    /// Builds the closures inside a main-actor function rather than in the
+    /// `static let` initializer, where the compiler infers the async closure
+    /// as `@concurrent` and rejects it against the `@MainActor` parameter.
+    private static func makeShared() -> TaskSyncScheduler {
+        TaskSyncScheduler(
+            policy: TaskSyncTriggerPolicy(),
+            localChangeDebounce: .seconds(5),
+            isSyncAllowed: { @MainActor in CloudKitAvailability.canSyncTasks },
+            isToggleOn: { @MainActor in CloudKitSyncService.isEnabled },
+            runSync: { @MainActor in try await TaskSyncCoordinator.live.sync() }
+        )
+    }
 
     private var policy: TaskSyncTriggerPolicy
     private let isSyncAllowed: @MainActor () -> Bool
