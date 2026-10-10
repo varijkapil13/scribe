@@ -278,7 +278,7 @@ struct MainWindowView: View {
                 Section {
                     if tasksExpanded {
                         ForEach(TaskSidebarItem.unifiedSidebarFilters) { item in
-                            sidebarLink(.tasks(item.filter), item.title,
+                            sidebarLink(.tasks(item.filter), LocalizedStringKey(item.title),
                                         systemImage: item.systemImage,
                                         badge: taskBadge(for: item.filter))
                         }
@@ -423,7 +423,7 @@ struct MainWindowView: View {
                 Section {
                     if notesTagsExpanded {
                         ForEach(unifiedTags, id: \.self) { tag in
-                            sidebarLink(.notes(.tag(tag)), tag, systemImage: "tag")
+                            sidebarLink(.notes(.tag(tag)), verbatim: tag, systemImage: "tag")
                         }
                     }
                 } header: {
@@ -481,10 +481,12 @@ struct MainWindowView: View {
         } message: {
             Text("The project will be deleted. Its tasks won’t be deleted — they’ll move to your Inbox.")
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
+        // Edge bars (not painted insets): they join the system scroll-edge
+        // effect, so the sidebar's own material shows through.
+        .scribeEdgeBar(.top) {
             surfaceSwitcher
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .scribeEdgeBar(.bottom) {
             sidebarFooter
         }
     }
@@ -503,10 +505,6 @@ struct MainWindowView: View {
         .padding(.top, DesignTokens.Spacing.sm)
         .padding(.bottom, DesignTokens.Spacing.xs)
         .frame(maxWidth: .infinity)
-        // Sidebar material (not the toolbar's `.bar`, which read as a chunky
-        // band merging into the titlebar) + a hairline only at the bottom edge.
-        .background(.thinMaterial)
-        .overlay(alignment: .bottom) { Divider() }
     }
 
     /// Footer icon strip for rarely-used destinations. Avoids dedicating
@@ -529,10 +527,6 @@ struct MainWindowView: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
         .padding(.vertical, 6)
-        .background(.bar)
-        .overlay(alignment: .top) {
-            Divider()
-        }
     }
 
     @ViewBuilder
@@ -586,15 +580,30 @@ struct MainWindowView: View {
     /// A standard sidebar destination row (icon + title + optional count badge),
     /// rendered with `SidebarRow` so it's reliably clickable with a full-width
     /// selection + hover highlight.
-    @ViewBuilder
+    ///
+    /// This overload takes a localized title (literal call sites are
+    /// extracted into Localizable.xcstrings).
     private func sidebarLink(_ destination: MainSelection,
-                             _ title: String,
+                             _ title: LocalizedStringKey,
                              systemImage: String,
                              badge: Int = 0) -> some View {
+        sidebarLink(destination, label: Label(title, systemImage: systemImage), badge: badge)
+    }
+
+    /// Sidebar row whose title is user data (a tag) — shown verbatim.
+    private func sidebarLink(_ destination: MainSelection,
+                             verbatim title: String,
+                             systemImage: String) -> some View {
+        sidebarLink(destination, label: Label(title, systemImage: systemImage), badge: 0)
+    }
+
+    private func sidebarLink<RowLabel: View>(_ destination: MainSelection,
+                                             label: RowLabel,
+                                             badge: Int) -> some View {
         SidebarRow(isSelected: nav.current == destination,
                    action: { nav.navigate(to: destination) }) {
             HStack(spacing: DesignTokens.Spacing.sm) {
-                Label(title, systemImage: systemImage)
+                label
                 if badge > 0 {
                     Spacer(minLength: DesignTokens.Spacing.xs)
                     Text("\(badge)")
@@ -839,7 +848,7 @@ private struct WelcomeView: View {
 // MARK: - Collapsible section header
 
 private struct CollapsibleSectionHeader: View {
-    let title: String
+    let title: LocalizedStringKey
     @Binding var isExpanded: Bool
 
     var body: some View {

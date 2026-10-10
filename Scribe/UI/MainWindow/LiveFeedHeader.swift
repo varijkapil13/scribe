@@ -30,9 +30,9 @@ enum LiveFeedStatus: Equatable {
     /// Title-case label used in the compact header / status line.
     var label: String {
         switch self {
-        case .ready:     return "Ready"
-        case .recording: return "Recording"
-        case .paused:    return "Paused"
+        case .ready:     return String(localized: "Ready")
+        case .recording: return String(localized: "Recording")
+        case .paused:    return String(localized: "Paused")
         }
     }
 
