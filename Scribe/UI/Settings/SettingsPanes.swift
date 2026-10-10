@@ -3,8 +3,9 @@ import KeyboardShortcuts
 import AppKit
 import ServiceManagement
 
-/// One of the four settings screens shown in the combined main window. Each
-/// pane is a standalone `View`, chosen from the sidebar.
+/// One settings screen in the Settings window. Each pane is a standalone
+/// `View`, chosen from the window's sidebar (see `SettingsRootView`), where
+/// panes are listed under their `SettingsPaneGroup`.
 enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case general
     case intelligence
@@ -24,7 +25,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .general:      return "General"
         case .intelligence: return "Intelligence"
-        case .storage:      return "Storage"
+        case .storage:      return "Storage & Sync"
         case .dictation:    return "Dictation"
         case .calendar:     return "Calendar"
         case .vocabulary:   return "Vocabulary"
@@ -99,6 +100,67 @@ struct SettingsPaneView: View {
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
         }
+    }
+}
+
+/// Sidebar grouping for the Settings window. Groups with a `header` render as
+/// a titled sidebar section; the rest render their panes as top-level rows.
+/// Every `SettingsPane` belongs to exactly one group (pinned by tests).
+enum SettingsPaneGroup: String, CaseIterable, Identifiable {
+    case general
+    case recording
+    case intelligence
+    case dictation
+    case storageSync
+    case shortcuts
+    case mcp
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:      return "General"
+        case .recording:    return "Recording"
+        case .intelligence: return "Intelligence"
+        case .dictation:    return "Dictation"
+        case .storageSync:  return "Storage & Sync"
+        case .shortcuts:    return "Shortcuts"
+        case .mcp:          return "MCP"
+        case .about:        return "About"
+        }
+    }
+
+    /// Panes listed under this group, in sidebar order. Audio and meeting
+    /// detection live inside the General pane; speaker naming inside
+    /// Vocabulary.
+    var panes: [SettingsPane] {
+        switch self {
+        case .general:      return [.general]
+        case .recording:    return [.calendar]
+        case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
+        case .dictation:    return [.dictation]
+        case .storageSync:  return [.storage]
+        case .shortcuts:    return [.shortcuts]
+        case .mcp:          return [.mcp]
+        case .about:        return [.about]
+        }
+    }
+
+    /// Section header shown in the sidebar, or nil for single-pane groups
+    /// whose one row already carries the name.
+    var header: String? {
+        switch self {
+        case .recording, .intelligence: return title
+        default:                        return nil
+        }
+    }
+}
+
+extension SettingsPane {
+    /// The sidebar group this pane is listed under.
+    var group: SettingsPaneGroup {
+        SettingsPaneGroup.allCases.first { $0.panes.contains(self) } ?? .general
     }
 }
 
