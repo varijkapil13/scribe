@@ -51,7 +51,15 @@ final class UniversalSearchViewModel: ObservableObject {
         async let transcriptSec = searchTranscripts(q)
 
         let results = await [noteSec, taskSec, transcriptSec]
-        sections = results.filter { !$0.results.isEmpty }
+        var found = results.filter { !$0.results.isEmpty }
+        // "Related notes" from the on-device semantic index (when enabled).
+        let related = await SemanticRelatedSearch.relatedCandidates(query: q)
+        if let section = SemanticRelatedSearch.section(
+            from: related, excludingNoteIds: SemanticRelatedSearch.listedNoteIds(in: found)) {
+            found.append(section)
+        }
+        guard !Task.isCancelled else { return }
+        sections = found
     }
 
     private func searchNotes(_ q: String) async -> SearchResultSection {

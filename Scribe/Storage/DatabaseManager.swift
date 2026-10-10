@@ -717,6 +717,8 @@ final class DatabaseManager: @unchecked Sendable {
                           on: "session_bookmarks",
                           columns: ["sessionId", "offsetMs"])
         }
+        // On-device semantic search index (see SemanticEmbeddingStore.swift).
+        SemanticEmbeddingSchema.register(in: &migrator)
 
         return migrator
     }

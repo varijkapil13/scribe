@@ -176,6 +176,8 @@ struct MainWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoBack)) { _ in nav.goBack() }
         // scribe:// links, opened files and Handoff (ScribeEntryRouter).
         .modifier(ScribeEntryPointsModifier(nav: nav, showCommandBar: $showUniversalSearch))
+        // Drop audio/video to import it as a recording; import progress card.
+        .modifier(MediaImportWindowSupport())
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoForward)) { _ in nav.goForward() }
         .onReceive(NotificationCenter.default.publisher(for: .scribeToggleSidebar)) { _ in
             withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {

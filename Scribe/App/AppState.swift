@@ -665,17 +665,47 @@ final class AppState: ObservableObject {
 
         if let sessionId = finishedSessionId {
             try? transcriptStore.endSession(id: sessionId)
-            // Split "Remote" into Speaker 1…N in the background (files are
-            // closed by now: audioManager.stopRecording finished the recorder).
-            if let capture = diarizationCapture, capture.sessionId == sessionId {
-                postProcessing.append(SpeakerDiarizationCoordinator.sessionDidStop(capture, store: transcriptStore))
-            }
+            let capture = diarizationCapture.flatMap { $0.sessionId == sessionId ? $0 : nil }
             diarizationCapture = nil
-            autoTitleIfNeeded(sessionId: sessionId)
+            postProcessing = runPostRecordingProcessing(sessionId: sessionId, diarization: capture)
         }
 
+        // Post-meeting hooks (Settings → Hooks); runs in the background.
+        MeetingHooks.sessionDidStop(sessionId: finishedSessionId, appState: self)
+
+        // Let the Mac sleep again once post-processing is done (bounded, so a
+        // stuck summary can't keep it awake forever).
+        if let activity = recordingActivity {
+            recordingActivity = nil
+            Self.endActivity(activity, after: postProcessing)
+        }
+
+        // Expose the finished session so the UI can navigate to its transcript
+        // once `isTranscribing` flips false. Set before clearing currentSessionId.
+        lastFinishedSessionId = finishedSessionId
+        currentSessionId = nil
+        isTranscribing = false
+    }
+
+    /// The work that follows a finished recording (also used for imported
+    /// recordings, see `MediaImportController`): speaker diarization (when a
+    /// capture is given), auto-titling, transcript analysis and the summary.
+    /// The session must already be ended and its audio files closed.
+    ///
+    /// - Returns: The background tasks, so callers can keep the Mac awake
+    ///   until they finish.
+    func runPostRecordingProcessing(sessionId: String, diarization capture: SpeakerDiarizationCapture?) -> [Task<Void, Never>] {
+        var postProcessing: [Task<Void, Never>] = []
+
+        // Split "Remote" into Speaker 1…N in the background (files are
+        // closed by now: audioManager.stopRecording finished the recorder).
+        if let capture, capture.sessionId == sessionId {
+            postProcessing.append(SpeakerDiarizationCoordinator.sessionDidStop(capture, store: transcriptStore))
+        }
+        autoTitleIfNeeded(sessionId: sessionId)
+
         // Auto-analyze transcript (NaturalLanguage framework — runs on any Apple Silicon).
-        if UserDefaults.standard.bool(forKey: "autoAnalyze"), let sessionId = finishedSessionId {
+        if UserDefaults.standard.bool(forKey: "autoAnalyze") {
             let segments = (try? transcriptStore.fetchSegments(sessionId: sessionId)) ?? []
             if !segments.isEmpty {
                 postProcessing.append(Task {
@@ -688,7 +718,7 @@ final class AppState: ObservableObject {
         }
 
         // Auto-summarize (Foundation Models — on-device Apple Intelligence).
-        if UserDefaults.standard.bool(forKey: "autoSummarize"), let sessionId = finishedSessionId {
+        if UserDefaults.standard.bool(forKey: "autoSummarize") {
             postProcessing.append(Task {
                 let segments = (try? transcriptStore.fetchSegments(sessionId: sessionId)) ?? []
                 guard !segments.isEmpty else { return }
@@ -709,22 +739,7 @@ final class AppState: ObservableObject {
                 await TemplateAutoSummary.runIfEnabled(sessionId: sessionId, title: title, segments: segmentData, transcriptStore: transcriptStore)
             })
         }
-
-        // Post-meeting hooks (Settings → Hooks); runs in the background.
-        MeetingHooks.sessionDidStop(sessionId: finishedSessionId, appState: self)
-
-        // Let the Mac sleep again once post-processing is done (bounded, so a
-        // stuck summary can't keep it awake forever).
-        if let activity = recordingActivity {
-            recordingActivity = nil
-            Self.endActivity(activity, after: postProcessing)
-        }
-
-        // Expose the finished session so the UI can navigate to its transcript
-        // once `isTranscribing` flips false. Set before clearing currentSessionId.
-        lastFinishedSessionId = finishedSessionId
-        currentSessionId = nil
-        isTranscribing = false
+        return postProcessing
     }
 
     /// Ends `activity` when every task in `work` has finished, or after

@@ -51,6 +51,8 @@ struct LiveSessionView: View {
             Divider()
 
             transcriptFeed
+
+            LiveCaptionTranslationBar(segments: appState.overlaySegments)
         }
         .background(DesignTokens.Palette.surface)
         // Transport shortcuts (Space = pause/resume, ⌘. = stop) live on the

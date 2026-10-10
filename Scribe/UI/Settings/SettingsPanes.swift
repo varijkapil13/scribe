@@ -537,6 +537,8 @@ private struct IntelligenceSettingsPane: View {
                     caption: "Score overall and per-speaker sentiment from -1.0 to +1.0."
                 )
             }
+
+            SemanticSearchSettingsSection()
         }
         .formStyle(.grouped)
     }
