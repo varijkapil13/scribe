@@ -108,13 +108,19 @@ enum LockedNoteKeychain {
     /// locked note unreadable).
     nonisolated static func createKey() throws -> SymmetricKey {
         let key = SymmetricKey(size: .bits256)
+        try storeKey(key)
+        return key
+    }
+
+    /// Stores `key` as this Mac's local item. Only called when `loadKey()`
+    /// found none.
+    private nonisolated static func storeKey(_ key: SymmetricKey) throws {
         var add = baseQuery()
         add[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
         add[kSecAttrLabel as String] = "Scribe locked notes key"
         add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw LockedNoteKeychainError.keychain(status) }
-        return key
     }
 
     /// The stored key, creating one first when `create` is true.
@@ -129,6 +135,11 @@ enum LockedNoteKeychain {
             return existing
         }
         if let synced = LockedNoteKeySelection.preferredSealingKey(LockedNoteSyncedKeyStore.loadAll()) {
+            // Keep a local copy too, so notes sealed with it still open here
+            // if iCloud Keychain is later turned off on this Mac.
+            do { try storeKey(synced) } catch {
+                Log.storage.error("LockedNoteKeychain: couldn't keep a local copy of the synced key: \(error.localizedDescription, privacy: .public)")
+            }
             return synced
         }
         guard create else { return nil }

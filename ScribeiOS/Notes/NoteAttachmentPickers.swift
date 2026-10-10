@@ -54,7 +54,7 @@ enum NoteAttachmentSources {
     /// Scanned pages as attachment files (one JPEG per page, in order).
     static func files(fromScanPages pages: [UIImage]) -> [EditorImportedFile] {
         let date = Date()
-        pages.enumerated().compactMap { index, image in
+        return pages.enumerated().compactMap { index, image -> EditorImportedFile? in
             guard let data = image.jpegData(compressionQuality: captureJPEGQuality) else { return nil }
             let name = EditorCaptureNaming.filename(
                 kind: .scan, date: date, ext: "jpg", page: index + 1, pageCount: pages.count

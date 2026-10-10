@@ -51,6 +51,9 @@ final class IOSLockedNoteSession {
 
     @ObservationIgnored private var keys: [SymmetricKey] = []
     @ObservationIgnored private var lastActivity = Date()
+    /// Re-locks after `idleMinutes` without activity while unlocked, even
+    /// when nothing asks for a key (an unlocked note left open on screen).
+    @ObservationIgnored private var idleTask: Task<Void, Never>?
 
     private init() {}
 
@@ -79,6 +82,7 @@ final class IOSLockedNoteSession {
         keys = loaded
         lastActivity = Date()
         isUnlocked = true
+        startIdleWatch()
         return loaded
     }
 
@@ -96,9 +100,25 @@ final class IOSLockedNoteSession {
     /// Locks every unlocked note now.
     func lock() {
         guard isUnlocked else { return }
+        idleTask?.cancel()
+        idleTask = nil
         NotificationCenter.default.post(name: .scribeIOSLockedNotesWillLock, object: nil)
         keys = []
         isUnlocked = false
+    }
+
+    private func startIdleWatch() {
+        idleTask?.cancel()
+        idleTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self, self.isUnlocked else { return }
+                if Date().timeIntervalSince(self.lastActivity) >= TimeInterval(Self.idleMinutes * 60) {
+                    self.lock()
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Authentication

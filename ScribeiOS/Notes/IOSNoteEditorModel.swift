@@ -123,7 +123,15 @@ final class IOSNoteEditorModel {
             body = stored
             return
         }
-        let known = (noteKey.map { [$0] } ?? []) + (IOSLockedNoteSession.shared.currentKeys() ?? [])
+        // Ask the session first: when it has gone idle it locks now (posting
+        // the re-lock notification, which clears `noteKey`), so a stale key
+        // can't reopen the note after the idle timeout.
+        let sessionKeys = IOSLockedNoteSession.shared.currentKeys()
+        var known: [SymmetricKey] = []
+        if let sessionKeys {
+            if let noteKey { known.append(noteKey) }
+            known.append(contentsOf: sessionKeys)
+        }
         if let key = LockedNoteKeySelection.key(for: stored, among: known),
            let plaintext = try? LockedNoteEnvelope.open(stored, key: key) {
             envelope = nil
