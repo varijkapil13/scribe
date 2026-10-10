@@ -818,7 +818,8 @@ private struct ShortcutsSettingsPane: View {
             Section("Global Shortcuts") {
                 KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
                 KeyboardShortcuts.Recorder("Dictate:", name: .dictation)
-                Text("Press these shortcuts from any app to start or stop recording, or to dictate into the focused app, without opening Scribe.")
+                KeyboardShortcuts.Recorder("Quick Capture:", name: .quickCapture)
+                Text("Press these shortcuts from any app to start or stop recording, dictate into the focused app, or jot down a note or task, without opening Scribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

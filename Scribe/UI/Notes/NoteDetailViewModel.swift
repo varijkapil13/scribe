@@ -51,6 +51,7 @@ final class NoteDetailViewModel: ObservableObject {
         let sender: ObjectIdentifier?
         let noteId: String
     }
+    private var inAppChangeCancellable: AnyCancellable?
 
     /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
     /// across chip selections so analysis state survives expansion-collapse
@@ -97,6 +98,13 @@ final class NoteDetailViewModel: ObservableObject {
             .sink { [weak self] save in
                 guard let self, save.sender != ObjectIdentifier(self), save.noteId == self.note.id else { return }
                 self.handlePeerSave()
+            }
+        inAppChangeCancellable = NotificationCenter.default
+            .publisher(for: .scribeNoteChangedInApp)
+            .map { NoteVaultChange.noteIds(from: $0) }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] ids in
+                self?.handleInAppChange(noteIds: ids)
             }
         autosaveCancellable = $isDirty
             .filter { $0 }
@@ -227,7 +235,8 @@ final class NoteDetailViewModel: ObservableObject {
             case .keepBoth:
                 do {
                     if let copy = try store.preserveDiskVersionAsConflictCopy(noteId: note.id) {
-                        errorMessage = "\u{201C}\(note.title)\u{201D} was changed outside Scribe while you were editing. "
+                        let changedBy = peerSavedSinceLoad ? "elsewhere in Scribe" : "outside Scribe"
+                        errorMessage = "\u{201C}\(note.title)\u{201D} was changed \(changedBy) while you were editing. "
                             + "Your version was saved; the other version was kept as "
                             + "\u{201C}\(copy.deletingPathExtension().lastPathComponent)\u{201D}."
                         keptConflictCopy = true
@@ -284,6 +293,14 @@ final class NoteDetailViewModel: ObservableObject {
         } else {
             reloadFromDisk()
         }
+    }
+
+    /// Another part of Scribe (Quick Capture appending to the daily note)
+    /// rewrote this note's file. Treated like a peer editor's save: adopt it
+    /// now, or, with unsaved edits, keep both versions on the next save.
+    private func handleInAppChange(noteIds: Set<String>?) {
+        if let noteIds, !noteIds.contains(note.id) { return }
+        handlePeerSave()
     }
 
     /// The last version Scribe itself wrote on top of the loaded base — nil

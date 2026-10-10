@@ -64,6 +64,7 @@ struct MenuBarContent: View {
 
         Divider()
 
+        Button("Quick Capture…") { QuickCaptureController.shared.show() }
         Button("Open Scribe") { open(nil) }
         Button("Today") { open(.today) }
         SettingsLink { Text("Settings…") }
@@ -91,6 +92,7 @@ struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
     @ObservedObject var audioManager: AudioSessionManager
     @ObservedObject private var dictation = DictationController.shared
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Image(systemName: MenuBarIcon.symbol(
@@ -99,5 +101,6 @@ struct MenuBarLabel: View {
             isDictating: dictation.isActive
         ))
         .accessibilityLabel("Scribe")
+        .onAppear { QuickCaptureController.shared.sceneOpenWindow = openWindow }
     }
 }

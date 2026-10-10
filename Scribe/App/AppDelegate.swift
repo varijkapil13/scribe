@@ -290,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 Task { @MainActor in DictationController.shared.shortcutReleased() }
             }
         )
+        QuickCaptureController.shared.registerShortcut()
     }
 
     // MARK: - Recording Actions
