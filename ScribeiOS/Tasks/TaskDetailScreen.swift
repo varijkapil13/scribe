@@ -88,9 +88,9 @@ struct TaskDetailScreen: View {
             }
             .pickerStyle(.segmented)
 
-            Toggle("Start Date", isOn: model.optionalDateToggle(\.startAt, defaultValue: TaskQuickDates.tomorrow()))
+            Toggle("Start Date", isOn: model.hasStartBinding)
             if model.task.startAt != nil {
-                DatePicker("Starts", selection: model.dayBinding(\.startAt), displayedComponents: .date)
+                DatePicker("Starts", selection: model.startDayBinding, displayedComponents: .date)
             }
 
             Picker("Duration", selection: durationBinding) {
@@ -109,12 +109,12 @@ struct TaskDetailScreen: View {
                 DatePicker("Due", selection: model.dueDayBinding, displayedComponents: .date)
                 Toggle("Time", isOn: model.dueHasTimeBinding)
                 if model.dueHasTime {
-                    DatePicker("At", selection: model.requiredDateBinding(\.dueAt), displayedComponents: .hourAndMinute)
+                    DatePicker("At", selection: model.dueDateTimeBinding, displayedComponents: .hourAndMinute)
                 }
             }
-            Toggle("Remind Me", isOn: model.optionalDateToggle(\.remindAt, defaultValue: model.defaultReminderDate))
+            Toggle("Remind Me", isOn: model.hasReminderBinding)
             if model.task.remindAt != nil {
-                DatePicker("Reminder", selection: model.requiredDateBinding(\.remindAt),
+                DatePicker("Reminder", selection: model.reminderBinding,
                            displayedComponents: [.date, .hourAndMinute])
             }
         }
@@ -486,25 +486,41 @@ final class TaskDetailModel: ObservableObject {
         task = TaskDestinationDrop.planned(task, bucket: bucket, calendar: .current, now: Date())
     }
 
-    func optionalDateToggle(_ keyPath: WritableKeyPath<TodoTask, Date?>, defaultValue: Date) -> Binding<Bool> {
+    // Bindings capture only `self` (no key paths), so they stay Sendable.
+
+    var hasStartBinding: Binding<Bool> {
         Binding(
-            get: { self.task[keyPath: keyPath] != nil },
-            set: { on in self.task[keyPath: keyPath] = on ? defaultValue : nil }
+            get: { self.task.startAt != nil },
+            set: { on in self.task.startAt = on ? TaskQuickDates.tomorrow() : nil }
         )
     }
 
-    /// A date-only field (stored as the start of the day).
-    func dayBinding(_ keyPath: WritableKeyPath<TodoTask, Date?>) -> Binding<Date> {
+    /// The start date is date-only (stored as the start of the day).
+    var startDayBinding: Binding<Date> {
         Binding(
-            get: { self.task[keyPath: keyPath] ?? Date() },
-            set: { self.task[keyPath: keyPath] = Calendar.current.startOfDay(for: $0) }
+            get: { self.task.startAt ?? Date() },
+            set: { self.task.startAt = Calendar.current.startOfDay(for: $0) }
         )
     }
 
-    func requiredDateBinding(_ keyPath: WritableKeyPath<TodoTask, Date?>) -> Binding<Date> {
+    var dueDateTimeBinding: Binding<Date> {
         Binding(
-            get: { self.task[keyPath: keyPath] ?? Date() },
-            set: { self.task[keyPath: keyPath] = $0 }
+            get: { self.task.dueAt ?? Date() },
+            set: { self.task.dueAt = $0 }
+        )
+    }
+
+    var hasReminderBinding: Binding<Bool> {
+        Binding(
+            get: { self.task.remindAt != nil },
+            set: { on in self.task.remindAt = on ? self.defaultReminderDate : nil }
+        )
+    }
+
+    var reminderBinding: Binding<Date> {
+        Binding(
+            get: { self.task.remindAt ?? Date() },
+            set: { self.task.remindAt = $0 }
         )
     }
 
