@@ -71,9 +71,10 @@ final class PlannerSchedulingTests: XCTestCase {
             task("deferred", startAt: date(12)),
             task("scheduled", due: date(10, 9)),
             task("tomorrow", due: date(11)),
+            task("missedBlock", due: date(9, 14)),
         ]
         let list = PlannerScheduling.sideList(tasks, for: date(10), calendar: cal, now: now)
-        XCTAssertEqual(list.forDay.map(\.id), ["dueToday", "overdue", "plannedToday", "evening"])
+        XCTAssertEqual(list.forDay.map(\.id), ["dueToday", "overdue", "plannedToday", "evening", "missedBlock"])
         XCTAssertEqual(list.undated.map(\.id), ["undated"])
     }
 
@@ -83,6 +84,7 @@ final class PlannerSchedulingTests: XCTestCase {
             task("dueThatDay", due: date(12)),
             task("overdue", due: date(8)),
             task("plannedToday", bucket: .today),
+            task("missedBlock", due: date(9, 14)),
         ]
         let list = PlannerScheduling.sideList(tasks, for: date(12), calendar: cal, now: now)
         XCTAssertEqual(list.forDay.map(\.id), ["dueThatDay"])

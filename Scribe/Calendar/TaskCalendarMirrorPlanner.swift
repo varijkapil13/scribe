@@ -113,7 +113,7 @@ enum TaskCalendarMirrorPlanner {
 
         var drafts: [String: TaskCalendarBlockDraft] = [:]
         for task in tasks where drafts[task.id] == nil {
-            guard let draft = draft(for: task, calendar: calendar) else { continue }
+            guard let draft = Self.draft(for: task, calendar: calendar) else { continue }
             let inWindow = draft.end > configuration.windowStart && draft.start < configuration.windowEnd
             if inWindow || linkByTask[task.id] != nil {
                 drafts[task.id] = draft

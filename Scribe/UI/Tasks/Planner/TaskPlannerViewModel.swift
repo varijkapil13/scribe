@@ -132,7 +132,7 @@ final class TaskPlannerViewModel: ObservableObject {
     /// Gives `taskId` a time block starting at `startMinute` of the shown day
     /// (from a side-list drop, or the "Schedule at" menu).
     func schedule(taskId: String, startMinute: Int, snapMinutes: Int) {
-        guard let task = task(id: taskId), PlannerScheduling.isOpen(task) else { return }
+        guard let task = self.task(id: taskId), PlannerScheduling.isOpen(task) else { return }
         let minute = PlannerScheduling.representableStartMinute(startMinute, snapMinutes: snapMinutes)
         let start = TimeGridGeometry.date(atMinute: minute, on: day, calendar: calendar)
         let wasScheduled = PlannerScheduling.isScheduled(task, calendar: calendar)
@@ -143,7 +143,7 @@ final class TaskPlannerViewModel: ObservableObject {
 
     /// Moves a block to start at `startMinute` of the shown day.
     func move(taskId: String, toStartMinute startMinute: Int, snapMinutes: Int) {
-        guard let task = task(id: taskId) else { return }
+        guard let task = self.task(id: taskId) else { return }
         let minute = PlannerScheduling.representableStartMinute(startMinute, snapMinutes: snapMinutes)
         let start = TimeGridGeometry.date(atMinute: minute, on: day, calendar: calendar)
         guard task.dueAt != start else { return }
@@ -153,7 +153,7 @@ final class TaskPlannerViewModel: ObservableObject {
 
     /// Changes a block's length.
     func resize(taskId: String, toMinutes minutes: Int) {
-        guard let task = task(id: taskId) else { return }
+        guard let task = self.task(id: taskId) else { return }
         guard PlannerScheduling.durationMinutes(of: task) != minutes else { return }
         write(PlannerScheduling.resizing(task, toMinutes: minutes),
               before: task, actionName: "Resize Time Block")
@@ -161,7 +161,7 @@ final class TaskPlannerViewModel: ObservableObject {
 
     /// Takes a task off the grid (keeps its date).
     func unschedule(taskId: String) {
-        guard let task = task(id: taskId), PlannerScheduling.isScheduled(task, calendar: calendar) else { return }
+        guard let task = self.task(id: taskId), PlannerScheduling.isScheduled(task, calendar: calendar) else { return }
         write(PlannerScheduling.unscheduling(task, calendar: calendar),
               before: task, actionName: "Remove Time")
     }
@@ -190,6 +190,11 @@ final class TaskPlannerViewModel: ObservableObject {
             return
         }
         let after = (try? store.fetchTask(id: before.id)) ?? updated
+        // Show the new time right away: the observation's async delivery
+        // would otherwise let a dragged block snap back for a moment.
+        if let index = tasks.firstIndex(where: { $0.id == after.id }) {
+            tasks[index] = after
+        }
         Self.refreshReminder(for: after, scheduler: reminderScheduler)
 
         guard let undoManager else { return }

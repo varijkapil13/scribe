@@ -173,9 +173,17 @@ final class TaskCalendarMirrorService: ObservableObject {
                 guard let identifier = try writer.createEvent(draft, calendarId: calendarId) else {
                     return "The calendar chosen for time blocks is no longer available."
                 }
-                try linkStore.upsert(TaskCalendarBlockLink(
-                    taskId: draft.taskId, eventIdentifier: identifier, calendarId: calendarId,
-                    lastStart: draft.start, lastEnd: draft.end, lastTitle: draft.title))
+                do {
+                    try linkStore.upsert(TaskCalendarBlockLink(
+                        taskId: draft.taskId, eventIdentifier: identifier, calendarId: calendarId,
+                        lastStart: draft.start, lastEnd: draft.end, lastTitle: draft.title))
+                } catch {
+                    // An event without a link row would never be updated or
+                    // removed, and the next pass would write it again: take
+                    // back the event just created.
+                    try? writer.deleteEvent(identifier: identifier)
+                    throw error
+                }
             case .update(let link, let draft):
                 if try writer.updateEvent(identifier: link.eventIdentifier, with: draft) {
                     var updated = link
@@ -208,6 +216,17 @@ final class TaskCalendarMirrorService: ObservableObject {
 }
 
 // MARK: - EventKit wrapper
+
+enum TaskCalendarMirrorError: LocalizedError {
+    case missingEventIdentifier
+
+    var errorDescription: String? {
+        switch self {
+        case .missingEventIdentifier:
+            return "Calendar didn't return an identifier for a new time block."
+        }
+    }
+}
 
 /// The EventKit calls time blocking makes, kept in one small type (outside any
 /// actor, like `CalendarStore`). Every method that changes an event takes the
@@ -247,7 +266,14 @@ final class TaskCalendarEventWriter: @unchecked Sendable {
         event.url = ScribeDeepLink.task(id: draft.taskId).url
         try store.save(event, span: .thisEvent, commit: true)
         // Typed as optional: the SDK may import this as implicitly unwrapped.
-        let identifier: String? = event.eventIdentifier
+        let rawIdentifier: String? = event.eventIdentifier
+        guard let identifier = rawIdentifier, !identifier.isEmpty else {
+            // Can't be recorded in `task_calendar_blocks`, so it could never
+            // be updated or removed later: undo the write instead of leaving
+            // an untracked event (and a duplicate on every later pass).
+            try? store.remove(event, span: .thisEvent, commit: true)
+            throw TaskCalendarMirrorError.missingEventIdentifier
+        }
         return identifier
     }
 

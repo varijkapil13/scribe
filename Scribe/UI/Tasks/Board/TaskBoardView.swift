@@ -65,13 +65,15 @@ struct TaskBoardView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Built once per update; every card's "Move to" menu reuses it.
+        let allColumns = columns
+        return VStack(spacing: 0) {
             groupingBar
             Divider()
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
-                    ForEach(columns) { column in
-                        columnView(column)
+                    ForEach(allColumns) { column in
+                        columnView(column, allColumns: allColumns)
                     }
                 }
                 .padding(DesignTokens.Spacing.md)
@@ -112,7 +114,7 @@ struct TaskBoardView: View {
     // MARK: - Column
 
     @ViewBuilder
-    private func columnView(_ column: TaskBoardColumn) -> some View {
+    private func columnView(_ column: TaskBoardColumn, allColumns: [TaskBoardColumn]) -> some View {
         let isTargeted = dropTargetColumn == column.id
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: DesignTokens.Spacing.xs) {
@@ -135,7 +137,7 @@ struct TaskBoardView: View {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     ForEach(column.tasks) { task in
-                        card(for: task, in: column)
+                        card(for: task, in: column, allColumns: allColumns)
                     }
                     if column.tasks.isEmpty {
                         Text("Drop tasks here")
@@ -184,7 +186,7 @@ struct TaskBoardView: View {
 
     // MARK: - Card
 
-    private func card(for task: TodoTask, in column: TaskBoardColumn) -> some View {
+    private func card(for task: TodoTask, in column: TaskBoardColumn, allColumns: [TaskBoardColumn]) -> some View {
         TaskBoardCard(
             task: task,
             tags: tags(for: task),
@@ -198,7 +200,7 @@ struct TaskBoardView: View {
         .contextMenu {
             Button { onOpen(task) } label: { Label("Edit…", systemImage: "pencil") }
             Menu {
-                ForEach(columns.filter { $0.key != column.key }) { target in
+                ForEach(allColumns.filter { $0.key != column.key }) { target in
                     Button(target.title) { drop(taskId: task.id, on: target.key) }
                 }
             } label: {

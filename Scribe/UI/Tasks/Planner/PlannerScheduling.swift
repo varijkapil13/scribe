@@ -12,8 +12,9 @@ struct PlannerTaskBlock: Equatable, Identifiable {
 
 /// The planner's side list for a day: open tasks without a time.
 struct PlannerSideList: Equatable {
-    /// Due that day (or, viewing today, overdue / planned for Today or This
-    /// Evening) but not yet given a time.
+    /// Due that day (or, viewing today, overdue — including blocks left over
+    /// from earlier days — or planned for Today or This Evening) but not yet
+    /// given a time on it.
     var forDay: [TodoTask]
     /// Undated, available tasks (not parked in Someday).
     var undated: [TodoTask]
@@ -76,9 +77,15 @@ enum PlannerScheduling {
         let isToday = calendar.isDate(day, inSameDayAs: now)
         var forDay: [TodoTask] = []
         var undated: [TodoTask] = []
-        for task in tasks where isOpen(task) && !isScheduled(task, calendar: calendar) {
+        for task in tasks where isOpen(task) {
             // Deferred past this day: not available yet.
             if let start = task.startAt, start >= nextDay { continue }
+            if isScheduled(task, calendar: calendar) {
+                // A block from an earlier day that was never done: viewing
+                // today, offer it again so it can be given a new time.
+                if isToday, let due = task.dueAt, due < dayStart { forDay.append(task) }
+                continue
+            }
             if let due = task.dueAt {
                 if calendar.isDate(due, inSameDayAs: day) || (isToday && due < dayStart) {
                     forDay.append(task)

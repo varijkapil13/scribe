@@ -8,7 +8,7 @@ extension TaskListViewModel {
     /// Every task the list currently shows, in display order (the board's
     /// "active" input). Includes settle snapshots of just-completed tasks.
     var boardActiveTasks: [TodoTask] {
-        groups.flatMap(\.tasks)
+        groups.flatMap { $0.tasks }
     }
 
     /// Applies a card dropped on a board column: updates the grouping's field

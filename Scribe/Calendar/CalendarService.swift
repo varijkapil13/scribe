@@ -157,7 +157,11 @@ final class CalendarService: ObservableObject {
             return
         }
         let now = Date()
+        // Task time blocks Scribe wrote itself aren't meetings: no pre-meeting
+        // reminder or "upcoming meeting" entry for them.
+        let mirrored = TaskCalendarMirrorService.shared.mirroredEventIdentifiers()
         upcomingEvents = store.events(from: now, to: now.addingTimeInterval(Self.lookahead))
+            .filter { !mirrored.contains($0.id) }
             .sorted { $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start }
         CalendarReminderScheduler.shared.reschedule(
             events: Self.remindersEnabled ? upcomingEvents : []
