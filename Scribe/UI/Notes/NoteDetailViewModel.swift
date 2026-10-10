@@ -40,6 +40,11 @@ final class NoteDetailViewModel: ObservableObject {
     private var autosaveCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
     private var vaultChangeCancellable: AnyCancellable?
+    private var inAppChangeCancellable: AnyCancellable?
+    /// Set when another in-app writer (Quick Capture) changed the file while
+    /// this editor had unsaved edits: the next save must not treat that write
+    /// as this editor's own lineage, so it keeps both versions.
+    private var ignoreOwnWriteLineage = false
 
     /// Per-session TranscriptDetailViewModel cache, lazily populated. Reused
     /// across chip selections so analysis state survives expansion-collapse
@@ -74,6 +79,13 @@ final class NoteDetailViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] ids in
                 self?.handleExternalVaultChange(noteIds: ids)
+            }
+        inAppChangeCancellable = NotificationCenter.default
+            .publisher(for: .scribeNoteChangedInApp)
+            .map { NoteVaultChange.noteIds(from: $0) }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] ids in
+                self?.handleInAppChange(noteIds: ids)
             }
         autosaveCancellable = $isDirty
             .filter { $0 }
@@ -193,7 +205,9 @@ final class NoteDetailViewModel: ObservableObject {
             switch NoteExternalEditPolicy.decide(
                 loaded: loaded,
                 current: current,
-                lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
+                lastWrittenByScribe: ignoreOwnWriteLineage
+                    ? nil
+                    : store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
                 hasUnsavedChanges: isDirty
             ) {
             case .write:
@@ -219,6 +233,7 @@ final class NoteDetailViewModel: ObservableObject {
         do {
             try store.updateNote(note, tags: tags)
             loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
+            ignoreOwnWriteLineage = false
             backlinks = (try? store.backlinks(for: note.id)) ?? []
             recomputeUnresolvedLinks()
             isDirty = false
@@ -246,6 +261,19 @@ final class NoteDetailViewModel: ObservableObject {
             hasUnsavedChanges: false
         )
         if decision == .reloadFromDisk {
+            reloadFromDisk()
+        }
+    }
+
+    /// Another part of Scribe (Quick Capture appending to the daily note)
+    /// rewrote this note's file. That write is Scribe's own, so the external
+    /// edit policy would let this editor's stale content overwrite it: adopt
+    /// it now, or, with unsaved edits, keep both versions on the next save.
+    private func handleInAppChange(noteIds: Set<String>?) {
+        if let noteIds, !noteIds.contains(note.id) { return }
+        if isDirty {
+            ignoreOwnWriteLineage = true
+        } else {
             reloadFromDisk()
         }
     }
