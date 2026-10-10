@@ -57,6 +57,8 @@ struct NoteListView: View {
                     NoteRowView(note: note)
                         .tag(note.id)
                         .contextMenu {
+                            NoteLinkMenuItems(noteId: note.id)
+                            Divider()
                             Button(role: .destructive) {
                                 vm.requestDelete(id: note.id)
                             } label: {

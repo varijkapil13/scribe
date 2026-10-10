@@ -228,6 +228,8 @@ struct NoteDetailView: View {
         // Notes AI toolbar menu (Enhance notes, recipes) + replay of
         // template-summary edits written to this note elsewhere.
         .modifier(NoteAIFeaturesModifier(vm: vm))
+        // Handoff / search activity + Reveal in Finder / Copy Link menu.
+        .modifier(NoteEntryPointsModifier(noteId: vm.note.id, title: vm.note.title))
         .sheet(item: $openedTaskFromAction) { task in
             TaskInspectorSheet(task: task) { openedTaskFromAction = nil }
         }
