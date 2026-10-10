@@ -263,7 +263,7 @@ struct LiveTranscriptFeed: View {
                 .padding(DesignTokens.Spacing.xs)
         }
         .buttonStyle(.plain)
-        .background(Circle().scribeGlass(.hud, in: Circle()))
+        .scribeFloatingGlass(in: Circle(), interactive: true)
         .accessibilityLabel("Read latest line")
         .accessibilityHint("Announces the most recent finalized transcript line")
     }

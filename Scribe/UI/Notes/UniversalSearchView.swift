@@ -99,9 +99,8 @@ struct UniversalSearchView: View {
             }
         }
         .frame(width: 580)
-        .scribeGlass(.hud, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+        .scribeFloatingGlass(in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .accessibilityElement(children: .contain)
         .onAppear {
             fieldFocused = true

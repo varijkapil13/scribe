@@ -70,7 +70,7 @@ extension SlashCommand {
 /// Keyboard-driven slash command menu shown at the caret. Filters as the user
 /// types after `/`, navigable with arrows + Return, dismissed with Esc — all
 /// driven from the host text view (which keeps first-responder so typing keeps
-/// filtering). Backed by a translucent material that collapses to a solid
+/// filtering). Backed by Liquid Glass that collapses to a solid
 /// surface under Reduce Transparency / Increase Contrast.
 struct SlashCommandMenu: View {
     let query: String
@@ -79,7 +79,6 @@ struct SlashCommandMenu: View {
     @Binding var highlighted: Int
     let onPick: (SlashCommand) -> Void
 
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     /// Commands matching the current query — exposed statically so the host can
@@ -111,13 +110,8 @@ struct SlashCommandMenu: View {
         }
         .padding(DesignTokens.Spacing.xs)
         .frame(width: 280)
-        .background(menuBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-        .shadow(color: .black.opacity(reduceTransparency ? 0 : 0.18), radius: 14, y: 6)
+        // Liquid Glass; opaque under Reduce Transparency / Increase Contrast.
+        .scribeFloatingGlass(in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Insert block")
         .accessibilityHint("Type to filter. Up and down arrows to choose, Return to insert, Escape to dismiss.")
@@ -159,21 +153,6 @@ struct SlashCommandMenu: View {
     }
 
     // MARK: - Styling (a11y-aware)
-
-    @ViewBuilder
-    private var menuBackground: some View {
-        if reduceTransparency || contrast == .increased {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(DesignTokens.Palette.surfaceElevated)
-        } else {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(.regularMaterial)
-        }
-    }
-
-    private var borderColor: Color {
-        DesignTokens.Palette.cardBorder(contrast)
-    }
 
     private var highlightFill: Color {
         contrast == .increased ? Color.accentColor.opacity(0.30) : Color.accentColor.opacity(0.15)

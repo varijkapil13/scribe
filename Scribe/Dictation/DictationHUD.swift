@@ -71,8 +71,7 @@ private struct DictationHUDView: View {
         }
         .padding(.horizontal, 16)
         .frame(width: 420, height: 64)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.separator))
+        .scribeFloatingGlass(in: Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Dictation: \(caption)")
     }

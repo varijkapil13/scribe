@@ -22,11 +22,7 @@ struct QuickCaptureView: View {
         }
         .padding(DesignTokens.Spacing.lg)
         .frame(width: Self.width, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.lg, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.lg, style: .continuous)
-                .strokeBorder(.separator)
-        )
+        .scribeFloatingGlass(in: RoundedRectangle(cornerRadius: DesignTokens.Radius.lg, style: .continuous))
         .onExitCommand { model.cancel() }
         .onAppear {
             model.openWindowAction = openWindow
@@ -172,6 +168,7 @@ struct QuickCaptureView: View {
             Button("Save") { model.save(openAfter: false) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!model.canSave)
+                .scribeGlassButton(prominent: true)
         }
         .controlSize(.small)
     }
@@ -218,8 +215,7 @@ struct QuickCaptureToastView: View {
             .font(.system(size: 13, weight: .medium))
             .padding(.horizontal, DesignTokens.Spacing.lg)
             .padding(.vertical, DesignTokens.Spacing.sm)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.separator))
+            .scribeFloatingGlass(in: Capsule())
             .fixedSize()
             .accessibilityElement(children: .combine)
     }

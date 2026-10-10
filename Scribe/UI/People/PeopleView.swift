@@ -158,13 +158,18 @@ private struct PersonDetailView: View {
         }
     }
 
+    /// The person's other names as a locale-formatted list ("A, B and C").
+    private var otherNames: String {
+        person.aliases.filter { $0 != person.id }.formatted(.list(type: .and))
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             Text(person.name)
                 .font(DesignTokens.Typography.title2)
                 .textSelection(.enabled)
             if person.aliases.count > 1 {
-                Text("Also seen as: " + person.aliases.filter { $0 != person.id }.joined(separator: ", "))
+                Text("Also seen as: \(otherNames)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

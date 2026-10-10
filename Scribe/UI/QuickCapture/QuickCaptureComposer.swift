@@ -25,18 +25,18 @@ enum QuickCaptureMode: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .note:          return "Note"
-        case .task:          return "Task"
-        case .appendToDaily: return "Today"
+        case .note:          return String(localized: "Note")
+        case .task:          return String(localized: "Task")
+        case .appendToDaily: return String(localized: "Today")
         }
     }
 
     /// Longer name for VoiceOver and the help tag.
     var accessibilityTitle: String {
         switch self {
-        case .note:          return "New note"
-        case .task:          return "New task"
-        case .appendToDaily: return "Append to today's daily note"
+        case .note:          return String(localized: "New note")
+        case .task:          return String(localized: "New task")
+        case .appendToDaily: return String(localized: "Append to today's daily note")
         }
     }
 
@@ -50,9 +50,9 @@ enum QuickCaptureMode: String, CaseIterable, Identifiable, Sendable {
 
     var placeholder: String {
         switch self {
-        case .note:          return "Title, then more lines for the body"
+        case .note:          return String(localized: "Title, then more lines for the body")
         case .task:          return "Buy milk tmr 5pm #errands +Home !high"
-        case .appendToDaily: return "Add a line to today's daily note"
+        case .appendToDaily: return String(localized: "Add a line to today's daily note")
         }
     }
 

@@ -279,7 +279,6 @@ struct TaskDetailPanel: View {
                 .popover(isPresented: $showDueDatePicker, arrowEdge: .trailing) {
                     InlineDatePickerView(selectedDate: $viewModel.dueAt)
                         .padding(DesignTokens.Spacing.xs)
-                        .scribeGlass(.hud, in: Rectangle())
                 }
             }
 
@@ -318,7 +317,6 @@ struct TaskDetailPanel: View {
                     .popover(isPresented: $showReminderPicker, arrowEdge: .trailing) {
                         InlineDatePickerView(selectedDate: $viewModel.remindAt)
                             .padding(DesignTokens.Spacing.xs)
-                            .scribeGlass(.hud, in: Rectangle())
                     }
 
                     Button {
@@ -395,7 +393,6 @@ struct TaskDetailPanel: View {
                         }
                     ))
                     .padding(DesignTokens.Spacing.xs)
-                    .scribeGlass(.hud, in: Rectangle())
                 }
                 if viewModel.startAt != nil {
                     Button { viewModel.startAt = nil } label: {

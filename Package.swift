@@ -39,7 +39,12 @@ let package = Package(
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
-            path: "Scribe"
+            path: "Scribe",
+            // The String Catalog is compiled by the Xcode app target only.
+            // SwiftPM would treat it as a localized resource (requiring
+            // `defaultLocalization` and catalog compilation) for no benefit to
+            // the logic tests, which fall back to the English keys.
+            exclude: ["Resources/Localizable.xcstrings"]
         ),
         .testTarget(
             name: "ScribeTests",

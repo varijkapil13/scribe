@@ -44,7 +44,7 @@ struct MenuBarContent: View {
             Button("Copy Disclosure Message") { _ = ConsentDisclosure.copyToPasteboard() }
         } else {
             if let meeting = detector.currentMeeting {
-                Button("Record \(MeetingDetector.meetingPhrase(for: meeting))") {
+                Button(Self.recordTitle(for: meeting)) {
                     Task { await appDelegate.startRecording(detectedMeeting: meeting) }
                 }
                 Divider()
@@ -70,6 +70,15 @@ struct MenuBarContent: View {
         SettingsLink { Text("Settings…") }
         Divider()
         Button("Quit Scribe") { NSApp.terminate(nil) }
+    }
+
+    /// One sentence-level localized string per variant (not "Record " glued
+    /// to a separately built "Zoom meeting" fragment), so translators see the
+    /// whole phrase and can reorder it.
+    private static func recordTitle(for meeting: MeetingApp) -> String {
+        meeting.kind == .conferencing
+            ? String(localized: "Record \(meeting.name) meeting")
+            : String(localized: "Record meeting")
     }
 
     private func open(_ selection: MainSelection?) {
@@ -100,6 +109,9 @@ struct MenuBarLabel: View {
             isPaused: audioManager.isPaused,
             isDictating: dictation.isActive
         ))
+        // Template rendering so the menu bar tints it (light/dark, tinted and
+        // translucent menu bars on macOS 27).
+        .renderingMode(.template)
         .accessibilityLabel("Scribe")
         .onAppear { QuickCaptureController.shared.sceneOpenWindow = openWindow }
     }
