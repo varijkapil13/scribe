@@ -187,7 +187,9 @@ struct FollowUpEmailSheet: View {
                     Label("Open in Mail", systemImage: "envelope")
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                // ⌘↩, not plain Return: Return must insert a newline in the
+                // body editor instead of sending the draft off to Mail.
+                .keyboardShortcut(.return, modifiers: .command)
                 .disabled(model.isGenerating || model.body.isEmpty)
             }
         }

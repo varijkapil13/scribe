@@ -6,6 +6,9 @@ import SwiftUI
 struct LiveCopilotPanel: View {
 
     @ObservedObject var controller: LiveCopilotController
+    /// Focus of the "Ask now" field, owned by the live view so it can lift
+    /// its bare-Space pause shortcut while the user types a question.
+    var askFocus: FocusState<Bool>.Binding
 
     @AppStorage(CopilotSettings.panelExpandedKey) private var isExpanded: Bool = true
     @AppStorage(CopilotSettings.liveSummaryEnabledKey) private var liveSummaryEnabled: Bool = true
@@ -214,6 +217,7 @@ struct LiveCopilotPanel: View {
             HStack(spacing: DesignTokens.Spacing.xs) {
                 TextField("Ask about this meeting — e.g. what did Priya say about the deadline?", text: $question)
                     .textFieldStyle(.roundedBorder)
+                    .focused(askFocus)
                     .onSubmit(submit)
                 Button("Ask", action: submit)
                     .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || controller.isAnswering)

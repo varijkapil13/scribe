@@ -74,17 +74,7 @@ struct TranscriptDetailView: View {
                 Group {
                     switch selectedTab {
                     case .transcript:  transcriptSection
-                    case .summary:
-                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
-                            summaryShareRow
-                            SessionHighlightsSection(
-                                model: highlights,
-                                segments: viewModel.segments,
-                                speakerName: { viewModel.speakerName(for: $0) },
-                                onPlay: highlightPlayAction
-                            )
-                            summarySection
-                        }
+                    case .summary:     summaryTabContent
                     case .actionItems: actionItemsSection
                     case .insights:    insightsSection
                     }
@@ -447,6 +437,21 @@ struct TranscriptDetailView: View {
     }
 
     // MARK: - Summary
+
+    /// Summary tab: share row, bookmarked highlights, then the summary.
+    /// Kept out of `body` to spare the type checker.
+    private var summaryTabContent: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+            summaryShareRow
+            SessionHighlightsSection(
+                model: highlights,
+                segments: viewModel.segments,
+                speakerName: { viewModel.speakerName(for: $0) },
+                onPlay: highlightPlayAction
+            )
+            summarySection
+        }
+    }
 
     /// Seek-and-play for a highlight, or nil without audio.
     private var highlightPlayAction: ((Int) -> Void)? {
