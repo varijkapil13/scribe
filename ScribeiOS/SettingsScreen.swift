@@ -51,6 +51,8 @@ struct SettingsScreen: View {
                         .disabled(syncState == .syncing)
                     }
                 }
+
+                RecordingSettingsSection() // ios-recording slot
             }
             .navigationTitle("Settings")
         }

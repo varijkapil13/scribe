@@ -35,6 +35,21 @@ ScreenCaptureKit/CoreAudio/`KeyboardShortcuts`/`SpeechRecognizerEngine` and the
 whole capture stack are excluded from the iOS target by source-exclusion +
 `#if os(macOS)`. iOS = Notes + Tasks + Today + Sync.
 
+> **Revised (wave 5): microphone recording now ships on iPhone / iPad.** iOS
+> can't capture other apps' or system audio, so the iOS recorder is
+> mic-only ("In-person / speakerphone"): `AVAudioSession` + `AVAudioEngine`
+> (ScribeiOS/Recording), background audio, call interruptions and route
+> changes, a Live Activity / Dynamic Island (`ScribeRecordingActivity`
+> extension). The portable core is shared with the Mac by compiling the same
+> files into `ScribeiOS` — `TranscriptionPipeline` / `SpeechRecognizerEngine`
+> (SpeechAnalyzer), `SessionAudioRecorder`, `MeetingSummarizer` (Foundation
+> Models), bookmarks, the media-import decoder/job, `CalendarEventMatcher` /
+> `CalendarStore`. Still macOS-only: ScreenCaptureKit / process taps /
+> CoreAudio device handling, `KeyboardShortcuts`, and FluidAudio speaker
+> diarization. Sessions stay in each device's local database; the summary,
+> action items, highlights and transcript are written into the meeting note
+> (Scribe blocks) so they reach the Mac through the iCloud vault.
+
 ## D-iOS-3 — App structure
 
 - iPhone: bottom `TabView` → **Today · Notes · Tasks** (Capture tab omitted).
