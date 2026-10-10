@@ -4,16 +4,12 @@
 // Control Center "Start Recording" control, the widgets' recording state)
 // use to reach the iOS recorder without depending on its type.
 //
-// RECORDING AREA: make the recorder conform and register it once it exists,
-// e.g. in MobileRecordingController's init:
-//
-//     extension MobileRecordingController: ScribeRecordingControl { … }
-//     ScribeRecordingControlRegistry.register(self)
-//
-// and call `ScribeRecordingControlRegistry.recordingStateDidChange()` when
-// recording starts or stops so the widgets refresh. Until something is
-// registered, "start recording" falls back to opening scribe://record/start
-// (the shell routes it to the Record tab).
+// The recorder (MobileRecordingController, ScribeiOS/Recording) conforms in
+// MobileRecordingSystemControl.swift, registers itself in its init (created
+// at launch by ScribeiOSBootstrap) and calls `recordingStateDidChange()` when
+// recording starts or stops so the widgets refresh. If nothing is registered
+// (yet), "start recording" falls back to opening scribe://record/start (the
+// shell routes it to the Record tab).
 
 import Foundation
 

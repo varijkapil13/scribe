@@ -79,6 +79,8 @@ struct NoteEditorScreen: View {
         base
             .navigationTitle(model.displayTitle)
             .navigationBarTitleDisplayMode(.inline)
+            // Shell contract: Handoff to the Mac + per-window restoration.
+            .scribeHandoff(.note, id: noteId, title: model.displayTitle)
             .toolbar { toolbarContent }
             .inspector(isPresented: $showInspector) {
                 NoteInspectorPanel(editor: model, editorCommands: editorModel, store: store) { id in

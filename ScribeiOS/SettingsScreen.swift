@@ -37,6 +37,14 @@ struct SettingsScreen: View {
                 iCloudSection
 
                 // MARK: - Slot: notes (ios-notes)
+                Section {
+                    LabeledContent("Notes vault", value: IOSVaultSyncController.shared.statusText)
+                    if let error = IOSVaultSyncController.shared.lastError {
+                        Text(error).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Notes")
+                }
 
                 // MARK: - Slot: tasks (ios-tasks)
                 Section { NavigationLink { TasksSettingsScreen() } label: { Label("Tasks", systemImage: "checklist") } }

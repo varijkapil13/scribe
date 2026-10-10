@@ -5,11 +5,12 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// Launch wiring for tasks on iPhone / iPad: the reminder notification
-/// category + delegate (Mark Done / Snooze actions, tap opens the task), the
-/// automatic reminder scheduler, the app icon badge, and the Apple Reminders
-/// sync scheduler. Idempotent; called from `ScribeiOSApp.init` and, as a
-/// fallback, when a task screen appears.
+/// Launch wiring for tasks on iPhone / iPad: the automatic reminder
+/// scheduler, the app icon badge, and the Apple Reminders sync scheduler.
+/// The reminder notification category + delegate (Mark Done / Snooze, tap
+/// opens the task via `TasksOpenRequest`) are installed once by the shell's
+/// `ScribeiOSBootstrap.installNotifications()`. Idempotent; called from
+/// `ScribeiOSBootstrap.run()` and, as a fallback, when a task screen appears.
 @MainActor
 enum TasksIOSBootstrap {
     private static var started = false
@@ -18,13 +19,6 @@ enum TasksIOSBootstrap {
     static func start() {
         guard !started else { return }
         started = true
-
-        let scheduler = TaskReminderScheduler.shared
-        scheduler.registerCategory()
-        scheduler.installDelegate()
-        scheduler.openTaskHandler = { taskId in
-            TasksOpenRequest.shared.open(taskId)
-        }
 
         let database = DatabaseManager.shared.database
         TasksReminderAutoScheduler.shared.start(database: database)

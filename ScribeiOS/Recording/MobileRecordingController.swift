@@ -87,6 +87,8 @@ final class MobileRecordingController {
     private(set) var processingSessionIds: Set<String> = []
     /// Bumped whenever the list of recordings may have changed.
     private(set) var recordingsVersion = 0
+    /// When the running recording started (wall clock); nil when idle.
+    private(set) var recordingStartedAt: Date?
     /// A user-facing failure; the UI clears it.
     var errorMessage: String?
 
@@ -142,6 +144,9 @@ final class MobileRecordingController {
             case .togglePause: self.togglePause()
             }
         }
+        // Siri / Shortcuts / Control Center / widgets reach the recorder
+        // through this hook (ScribeiOS/System/ScribeRecordingControl.swift).
+        ScribeRecordingControlRegistry.register(self)
     }
 
     var isActive: Bool { phase != .idle }
@@ -294,8 +299,10 @@ final class MobileRecordingController {
         clock.beginRun(atHostSeconds: Self.hostNow())
         activityTimerStart = Date()
         phase = .recording
+        recordingStartedAt = now
         statusMessage = nil
         inputName = audioSession.currentInputName
+        ScribeRecordingControlRegistry.recordingStateDidChange()
         startTicking()
         liveActivity.start(title: noteTitle, sessionId: newSessionId, state: activityState())
         lastActivityPush = Date()
@@ -498,6 +505,10 @@ final class MobileRecordingController {
         createdNoteId = nil
         localeIdentifier = nil
         stopRequested = false
+        recordingStartedAt = nil
+        // Back to idle (stopped, or a start that failed / was cancelled):
+        // refresh the widgets' recording state.
+        ScribeRecordingControlRegistry.recordingStateDidChange()
     }
 
     // MARK: - Audio plumbing

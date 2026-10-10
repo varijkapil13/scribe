@@ -9,8 +9,9 @@
 // - iPhone (compact width): a NavigationStack — destinations → list → note,
 //   landing on All Notes; the inspector is a sheet.
 //
-// Also starts iCloud vault observation (IOSVaultSyncController), reconciles
-// when the app comes to the front, and re-locks locked notes when it leaves.
+// iCloud vault observation + reconcile (IOSVaultSyncController) is driven by
+// the shell's ScribeiOSBootstrap (launch + every activation); this view
+// re-locks locked notes when the app leaves the foreground.
 
 import SwiftUI
 
@@ -55,18 +56,21 @@ struct NotesRootView: View {
                 regularLayout
             }
         }
+        // Shell contract: scribe:// links, Handoff, Spotlight, search
+        // results, ⌘N and scene restoration open notes here.
+        .onScribeOpenRequest(.note) { id in
+            navigation.open(id, compact: horizontalSizeClass == .compact)
+        }
         .task {
             library.start()
-            IOSVaultSyncController.shared.start()
+            // Vault selection / observation is started at launch by
+            // ScribeiOSBootstrap (and refreshed on every activation); this
+            // only covers a scene shown before that ran. Idempotent.
+            IOSVaultSyncController.shared.startIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .active:
-                IOSVaultSyncController.shared.refresh()
-            case .background:
+            if phase == .background {
                 IOSLockedNoteSession.shared.lock()
-            default:
-                break
             }
         }
         .alert("Notes", isPresented: Binding(

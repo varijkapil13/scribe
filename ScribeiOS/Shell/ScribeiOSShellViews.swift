@@ -1,8 +1,7 @@
 import SwiftUI
 
-// Small shell-owned views: the quick-add task sheet (⌘⇧N / New Task), the
-// iPhone's floating Liquid Glass "New" button, and the standalone iPad note
-// window.
+// Small shell-owned views: the quick-add task sheet (⌘⇧N / New Task) and
+// the standalone iPad note window.
 
 // MARK: - New Task sheet
 
@@ -64,52 +63,6 @@ struct ScribeQuickTaskSheet: View {
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-}
-
-// MARK: - Floating New button (iPhone)
-
-/// A floating Liquid Glass button (bottom trailing, above the tab bar) that
-/// offers New Note / New Task. Shown on compact width only — on iPad the
-/// menu bar and ⌘N / ⌘⇧N cover it.
-struct ScribeFloatingNewButton: View {
-    let navigator: ScribeiOSNavigator
-
-    var body: some View {
-        Menu {
-            Button {
-                navigator.newNote()
-            } label: {
-                Label("New Note", systemImage: "square.and.pencil")
-            }
-            Button {
-                navigator.presentNewTask()
-            } label: {
-                Label("New Task", systemImage: "checklist")
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.title2.weight(.semibold))
-                .imageScale(.large)
-                .frame(width: 56, height: 56)
-                .contentShape(Circle())
-                .scribeFloatingGlass()
-        }
-        .hoverEffect(.lift)
-        .accessibilityLabel("New")
-        .accessibilityHint("Creates a note or a task")
-        .padding(.trailing, 20)
-        .padding(.bottom, 16)
-    }
-}
-
-extension View {
-    /// Liquid Glass for a floating circular control.
-    /// CI-COMPILE NOTE: the only use of the iOS 26 `glassEffect` API in the
-    /// shell; if its signature differs, fix it here (falling back to
-    /// `.background(.regularMaterial, in: Circle())` is fine).
-    func scribeFloatingGlass() -> some View {
-        glassEffect(.regular.interactive(), in: Circle())
     }
 }
 

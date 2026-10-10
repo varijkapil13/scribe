@@ -69,6 +69,7 @@ struct NotesListColumn: View {
                         NoteListRow(note: note, notebookName: notebookLabel(for: note))
                     }
                     .modifier(rowActions(note))
+                    .scribeNoteRowAffordances(noteId: note.id, title: note.title, contextMenu: false)
                 }
             }
             .listStyle(.plain)
@@ -81,6 +82,7 @@ struct NotesListColumn: View {
                     NoteListRow(note: note, notebookName: notebookLabel(for: note))
                         .tag(note.id)
                         .modifier(rowActions(note))
+                        .scribeNoteRowAffordances(noteId: note.id, title: note.title, contextMenu: false)
                 }
             }
             .listStyle(.plain)
@@ -89,6 +91,7 @@ struct NotesListColumn: View {
 
     private func rowActions(_ note: Note) -> NoteRowActions {
         NoteRowActions(
+            noteId: note.id,
             onRename: {
                 renameText = note.title
                 renaming = note
@@ -241,6 +244,8 @@ struct NotesListColumn: View {
 
 /// Swipe actions + context menu shared by both list styles.
 struct NoteRowActions: ViewModifier {
+    /// For the shell's Open in New Window / Copy Link items.
+    var noteId: String
     var onRename: () -> Void
     var onMove: () -> Void
     var onDelete: () -> Void
@@ -269,6 +274,8 @@ struct NoteRowActions: ViewModifier {
                 Button(action: onMove) {
                     Label("Move to Notebook…", systemImage: "folder")
                 }
+                Divider()
+                ScribeNoteRowMenuItems(noteId: noteId)
                 Divider()
                 Button(role: .destructive, action: onDelete) {
                     Label("Delete", systemImage: "trash")

@@ -12,7 +12,6 @@ import SwiftUI
 struct TasksRootView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @StateObject private var library = TasksLibraryModel(store: TaskStore.shared)
-    @ObservedObject private var openRequest = TasksOpenRequest.shared
 
     @State private var destination: TaskListDestination? = .today
     @State private var selectedTaskId: String?
@@ -23,8 +22,6 @@ struct TasksRootView: View {
     @State private var quickAdd: TasksQuickAddRequest?
     /// iPhone: a task editor is on top (the + button hides there).
     @State private var phoneDetailVisible = false
-    /// On screen (not a hidden tab), so a tapped reminder opens here.
-    @State private var isVisible = false
 
     var body: some View {
         Group {
@@ -42,14 +39,14 @@ struct TasksRootView: View {
         .sheet(item: $quickAdd) { request in
             TaskQuickAddSheet(destination: request.destination, headingId: request.headingId, library: library)
         }
+        // Shell contract: scribe:// links, Handoff, Spotlight, search
+        // results, the New Task sheet and tapped reminders (routed through
+        // the scene's navigator, which selects this tab) open tasks here.
+        .onScribeOpenRequest(.task) { taskId in open(taskId) }
         .onAppear {
-            isVisible = true
             TasksIOSBootstrap.start()
             library.start()
-            consumeOpenRequest()
         }
-        .onDisappear { isVisible = false }
-        .onChange(of: openRequest.taskId) { consumeOpenRequest() }
     }
 
     // MARK: - iPad
@@ -121,11 +118,7 @@ struct TasksRootView: View {
         quickAdd = TasksQuickAddRequest(destination: list ?? currentDestination, headingId: headingId)
     }
 
-    private func consumeOpenRequest() {
-        // Only while visible: with both tabs alive, the visible one (Today
-        // or Tasks) opens it; a hidden one would swallow the request.
-        guard isVisible, let taskId = openRequest.taskId else { return }
-        openRequest.taskId = nil
+    private func open(_ taskId: String) {
         if sizeClass == .regular {
             selectedTaskId = taskId
         } else {
@@ -140,10 +133,6 @@ struct TasksQuickAddRequest: Identifiable {
     let destination: TaskListDestination?
     let headingId: String?
 }
-
-/// Compatibility name for the old iOS Tasks tab (the shell may still refer
-/// to it); the area's root view is `TasksRootView`.
-typealias TasksScreen = TasksRootView
 
 // MARK: - Sidebar
 

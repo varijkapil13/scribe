@@ -27,8 +27,11 @@ struct RootTabView: View {
 
     @AppStorage(ScribeMobileAppearance.storageKey) private var appearanceRaw: String = ScribeMobileAppearance.system.rawValue
 
+    /// Tapped task reminders (and the iPhone planner) post here; this scene
+    /// routes them through its navigator (see `consumeTaskOpenRequest`).
+    @ObservedObject private var taskOpenRequest = TasksOpenRequest.shared
+
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         tabs
@@ -52,19 +55,27 @@ struct RootTabView: View {
             // it to a main window instead, open the note here rather than
             // dropping it.
             .onContinueUserActivity(ScribeMobileWindows.openNoteWindowActivityType) { activity in _ = navigator.handle(activity: activity) }
-            .onAppear(perform: restoreSceneState)
+            .onAppear {
+                restoreSceneState()
+                consumeTaskOpenRequest()
+            }
             .onChange(of: navigator.selectedTab) { _, tab in storedTab = tab.rawValue }
             .onChange(of: navigator.visibleNoteId) { _, id in storedNoteId = id ?? "" }
+            .onChange(of: taskOpenRequest.taskId) { _, _ in consumeTaskOpenRequest() }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { ScribeiOSBootstrap.sceneDidBecomeActive() }
+                if phase == .active {
+                    ScribeiOSBootstrap.sceneDidBecomeActive()
+                    consumeTaskOpenRequest()
+                }
             }
     }
 
     private var tabs: some View {
         TabView(selection: $navigator.selectedTab) {
+            // Today carries its own floating + (quick add filed into Today);
+            // New Note / New Task are also ⌘N / ⌘⇧N and the Notes / Tasks tabs.
             Tab("Today", systemImage: ScribeMobileTab.today.systemImage, value: ScribeMobileTab.today) {
                 TodayScreen()
-                    .overlay(alignment: .bottomTrailing) { floatingNewButton }
             }
             .customizationID(ScribeMobileTab.today.customizationID)
 
@@ -101,13 +112,6 @@ struct RootTabView: View {
         .tabViewCustomization($customization)
     }
 
-    /// iPhone only: on iPad the sidebar, menu bar and ⌘N / ⌘⇧N cover it.
-    @ViewBuilder private var floatingNewButton: some View {
-        if horizontalSizeClass == .compact {
-            ScribeFloatingNewButton(navigator: navigator)
-        }
-    }
-
     private var colorScheme: ColorScheme? {
         switch ScribeMobileAppearance.resolved(from: appearanceRaw) {
         case .system: return nil
@@ -121,6 +125,15 @@ struct RootTabView: View {
             get: { navigator.alertMessage != nil },
             set: { if !$0 { navigator.alertMessage = nil } }
         )
+    }
+
+    /// A task reminder was tapped (or the iPhone planner opened a task):
+    /// open it in this window unless the window is in the background (with
+    /// several iPad windows the first foreground one takes it).
+    private func consumeTaskOpenRequest() {
+        guard scenePhase != .background, let taskId = taskOpenRequest.taskId else { return }
+        taskOpenRequest.taskId = nil
+        navigator.openTask(taskId)
     }
 
     /// Restores this window's tab (and open note) once, unless an entry

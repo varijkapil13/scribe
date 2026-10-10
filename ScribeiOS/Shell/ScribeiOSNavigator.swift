@@ -308,34 +308,56 @@ private struct ScribeHandoffModifier: ViewModifier {
 
 /// iPad / pointer affordances for a note row: hover highlight, a context
 /// menu with Open in New Window and Copy Link, and a drag item that opens a
-/// note window when dropped at the screen edge.
+/// note window when dropped at the screen edge. Rows that already have a
+/// context menu of their own pass `contextMenu: false` and put
+/// `ScribeNoteRowMenuItems` inside theirs (two `.contextMenu`s on one row
+/// would hide one of them).
 private struct ScribeNoteRowAffordances: ViewModifier {
     let noteId: String
     let title: String
+    let includesContextMenu: Bool
+
+    func body(content: Content) -> some View {
+        withMenu(content)
+            .hoverEffect(.highlight)
+            .onDrag {
+                ScribeiOSActivity.noteWindowDragItem(noteId: noteId, title: title)
+            }
+    }
+
+    @ViewBuilder
+    private func withMenu(_ content: Content) -> some View {
+        if includesContextMenu {
+            content.contextMenu {
+                ScribeNoteRowMenuItems(noteId: noteId)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Open in New Window (when the device supports multiple windows) and Copy
+/// Link, for a note row's context menu.
+struct ScribeNoteRowMenuItems: View {
+    let noteId: String
 
     @Environment(\.openWindow) private var openWindow
     @Environment(\.supportsMultipleWindows) private var supportsMultipleWindows
 
-    func body(content: Content) -> some View {
-        content
-            .hoverEffect(.highlight)
-            .contextMenu {
-                if supportsMultipleWindows {
-                    Button {
-                        openWindow(id: ScribeMobileWindows.noteWindowGroupID, value: noteId)
-                    } label: {
-                        Label("Open in New Window", systemImage: "plus.rectangle.on.rectangle")
-                    }
-                }
-                Button {
-                    UIPasteboard.general.url = ScribeDeepLink.noteURL(id: noteId)
-                } label: {
-                    Label("Copy Link", systemImage: "link")
-                }
+    var body: some View {
+        if supportsMultipleWindows {
+            Button {
+                openWindow(id: ScribeMobileWindows.noteWindowGroupID, value: noteId)
+            } label: {
+                Label("Open in New Window", systemImage: "plus.rectangle.on.rectangle")
             }
-            .onDrag {
-                ScribeiOSActivity.noteWindowDragItem(noteId: noteId, title: title)
-            }
+        }
+        Button {
+            UIPasteboard.general.url = ScribeDeepLink.noteURL(id: noteId)
+        } label: {
+            Label("Copy Link", systemImage: "link")
+        }
     }
 }
 
@@ -352,8 +374,10 @@ extension View {
     }
 
     /// Note rows: Open in New Window, drag-to-window, Copy Link, hover.
-    func scribeNoteRowAffordances(noteId: String, title: String) -> some View {
-        modifier(ScribeNoteRowAffordances(noteId: noteId, title: title))
+    /// Pass `contextMenu: false` when the row has its own context menu and
+    /// add `ScribeNoteRowMenuItems(noteId:)` to it instead.
+    func scribeNoteRowAffordances(noteId: String, title: String, contextMenu: Bool = true) -> some View {
+        modifier(ScribeNoteRowAffordances(noteId: noteId, title: title, includesContextMenu: contextMenu))
     }
 }
 

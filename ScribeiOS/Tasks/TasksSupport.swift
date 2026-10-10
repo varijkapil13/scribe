@@ -14,8 +14,10 @@ struct TaskRouteID: Hashable {
     let id: String
 }
 
-/// A request to open a task from outside the task screens (a tapped
-/// reminder notification). `TasksRootView` consumes it.
+/// A request to open a task from outside a scene's view tree (a tapped
+/// reminder notification, the planner on iPhone). The key scene's
+/// `RootTabView` consumes it and routes it through its `ScribeiOSNavigator`
+/// (Tasks tab → `TasksRootView`'s `.onScribeOpenRequest(.task)`).
 @MainActor
 final class TasksOpenRequest: ObservableObject {
     static let shared = TasksOpenRequest()
@@ -400,7 +402,8 @@ struct TasksAddButton: View {
                 .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
         }
         .buttonStyle(.plain)
-        .keyboardShortcut("n", modifiers: .command)
+        // No ⌘N here: the shell's menu commands own ⌘N (New Note) and
+        // ⌘⇧N (New Task) — see ScribeiOSCommands.
         .accessibilityLabel("New Task")
         .padding(20)
     }

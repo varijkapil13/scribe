@@ -35,6 +35,8 @@ struct TaskDetailScreen: View {
         }
         .navigationTitle(model.task.title.isEmpty ? "Task" : model.task.title)
         .navigationBarTitleDisplayMode(.inline)
+        // Shell contract: Handoff to the Mac (viewTask).
+        .scribeHandoff(.task, id: taskId, title: model.task.title)
         .onAppear { model.start() }
         .onDisappear { model.flush() }
         .confirmationDialog("Delete this task?", isPresented: $confirmDelete, titleVisibility: .visible) {

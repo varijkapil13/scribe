@@ -4,11 +4,14 @@
 // button (microphone only — "In-person / speakerphone"), importing audio /
 // video files, the live recording screen and each recording's transcript.
 //
-// Shell integration (ScribeiOS/Shell, owned by the shell area):
+// Shell integration (ScribeiOS/Shell):
 //   • `navigator.recordRequest` (scribe://record/start|stop) →
-//     `Task { await MobileRecordingController.shared.perform(.start / .stop) }`
-//   • `.onScribeOpenRequest(.meeting) { id in openRecording(id) }` →
-//     `RecordingsRootView(openSessionId:)` below pushes that transcript.
+//     `MobileRecordingController.shared.perform(.start / .stop)`;
+//   • `.onScribeOpenRequest(.meeting)` (scribe://meeting/<id>) pushes that
+//     recording's transcript.
+// Siri / Shortcuts / Control Center / widgets reach the recorder through
+// `ScribeRecordingControlRegistry` (MobileRecordingController registers
+// itself at launch — see ScribeiOSBootstrap).
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -25,6 +28,7 @@ struct RecordingsRootView: View {
     @State private var path: [String] = []
     @State private var isLivePresented = false
     @State private var isFileImporterPresented = false
+    @Environment(ScribeiOSNavigator.self) private var navigator: ScribeiOSNavigator?
 
     init() {
         self.openSessionId = nil
@@ -88,6 +92,26 @@ struct RecordingsRootView: View {
         .onChange(of: openSessionId, initial: true) { _, id in
             if let id, !id.isEmpty { path = [id] }
         }
+        // Shell contract: scribe://meeting/<id> (and other entry points).
+        .onScribeOpenRequest(.meeting) { sessionId in
+            if !sessionId.isEmpty { path = [sessionId] }
+        }
+        // scribe://record/start|stop, routed by the scene's navigator.
+        .onChange(of: navigator?.recordRequest?.token, initial: true) { _, _ in
+            handleRecordRequest()
+        }
+    }
+
+    /// Runs (and clears) the navigator's pending record command.
+    private func handleRecordRequest() {
+        guard let navigator, let request = navigator.recordRequest else { return }
+        navigator.recordRequest = nil
+        let command: MobileRecordingCommand
+        switch request.command {
+        case .start: command = .start
+        case .stop:  command = .stop
+        }
+        Task { await controller.perform(command) }
     }
 
     // MARK: - List

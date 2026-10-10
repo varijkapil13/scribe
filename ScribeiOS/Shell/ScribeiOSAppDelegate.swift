@@ -17,8 +17,11 @@ final class ScribeiOSAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Launch-time setup shared with the Mac's data layer: database migrations,
-/// notifications, the note index, and CloudKit task sync. Idempotent.
+/// Launch-time setup for the whole iOS app — the ONE place each launch-time
+/// service is started (areas don't start these themselves): database
+/// migrations, the notification delegate + task reminders, the notes vault
+/// (iCloud / local) + index reconcile, CloudKit task sync, the recorder's
+/// system hooks, and widgets / Spotlight / Share import. Idempotent.
 @MainActor
 enum ScribeiOSBootstrap {
     private static var didRun = false
@@ -32,80 +35,59 @@ enum ScribeiOSBootstrap {
         _ = DatabaseManager.shared
 
         // 2. Notifications: the task-reminder scheduler owns the single
-        //    UNUserNotificationCenter delegate (Mark Done / Snooze actions);
-        //    NotificationRouter lets other iOS areas add categories.
-        //    Areas must call NotificationRouter.shared.register(...) BEFORE
-        //    this runs (i.e. from their own static setup) or re-run
-        //    `installNotifications()` after registering.
+        //    UNUserNotificationCenter delegate (Mark Done / Snooze actions,
+        //    tap opens the task); NotificationRouter lets other iOS areas add
+        //    categories. Areas must call NotificationRouter.shared.register(...)
+        //    BEFORE this runs (i.e. from their own static setup) or re-run
+        //    `installNotifications()` after registering. Set up here, in
+        //    didFinishLaunching, so actions work on a background launch too.
         installNotifications()
 
-        // 3. Notes index: reconcile the markdown vault on disk into SQLite
-        //    (picks up notes that arrived via iCloud Drive / Files while the
-        //    app wasn't running). Off the main thread.
-        reconcileVault()
+        // 3. Tasks: reminder auto-scheduling, the app badge and the Apple
+        //    Reminders sync scheduler (ios-tasks). Its notification wiring is
+        //    the delegate installed above.
+        TasksIOSBootstrap.start()
 
-        // 4. CloudKit task sync: launch round + toggle / local-change
+        // 4. Notes vault: picks the iCloud Drive or local vault, observes it,
+        //    migrates DB-only notes to disk and reconciles the vault into
+        //    SQLite (notes that arrived via iCloud Drive / Files while the app
+        //    wasn't running). IOSVaultSyncController (ios-notes) owns the
+        //    single NoteReconcileScheduler.
+        IOSVaultSyncController.shared.start()
+
+        // 5. CloudKit task sync: launch round + toggle / local-change
         //    observation. A no-op until the user enables iCloud sync, and
         //    safe when the build has no iCloud entitlement.
         TaskSyncScheduler.shared.start()
+
+        // 6. Recording: create the recorder now so it registers with
+        //    ScribeRecordingControlRegistry (Siri / Shortcuts / Control
+        //    Center / widgets) and installs the Live Activity Stop / Pause
+        //    handler before any intent runs — not only once the Record tab
+        //    is first shown. Creating it doesn't touch the microphone.
+        _ = MobileRecordingController.shared
+
+        // 7. Widgets snapshot, widget task toggles, Spotlight indexing and
+        //    Share-extension import (ios-system). Also started by each
+        //    scene's `.scribeSystemIntegration()`; idempotent.
+        IOSSystemIntegration.shared.start()
     }
 
     static func installNotifications() {
-        NotificationRouter.shared.install(on: TaskReminderScheduler.shared)
-        TaskReminderScheduler.shared.registerCategory()
-        TaskReminderScheduler.shared.installDelegate()
+        let scheduler = TaskReminderScheduler.shared
+        NotificationRouter.shared.install(on: scheduler)
+        // Tapping a task reminder: the key scene's RootTabView picks this up
+        // and routes it through its navigator (Tasks tab → the task).
+        scheduler.openTaskHandler = { taskId in
+            TasksOpenRequest.shared.open(taskId)
+        }
+        scheduler.registerCategory()
+        scheduler.installDelegate()
     }
 
     /// Scene became active: opportunistic, throttled sync + re-index.
     static func sceneDidBecomeActive() {
         TaskSyncScheduler.shared.appDidBecomeActive()
-        reconcileVault()
-    }
-
-    /// Coalesces reconciles (launch + every activation) onto one serial
-    /// queue; rebuilt when the vault moves (e.g. iCloud Drive toggled).
-    private static var reconcileScheduler: NoteReconcileScheduler?
-
-    /// The vault root `migrateNotesToDisk()` last completed for.
-    private static var migratedVaultRoot: URL?
-
-    private static func reconcileVault() {
-        guard let fileStore = NoteStore.shared.fileStore else { return }
-        // The reconciler deletes every DB row without a file on disk, so a
-        // note that only exists in SQLite (created before disk mirroring, or
-        // with a vault that has since moved) must be written out first —
-        // the same order as the Mac's launch (AppDelegate). Until that
-        // succeeds for this vault, don't reconcile at all.
-        guard migrateNotesToDiskIfNeeded(root: fileStore.directory.root) else { return }
-        if reconcileScheduler?.fileStore.directory.root != fileStore.directory.root {
-            reconcileScheduler?.invalidate()
-            let reconciler = NoteIndexReconciler(fileStore: fileStore, dbManager: DatabaseManager.shared)
-            reconcileScheduler = NoteReconcileScheduler(reconciler: reconciler) { result in
-                switch result {
-                case .success(let pass):
-                    Log.storage.info("iOS vault reconcile: \(pass.upserted) upserted, \(pass.removed) removed")
-                case .failure(let error):
-                    Log.storage.error("iOS vault reconcile failed: \(error.localizedDescription)")
-                }
-            }
-        }
-        reconcileScheduler?.requestReconcile()
-    }
-
-    /// Mirrors DB-only notes into the vault once per vault root. Returns
-    /// false (and retries on the next activation) when it failed.
-    private static func migrateNotesToDiskIfNeeded(root: URL) -> Bool {
-        if migratedVaultRoot == root { return true }
-        do {
-            let migrated = try NoteStore.shared.migrateNotesToDisk()
-            if migrated > 0 {
-                Log.storage.info("iOS vault: migrated \(migrated) note(s) from SQLite to disk")
-            }
-            migratedVaultRoot = root
-            return true
-        } catch {
-            Log.storage.error("iOS vault: notes disk migration failed, skipping reconcile: \(error.localizedDescription)")
-            return false
-        }
+        IOSVaultSyncController.shared.refresh()
     }
 }
