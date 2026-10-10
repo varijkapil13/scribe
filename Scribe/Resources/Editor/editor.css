@@ -272,3 +272,33 @@ html[data-theme="dark"] body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85em;
 }
+
+/* ── Touch screens (iPhone / iPad host) ───────────────────────────────────
+ * The fold gutter's chevrons only appear on hover (editor-web/src/folding.js),
+ * which a finger can't do — keep them faintly visible there instead, with a
+ * bigger tap target. Task checkboxes get a finger-sized hit area too. The Mac
+ * (hover-capable, fine pointer) never matches these queries. */
+@media (hover: none) {
+  .cm-editor .cm-gutters .cm-foldGutter .cm-gutterElement:not(:has(.cm-scribe-folded-marker)) {
+    opacity: 0.45;
+  }
+  .cm-editor .cm-gutters .cm-foldGutter .cm-gutterElement {
+    padding: 0 6px 0 8px;
+  }
+  .cm-sl-wikilink:hover {
+    text-decoration: none;
+  }
+}
+@media (pointer: coarse) {
+  .cm-sl-task {
+    min-width: 1.15em;
+    min-height: 1.15em;
+  }
+  /* Disable the iOS long-press link callout / tap highlight on widgets. */
+  .cm-sl-wikilink,
+  .cm-sl-embed-title,
+  .cm-sl-task {
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
