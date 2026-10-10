@@ -42,6 +42,8 @@ struct ScribeTodayAgendaIntent: AppIntent {
     }
 
     /// Isolated so a change in the snippet-result API is a one-line fix.
+    /// Main actor like `perform()`: the snippet is a SwiftUI view.
+    @MainActor
     private static func snippetResult(dialog: IntentDialog, view: ScribeAgendaSnippetView) -> some IntentResult & ProvidesDialog & ShowsSnippetView {
         .result(dialog: dialog, view: view)
     }

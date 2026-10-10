@@ -73,9 +73,16 @@ enum IOSQuickCaptureSaver {
             let note = try ScribeIntentsData.live.createNote(title: title, body: body)
             return ScribeAppGroup.noteURL(id: note.id)
         case .task(let parsed, let notes):
-            let task = try TaskStore.shared.createTask(
+            let store = TaskStore.shared
+            // `+Project` resolves like the Mac's Quick Capture (case-
+            // insensitive name match); an unknown name files to the inbox.
+            let projectId = try parsed.projectName.flatMap { name in
+                try store.fetchProjects().first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id
+            }
+            let task = try store.createTask(
                 title: parsed.title,
                 notes: notes,
+                projectId: projectId,
                 priority: parsed.priority,
                 dueAt: parsed.dueAt,
                 recurrenceRule: parsed.recurrenceRule,
