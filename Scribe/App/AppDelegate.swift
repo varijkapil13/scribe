@@ -94,8 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         // Start MCP server if the user had it enabled in a previous session.
         if UserDefaults.standard.bool(forKey: "mcpEnabled") {
-            let port = UserDefaults.standard.integer(forKey: "mcpPort")
-            MCPServer.shared.start(port: UInt16(port > 0 ? port : 3333))
+            // sanitize() never traps: unset/out-of-range values fall back to 3333.
+            let port = MCPPortPolicy.sanitize(UserDefaults.standard.integer(forKey: "mcpPort"))
+            MCPServer.shared.start(port: port)
         }
         // Reminder category + delegate. Authorization is requested lazily the
         // first time a task with `remindAt` is saved, not here — that keeps
