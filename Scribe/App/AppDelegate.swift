@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     Log.app.info("Removed \(removed) leftover diarization scratch folder(s).")
                 }
             }
+            // On-device semantic index (follows Settings → Intelligence).
+            SemanticIndexScheduler.shared.start()
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves

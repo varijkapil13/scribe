@@ -14,10 +14,17 @@ struct MeetingRetriever: Sendable {
 
     let dbManager: DatabaseManager
     var budget: Int = MeetingRetrieval.defaultBudget
+    /// Semantic (embedding) candidates to fuse with full-text ones. nil uses
+    /// the shared on-device index when "Semantic search" is on (see
+    /// `MeetingRetriever+Semantic.swift`).
+    var semantic: (any SemanticCandidateProviding)?
 
-    init(dbManager: DatabaseManager = .shared, budget: Int = MeetingRetrieval.defaultBudget) {
+    init(dbManager: DatabaseManager = .shared,
+         budget: Int = MeetingRetrieval.defaultBudget,
+         semantic: (any SemanticCandidateProviding)? = nil) {
         self.dbManager = dbManager
         self.budget = budget
+        self.semantic = semantic
     }
 
     /// Retrieves ranked, budgeted snippets for `question` within `scope`.
@@ -38,8 +45,13 @@ struct MeetingRetriever: Sendable {
             return found
         }
 
-        var result = MeetingRetrieval.assemble(candidates: candidates, terms: terms,
-                                               filter: filter, now: now, budget: budget)
+        // Hybrid: fuse with on-device semantic matches when available.
+        let semanticMatches = (try? self.semanticCandidates(for: question)) ?? []
+        var result = semanticMatches.isEmpty
+            ? MeetingRetrieval.assemble(candidates: candidates, terms: terms,
+                                        filter: filter, now: now, budget: budget)
+            : HybridRetrieval.assemble(lexical: candidates, semantic: semanticMatches, terms: terms,
+                                       filter: filter, now: now, budget: budget)
         if result.snippets.isEmpty {
             // Nothing matched (or the question had no usable terms, e.g.
             // "what happened?"): fall back to the most recent meetings in
