@@ -477,7 +477,7 @@ private struct IntelligenceSettingsPane: View {
             } header: {
                 Text("Apple Intelligence")
             } footer: {
-                Text("Summaries, action items, and smart search run entirely on-device. No audio or text ever leaves your Mac.")
+                Text("Summaries, action items, and smart search run entirely on-device. Analysis never sends audio or text off your Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -854,6 +854,8 @@ private struct AboutSettingsPane: View {
                 Label("All audio is processed on-device.", systemImage: "lock.shield")
                 Label("No network calls during recording or analysis.", systemImage: "network.slash")
                 Label("Recordings live at ~/Library/Application Support/Scribe.", systemImage: "folder")
+                Label("iCloud sync for tasks and notes is off unless you turn it on in Storage & Sync.", systemImage: "icloud")
+                Label("PlantUML diagrams are sent to plantuml.com only if you enable it in General.", systemImage: "point.3.connected.trianglepath.dotted")
             }
 
             Section("Acknowledgements") {

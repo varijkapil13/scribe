@@ -39,7 +39,7 @@ struct CalendarSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("Scribe reads events on your Mac to name meeting notes, list attendees and the agenda, and remind you to record. Nothing leaves your Mac.")
+                Text("Scribe reads events on your Mac to name meeting notes, list attendees and the agenda, and remind you to record. Scribe never uploads your calendar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
