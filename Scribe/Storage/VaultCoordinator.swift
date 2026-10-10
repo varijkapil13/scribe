@@ -74,6 +74,13 @@ final class VaultCoordinator: ObservableObject {
         scheduler.requestReconcile()
     }
 
+    /// Safety-net reconcile from `ScribeBackgroundMaintenance`, in case the
+    /// FSEvents watcher missed changes (e.g. a dropped event stream). Coalesces
+    /// with any reconcile already queued; no-op without an active vault.
+    func requestMaintenanceReconcile() {
+        scheduler?.requestReconcile()
+    }
+
     func stop() {
         watcher?.stop()
         watcher = nil

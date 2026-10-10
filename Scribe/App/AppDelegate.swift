@@ -178,6 +178,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             ScribeAutoBackupScheduler.shared.start()
         }
 
+        // Sparkle updates, on-device MetricKit diagnostics, and periodic
+        // maintenance (each self-gates on UI-test / fixture launches).
+        ScribeUpdater.shared.start()
+        if !AppLaunchEnvironment.isUITesting { ScribeMetricKitCollector.shared.start() }
+        ScribeBackgroundMaintenance.shared.start(transcriptStore: appState.transcriptStore)
+
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
         // failing the first time the user hits Record.
