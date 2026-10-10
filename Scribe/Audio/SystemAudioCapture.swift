@@ -46,7 +46,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unc
 
     // MARK: - Properties
 
-    /// Guards `_stream`, `_isCapturing` and `_outputFormat`.
+    /// Guards `_stream`, `_isCapturing`, `_outputFormat` and the callbacks.
     private let stateLock = NSLock()
     private var _stream: SCStream?
     private var _isCapturing = false
@@ -69,15 +69,27 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unc
 
     /// Called on each captured audio buffer (16 kHz mono Float32) with the
     /// buffer's start time on the host clock.
-    var onAudioBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    ///
+    /// Lock-guarded: the session re-points it from the main actor (on resume
+    /// or a mid-session toggle) while a stream that is still stopping may be
+    /// reading it on `audioQueue`.
+    var onAudioBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)? {
+        get { stateLock.withLock { _onAudioBuffer } }
+        set { stateLock.withLock { _onAudioBuffer = newValue } }
+    }
+    private var _onAudioBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
     /// Called when the capture stream stops unexpectedly mid-session — most
     /// commonly because the Screen Recording permission was revoked (which
     /// macOS does silently whenever the app binary is rebuilt). Without this,
     /// remote-audio transcription would simply go dead with no signal anywhere.
     /// Invoked on an arbitrary background queue; hop to your actor before
-    /// touching UI state.
-    var onStreamError: ((Error) -> Void)?
+    /// touching UI state. Lock-guarded like ``onAudioBuffer``.
+    var onStreamError: ((Error) -> Void)? {
+        get { stateLock.withLock { _onStreamError } }
+        set { stateLock.withLock { _onStreamError = newValue } }
+    }
+    private var _onStreamError: ((Error) -> Void)?
 
     // MARK: - Permission
 

@@ -105,7 +105,16 @@ final class SessionAudioPlayer: ObservableObject {
     func pause() {
         guard isPlaying else { return }
         currentTime = livePosition()
-        for track in tracks { track.player.pause() }
+        for track in tracks {
+            // A track still waiting for its scheduled start (`play(atTime:)`)
+            // is stopped rather than paused so it can't start on its own
+            // later; play() re-schedules every track from `currentTime`.
+            if currentTime < track.offset {
+                track.player.stop()
+            } else {
+                track.player.pause()
+            }
+        }
         isPlaying = false
         stopProgressTimer()
     }

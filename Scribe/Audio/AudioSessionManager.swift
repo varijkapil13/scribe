@@ -470,6 +470,11 @@ final class AudioSessionManager: ObservableObject {
                 Log.audio.error("Failed to restart system audio on resume: \(error.localizedDescription, privacy: .private)")
                 onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
             }
+            // Recording may have been stopped while the stream was starting;
+            // stopRecording has already torn everything down (its queued stop
+            // runs after this start), so don't restart the timers or flip
+            // `isPaused` on a finished session.
+            guard isRecording, !isTearingDown else { return }
         }
 
         recordingStartTime = runStart
