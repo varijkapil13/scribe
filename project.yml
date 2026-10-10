@@ -198,8 +198,8 @@ targets:
         DEVELOPMENT_TEAM: U8A3QH6Y84
         CODE_SIGN_STYLE: Automatic
         TEST_TARGET_NAME: Scribe
-  # iOS / iPadOS app target. The notes + tasks client (no recording — that's
-  # macOS-only). Compiles the portable core directly (multiplatform target, not
+  # iOS / iPadOS app target. Notes, tasks and microphone-only recording
+  # (no system audio on iOS; see the ios-recording entries). Compiles the portable core directly (multiplatform target, not
   # a separate ScribeCore package — see docs/ICLOUD-MULTIPLATFORM-DESIGN.md):
   # Storage, Tasks, the meeting/entity data models, and shared logging. The two
   # FSEvents-bound vault files (NoteVaultWatcher, VaultCoordinator) are excluded
@@ -253,9 +253,38 @@ targets:
       - path: Scribe/UI/Tasks/Planner/PlannerMirroredEventFilter.swift
       - path: Scribe/Calendar/CalendarEventMatcher.swift
       - path: Scribe/Calendar/TaskCalendarMirrorPlanner.swift
+      # ios-recording: the portable recording / transcription / summary core
+      # shared with the Mac (Speech, AVFoundation, FoundationModels, EventKit
+      # are all available on iOS 27). The Mac-only capture stack
+      # (ScreenCaptureKit, process taps, CoreAudio devices, KeyboardShortcuts)
+      # and FluidAudio diarization stay out.
+      - path: Scribe/Intelligence/TranscriptionPipeline.swift
+      - path: Scribe/Intelligence/TranscriptionPipeline+Vocabulary.swift
+      - path: Scribe/Intelligence/SpeechRecognizerEngine.swift   # TranscriptionSegment, resolveLocale, auth
+      - path: Scribe/Intelligence/PipelineTimeline.swift
+      - path: Scribe/Intelligence/Vocabulary.swift
+      - path: Scribe/Intelligence/VocabularyStore.swift
+      - path: Scribe/Intelligence/LanguageOptions.swift
+      - path: Scribe/Intelligence/MeetingSummarizer.swift
+      - path: Scribe/Intelligence/MeetingNoteRecap.swift
+      - path: Scribe/Intelligence/Templates/NoteScribeBlocks.swift
+      - path: Scribe/Intelligence/Copilot/SessionBookmarkStore.swift
+      - path: Scribe/Intelligence/Copilot/SessionBookmarkFormatter.swift
+      - path: Scribe/Audio/AudioConversion.swift
+      - path: Scribe/Audio/AudioTrackAlignment.swift
+      - path: Scribe/Audio/SessionAudioRecorder.swift
+      - path: Scribe/Audio/MediaImportDecoder.swift
+      - path: Scribe/Audio/MobileRecordingSupport.swift
+      - path: Scribe/MediaImport/ImportedTranscriptAssembly.swift
+      - path: Scribe/MediaImport/LiveTranscriptCoalescer.swift
+      - path: Scribe/MediaImport/MediaImportTranscriptionJob.swift
+      # (Scribe/Calendar/CalendarEventMatcher.swift is listed under ios-tasks.)
+      - path: Scribe/Calendar/CalendarStore.swift
     dependencies:
       - package: GRDB.swift
         product: GRDB
+      # ios-recording: the recording Live Activity (Lock Screen + Dynamic Island).
+      - target: ScribeRecordingActivity
     # ios-shell: Info.plist keys with no INFOPLIST_KEY_* build setting.
     # Xcode merges this file with the generated keys (GENERATE_INFOPLIST_FILE).
     # Other areas: append your keys under `properties:` with an area comment.
@@ -273,6 +302,10 @@ targets:
           - com.varij.scribe.viewNote
           - com.varij.scribe.viewTask
           - com.varij.scribe.openNoteWindow
+        # ios-recording: keep recording + transcribing with the screen locked
+        # or the app in the background (the active `.playAndRecord` session).
+        UIBackgroundModes:
+          - audio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
@@ -297,12 +330,43 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: "Scribe uses the camera to add photos and scanned documents to your notes."
         INFOPLIST_KEY_NSFaceIDUsageDescription: "Scribe uses Face ID to unlock your locked notes."
         # ios-tasks: Apple Reminders two-way sync + calendar events in Today /
-        # the day planner. Access is only requested when the user turns these
+        # the day planner (ios-recording also reads the calendar to name
+        # recordings — one shared calendar string). Access is only requested when the user turns these
         # on under Settings → Tasks.
         INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: "Scribe keeps your tasks and Apple Reminders in sync when you turn on Reminders sync."
         INFOPLIST_KEY_NSRemindersUsageDescription: "Scribe keeps your tasks and Apple Reminders in sync when you turn on Reminders sync."
-        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner."
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner, and names recordings after the meeting in progress."
         INFOPLIST_KEY_NSCalendarsUsageDescription: "Scribe shows today's events next to your tasks in Today and the day planner."
+        # ios-recording: permission strings and Live Activities.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Scribe records meetings in the room or on speakerphone with the microphone and transcribes them on this device."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Scribe turns your recordings into a transcript using on-device speech recognition."
+        INFOPLIST_KEY_NSSupportsLiveActivities: "YES"
+  # ios-recording: the recording Live Activity (Lock Screen banner + Dynamic
+  # Island, Stop / Pause buttons). iOS widget extension embedded in
+  # ScribeiOS; outside Scribe/ because of WidgetKit's `@main` (see the note
+  # above the macOS extensions). The ActivityAttributes and the
+  # LiveActivityIntents are compiled into both this extension and the app
+  # (ScribeiOS/Recording/LiveActivityShared). Home / Lock Screen widgets are
+  # a separate extension.
+  ScribeRecordingActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - path: Extensions/ScribeRecordingActivity
+      - path: ScribeiOS/Recording/LiveActivityShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe.recordingactivity
+        INFOPLIST_FILE: Extensions/ScribeRecordingActivity/Info.plist
+        # Lets the shared intents file leave out app-only ActivityKit calls.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SCRIBE_WIDGET_EXTENSION"
+        SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: "YES"
 
 schemes:
   Scribe:
