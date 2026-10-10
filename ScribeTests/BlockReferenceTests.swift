@@ -132,20 +132,38 @@ final class NoteBlockReferenceTests: XCTestCase {
     }
 }
 
-final class NoteEmbedExpanderTests: XCTestCase {
-
-    private static let notes: [String: NoteEmbedResolution] = [
+/// Fixture notes for the embed tests. A file-scope enum (not statics on the
+/// test case) so the `@Sendable` lookup closure never touches the test
+/// class's isolation.
+private enum EmbedFixtures {
+    static let notes: [String: NoteEmbedResolution] = [
         "alpha": NoteEmbedResolution(noteId: "A", title: "Alpha",
                                      body: "# Alpha\n\n## Intro\nHello ^p1\n\n## Nested\n![[Beta]]"),
         "beta": NoteEmbedResolution(noteId: "B", title: "Beta", body: "Beta body ![[Alpha]]"),
     ]
 
-    private static func resolve(_ anchor: String) -> NoteEmbedResolution? {
+    static func resolve(_ anchor: String) -> NoteEmbedResolution? {
         let candidates = WikiLinkTarget.lookupCandidates(forAnchor: anchor)
         for candidate in candidates {
             if let hit = notes[candidate.lowercased()] { return hit }
         }
         return nil
+    }
+}
+
+final class NoteEmbedExpanderTests: XCTestCase {
+
+    func testAttachmentEmbedsAreNotNotes() {
+        XCTAssertTrue(NoteEmbedExpander.isAttachmentAnchor("photo.PNG"))
+        XCTAssertTrue(NoteEmbedExpander.isAttachmentAnchor("scan.pdf#page=2"))
+        XCTAssertTrue(NoteEmbedExpander.isAttachmentAnchor("img.jpg|300"))
+        XCTAssertFalse(NoteEmbedExpander.isAttachmentAnchor("Release v1.2"))
+        XCTAssertFalse(NoteEmbedExpander.isAttachmentAnchor("#Figure.png"))
+        XCTAssertFalse(NoteEmbedExpander.isAttachmentAnchor("Alpha"))
+        let body = "![[photo.png]] ![[Beta]]"
+        XCTAssertEqual(NoteEmbedExpander.embeds(in: body).map(\.anchor), ["Beta"])
+        XCTAssertEqual(NoteEmbedExpander.expand(body: body, currentNoteId: "X", resolve: EmbedFixtures.resolve),
+                       "![[photo.png]] Beta body [[Alpha]]")
     }
 
     func testFindsEmbedsOutsideCode() {
@@ -155,18 +173,18 @@ final class NoteEmbedExpanderTests: XCTestCase {
 
     func testExpandsHeadingAndBlockOneLevel() {
         let expanded = NoteEmbedExpander.expand(body: "Start\n![[Alpha#Intro]]\n![[Alpha#^p1]]\nEnd",
-                                                currentNoteId: "X", resolve: Self.resolve)
+                                                currentNoteId: "X", resolve: EmbedFixtures.resolve)
         XCTAssertEqual(expanded, "Start\n## Intro\nHello\nHello\nEnd")
     }
 
     func testNestedEmbedsDegradeToLinks() {
-        let expanded = NoteEmbedExpander.expand(body: "![[Beta]]", currentNoteId: "X", resolve: Self.resolve)
+        let expanded = NoteEmbedExpander.expand(body: "![[Beta]]", currentNoteId: "X", resolve: EmbedFixtures.resolve)
         XCTAssertEqual(expanded, "Beta body [[Alpha]]")
     }
 
     func testSelfEmbedAndMissingTargetsStayLinks() {
         let expanded = NoteEmbedExpander.expand(body: "![[Alpha]] ![[Ghost]] ![[Alpha#Missing]]",
-                                                currentNoteId: "A", resolve: Self.resolve)
+                                                currentNoteId: "A", resolve: EmbedFixtures.resolve)
         XCTAssertEqual(expanded, "[[Alpha]] [[Ghost]] [[Alpha#Missing]]")
     }
 
@@ -177,7 +195,7 @@ final class NoteEmbedExpanderTests: XCTestCase {
     }
 
     func testAncestryBlocksCycles() {
-        let expanded = NoteEmbedExpander.expand(body: "![[Beta]]", currentNoteId: "A", ancestry: ["B"], resolve: Self.resolve)
+        let expanded = NoteEmbedExpander.expand(body: "![[Beta]]", currentNoteId: "A", ancestry: ["B"], resolve: EmbedFixtures.resolve)
         XCTAssertEqual(expanded, "[[Beta]]")
     }
 
@@ -191,7 +209,7 @@ final class NoteEmbedExpanderTests: XCTestCase {
         let db = try DatabaseManager(path: ":memory:")
         let transcripts = TranscriptStore(databaseManager: db)
         let note = Note(id: "X", title: "Host", body: "Before\n![[Beta]]\nAfter")
-        let lookup = NoteEmbedLookup { anchor in NoteEmbedExpanderTests.resolve(anchor) }
+        let lookup = NoteEmbedLookup { anchor in EmbedFixtures.resolve(anchor) }
         let markdown = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts, embeds: lookup)
         XCTAssertTrue(markdown.contains("Before\nBeta body [[Alpha]]\nAfter"), markdown)
         let raw = NoteMarkdownExporter.export(note: note, transcriptStore: transcripts, embeds: nil)

@@ -243,6 +243,12 @@ class EmbedWidget extends WidgetType {
 }
 
 const EMBED_RE = /!\[\[([^\[\]\n]+)\]\]/g;
+// `![[photo.png]]`-style attachment embeds (Obsidian vaults) are not notes.
+// Mirrors NoteEmbedExpander.isAttachmentAnchor (Swift).
+const ATTACHMENT_EMBED_RE = /\.(png|jpe?g|gif|webp|svg|bmp|tiff?|heic|pdf|mp3|m4a|wav|aac|ogg|mp4|mov|m4v|webm)$/i;
+function isAttachmentTarget(target) {
+  return ATTACHMENT_EMBED_RE.test(target.split(/[#|]/)[0].trim());
+}
 
 function inCode(state, pos) {
   let node = syntaxTree(state).resolveInner(pos, 1);
@@ -271,7 +277,7 @@ function buildEmbedDecorations(view) {
       const end = start + m[0].length;
       if (inCode(state, start)) continue;
       const target = m[1].trim();
-      if (!target) continue;
+      if (!target || isAttachmentTarget(target)) continue;
       if (activeLines.has(state.doc.lineAt(start).number)) {
         found.push({ from: start, to: end, deco: Decoration.mark({ class: "cm-sl-embed-raw" }) });
       } else {
@@ -280,6 +286,7 @@ function buildEmbedDecorations(view) {
         found.push({
           from: start,
           to: end,
+          atomic: true,
           deco: Decoration.replace({ widget: new EmbedWidget(target, version) }),
         });
       }
@@ -287,15 +294,26 @@ function buildEmbedDecorations(view) {
   }
   found.sort((a, b) => a.from - b.from);
   const builder = new RangeSetBuilder();
-  for (const f of found) builder.add(f.from, f.to, f.deco);
-  return builder.finish();
+  // Only rendered (replaced) embeds are atomic: the raw `![[…]]` on the
+  // active line must stay editable character by character.
+  const atomic = new RangeSetBuilder();
+  for (const f of found) {
+    builder.add(f.from, f.to, f.deco);
+    if (f.atomic) atomic.add(f.from, f.to, f.deco);
+  }
+  return { decorations: builder.finish(), atomic: atomic.finish() };
 }
 
 const embedPlugin = ViewPlugin.fromClass(
   class {
     constructor(view) {
       embedView = view;
-      this.decorations = buildEmbedDecorations(view);
+      this.rebuild(view);
+    }
+    rebuild(view) {
+      const built = buildEmbedDecorations(view);
+      this.decorations = built.decorations;
+      this.atomic = built.atomic;
     }
     update(update) {
       embedView = update.view;
@@ -305,14 +323,14 @@ const embedPlugin = ViewPlugin.fromClass(
         update.viewportChanged ||
         update.transactions.some((tr) => tr.effects.some((e) => e.is(embedUpdated)))
       ) {
-        this.decorations = buildEmbedDecorations(update.view);
+        this.rebuild(update.view);
       }
     }
   },
   {
     decorations: (v) => v.decorations,
     provide: (plugin) =>
-      EditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations || Decoration.none),
+      EditorView.atomicRanges.of((view) => view.plugin(plugin)?.atomic || Decoration.none),
   }
 );
 

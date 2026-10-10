@@ -13,11 +13,16 @@ extension AppDelegate {
         now: Date
     ) -> String {
         let fallback = namesNote ? (event.map(CalendarNoteFormatter.noteHeader(for:)) ?? "") : ""
+        // `{{title}}` is the title `resolveNoteContext` gives the new note.
         let title: String
         if namesNote, let event {
             title = CalendarNoteFormatter.noteTitle(for: event, date: now)
         } else {
-            title = event?.displayTitle ?? meetingName ?? "Meeting"
+            // Same fallback title as `resolveNoteContext(…)`.
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            title = "\(meetingName ?? "Meeting") on \(formatter.string(from: now))"
         }
         return NoteTemplateDefaults.meetingNoteBody(
             fileStore: NoteStore.shared.fileStore,

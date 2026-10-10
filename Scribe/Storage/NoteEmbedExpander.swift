@@ -27,16 +27,35 @@ enum NoteEmbedExpander {
         try! NSRegularExpression(pattern: #"!\[\[([^\[\]\n]+)\]\]"#)
     }()
 
-    /// The embeds in `body`, in order, skipping any inside code.
+    /// The embeds in `body`, in order, skipping any inside code and
+    /// attachment embeds (`![[photo.png]]`, Obsidian-style), which aren't notes.
     nonisolated static func embeds(in body: String) -> [Occurrence] {
         let ns = body as NSString
         let protected = MarkdownCodeRanges.codeRanges(in: body)
         return embedRegex.matches(in: body, range: NSRange(location: 0, length: ns.length)).compactMap { m in
             if protected.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) { return nil }
             let anchor = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
-            guard !anchor.isEmpty else { return nil }
+            guard !anchor.isEmpty, !isAttachmentAnchor(anchor) else { return nil }
             return Occurrence(location: m.range.location, length: m.range.length, anchor: anchor)
         }
+    }
+
+    /// File extensions of non-note embeds (images, PDFs, audio, video).
+    nonisolated static let attachmentExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "heic", "pdf",
+        "mp3", "m4a", "wav", "aac", "ogg", "mp4", "mov", "m4v", "webm",
+    ]
+
+    /// True for `photo.png`, `scan.pdf#page=2`, `img.jpg|300` — an embed of
+    /// a file rather than a note. Mirrors `ATTACHMENT_EMBED_RE` in
+    /// editor-web/src/notepower.js.
+    nonisolated static func isAttachmentAnchor(_ anchor: String) -> Bool {
+        let name = anchor
+            .split(maxSplits: 1, omittingEmptySubsequences: false, whereSeparator: { $0 == "#" || $0 == "|" })
+            .first
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let ext = (name as NSString).pathExtension.lowercased()
+        return !ext.isEmpty && attachmentExtensions.contains(ext)
     }
 
     /// The markdown an embed shows: the designated heading section / block
