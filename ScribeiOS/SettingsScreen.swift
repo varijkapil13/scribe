@@ -45,6 +45,7 @@ struct SettingsScreen: View {
                 RecordingSettingsSection()
 
                 // MARK: - Slot: system integrations (ios-system: Siri, widgets, Share)
+                ScribeiOSSystemSettingsSection()
 
                 // MARK: - Appearance (shell)
                 appearanceSection

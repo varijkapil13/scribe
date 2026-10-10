@@ -34,7 +34,10 @@ struct ScribeSharePayload: Codable, Equatable, Sendable {
     var text: String
     /// Shared web URLs, absolute strings.
     var urls: [String]
-    /// Image files saved next to `payload.json` in the item folder.
+    /// Image files saved next to `payload.json` in the item folder. Despite
+    /// the name it may also list other shared files (the iOS Share extension
+    /// sends PDFs this way); the importer links non-images instead of
+    /// embedding them.
     var imageFileNames: [String]
 
     init(
@@ -64,7 +67,8 @@ struct ScribeSharePayload: Codable, Equatable, Sendable {
     }
 }
 
-/// An image the Share extension received, before it's written to the inbox.
+/// An image (or another file, e.g. a PDF) the Share extension received,
+/// before it's written to the inbox.
 struct ScribeShareImage: Sendable, Equatable {
     var data: Data
     /// Lower-case file extension without the dot (`png`, `jpg`, …).
@@ -95,7 +99,8 @@ struct ScribeShareInbox: Sendable {
         ScribeAppGroup.containerURL().map { ScribeShareInbox(container: $0) }
     }
 
-    /// Writes one share: `<inbox>/<payload.id>/image-N.ext…` then
+    /// Writes one share: `<inbox>/<payload.id>/image-N.ext…` (documents
+    /// such as PDFs: `document-N.ext`) then
     /// `payload.json` (atomically, last). `payload.imageFileNames` is filled
     /// in from `images`. Returns the item folder.
     @discardableResult
@@ -105,7 +110,8 @@ struct ScribeShareInbox: Sendable {
         var names: [String] = []
         for (index, image) in images.enumerated() {
             let ext = Self.safeExtension(image.fileExtension)
-            let name = "image-\(index + 1).\(ext)"
+            let stem = Self.isDocumentExtension(ext) ? "document" : "image"
+            let name = "\(stem)-\(index + 1).\(ext)"
             try image.data.write(to: folder.appendingPathComponent(name, isDirectory: false), options: .atomic)
             names.append(name)
         }
@@ -165,6 +171,14 @@ struct ScribeShareInbox: Sendable {
 
     static func safeFolderName(_ id: String) -> String {
         isSafeFileName(id) ? id : UUID().uuidString
+    }
+
+    /// Non-image files the iOS Share extension hands over (written as
+    /// `document-N.ext`; everything else keeps the `image-N` name).
+    static let documentExtensions: Set<String> = ["pdf"]
+
+    static func isDocumentExtension(_ ext: String) -> Bool {
+        documentExtensions.contains(ext.lowercased())
     }
 
     static func safeExtension(_ raw: String) -> String {

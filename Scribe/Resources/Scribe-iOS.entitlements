@@ -33,5 +33,13 @@
 	</array>
 	<key>aps-environment</key>
 	<string>development</string>
+	<!--
+	  App Group shared with the iOS widgets (snapshot + task toggles) and the
+	  Share extension (ShareInbox). Same group as the Mac (ScribeAppGroup).
+	-->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.varij.scribe</string>
+	</array>
 </dict>
 </plist>

@@ -3,6 +3,10 @@
 // Applies the task completion toggles the Today widget queued in the App
 // Group (`ScribeWidgetTaskRequest`). Runs at launch, on app activation, and
 // as soon as a widget posts the Darwin notification while the app runs.
+//
+// Portable: also compiled into the iOS app (project.yml → ScribeiOS), where
+// ScribeiOS/System/IOSSystemIntegration owns it and installs
+// `darwinRequestHandler`.
 
 import Foundation
 
@@ -15,6 +19,12 @@ final class WidgetTaskRequestApplier {
     /// reminder bookkeeping; tests: a no-op, so no notification center).
     private let onTaskChanged: @MainActor (TodoTask) -> Void
     private var isObserving = false
+
+    #if !os(macOS)
+    /// iOS: what the Darwin notification runs (the Mac routes it through
+    /// `ScribeExtensionsBridge`). Installed by IOSSystemIntegration.
+    static var darwinRequestHandler: (@MainActor () -> Void)?
+    #endif
 
     init(
         queue: ScribeWidgetRequestQueue,
@@ -96,6 +106,15 @@ final class WidgetTaskRequestApplier {
         Self.addDarwinObserver(observer: Unmanaged.passUnretained(self).toOpaque())
     }
 
+    /// Routes the Darwin notification to the platform's extensions bridge.
+    static func darwinNotificationArrived() {
+        #if os(macOS)
+        ScribeExtensionsBridge.shared.widgetRequestsArrived()
+        #else
+        darwinRequestHandler?()
+        #endif
+    }
+
     /// Isolated CoreFoundation call (the one C-API touch point here). The
     /// callback is a capture-free C function pointer: it hops to the main
     /// actor and drains the shared bridge's applier. `observer` only
@@ -106,7 +125,7 @@ final class WidgetTaskRequestApplier {
             UnsafeRawPointer(observer),
             { _, _, _, _, _ in
                 let hop = Task { @MainActor in
-                    ScribeExtensionsBridge.shared.widgetRequestsArrived()
+                    WidgetTaskRequestApplier.darwinNotificationArrived()
                 }
                 _ = hop
             },

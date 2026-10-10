@@ -52,6 +52,11 @@ enum ScribeAppGroup {
     /// `scribe://import-share` — tells the app to process the Share inbox.
     static var importShareURL: URL { fixedURL("scribe://import-share") }
 
+    /// `scribe://note/<id>` (id percent-encoded).
+    static func noteURL(id: String) -> URL {
+        fixedURL("scribe://note/" + percentEncode(id))
+    }
+
     /// `scribe://task/<id>` (id percent-encoded).
     static func taskURL(id: String) -> URL {
         fixedURL("scribe://task/" + percentEncode(id))

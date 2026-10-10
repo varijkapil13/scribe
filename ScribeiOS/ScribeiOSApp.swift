@@ -17,6 +17,7 @@ struct ScribeiOSApp: App {
         // App Exposé "+") is another instance with its own tab selection.
         WindowGroup {
             RootTabView()
+                .scribeSystemIntegration() // ios-system: widgets, Share import, Spotlight, Quick Capture
         }
         .commands {
             ScribeiOSCommands()
