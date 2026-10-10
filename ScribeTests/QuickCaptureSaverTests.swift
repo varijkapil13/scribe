@@ -94,13 +94,16 @@ final class QuickCaptureSaverTests: XCTestCase {
     // MARK: - Daily note
 
     func testAppendsTimestampedEntriesToTodaysDailyNote() throws {
+        // The daily note's day is keyed in the device time zone, so build the
+        // times there too: both entries then land on the same day anywhere.
+        let local = TimeZone.current
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = utc
+        calendar.timeZone = local
         let morning = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 10, hour: 9, minute: 15)))
-        let later = morning.addingTimeInterval(90 * 60)
+        let later = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 10, hour: 10, minute: 45)))
 
-        let first = try saver.save(try request(.appendToDaily, "Call Anna"), now: morning, timeZone: utc)
-        let second = try saver.save(try request(.appendToDaily, "Book flights\nfor the offsite"), now: later, timeZone: utc)
+        let first = try saver.save(try request(.appendToDaily, "Call Anna"), now: morning, timeZone: local)
+        let second = try saver.save(try request(.appendToDaily, "Book flights\nfor the offsite"), now: later, timeZone: local)
         XCTAssertEqual(first.destination, second.destination, "Both entries go to the same daily note")
         XCTAssertEqual(second.message, "Added to today's daily note")
 

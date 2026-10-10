@@ -39,6 +39,10 @@ final class QuickCaptureDictation: ObservableObject {
     private var continuation: AsyncStream<QuickCaptureAudioBox>.Continuation?
     private var segments: [String] = []
     private var partial: String = ""
+    /// Bumped on every start, so a `begin()` still awaiting permission or
+    /// the speech model from an earlier, already stopped session gives up
+    /// instead of starting a second pipeline or failing the new one.
+    private var generation = 0
 
     init() {}
 
@@ -48,7 +52,9 @@ final class QuickCaptureDictation: ObservableObject {
         partial = ""
         liveText = ""
         phase = .preparing
-        Task { await begin() }
+        generation &+= 1
+        let session = generation
+        Task { await begin(session) }
     }
 
     /// Stops listening. Returns the final, cleaned text (fillers removed per
@@ -57,12 +63,16 @@ final class QuickCaptureDictation: ObservableObject {
     func stop() async -> String {
         guard isActive else { return liveText }
         let wasListening = phase == .listening
+        // A `begin()` still loading the model must not open the mic.
+        generation &+= 1
         teardownCapture()
         if wasListening { await feedTask?.value }
         feedTask = nil
+        // Stays current while it finalizes, so the last result it flushes
+        // still reaches `segments` (stale-pipeline callbacks are ignored).
         let pipeline = self.pipeline
-        self.pipeline = nil
         await pipeline?.stop()
+        if self.pipeline === pipeline { self.pipeline = nil }
         phase = .idle
 
         var pieces = segments
@@ -76,6 +86,7 @@ final class QuickCaptureDictation: ObservableObject {
     /// Stops without waiting for the final result (panel closing).
     func cancel() {
         guard isActive else { return }
+        generation &+= 1
         teardownCapture()
         feedTask = nil
         let pipeline = self.pipeline
@@ -86,29 +97,35 @@ final class QuickCaptureDictation: ObservableObject {
 
     // MARK: - Private
 
-    private func begin() async {
-        guard await Permissions.checkMicrophonePermission() == .granted else {
+    private func begin(_ session: Int) async {
+        let micGranted = await Permissions.checkMicrophonePermission() == .granted
+        // Stopped (or restarted) while asking for permission.
+        guard phase == .preparing, generation == session else { return }
+        guard micGranted else {
             return fail("Microphone access is off for Scribe.")
         }
-        guard await SpeechRecognizerEngine.checkAuthorization() == .authorized else {
+        let speechAuthorized = await SpeechRecognizerEngine.checkAuthorization() == .authorized
+        guard phase == .preparing, generation == session else { return }
+        guard speechAuthorized else {
             return fail("Speech recognition access is off for Scribe.")
         }
-        // Cancelled while asking for permission.
-        guard phase == .preparing else { return }
 
+        // Callbacks from a pipeline that is no longer current (a stopped
+        // session flushing its last result) must not touch the new session.
         let pipeline = TranscriptionPipeline(speaker: "dictation")
-        pipeline.onSegment = { [weak self] segment in
-            guard let self else { return }
+        pipeline.onSegment = { [weak self, weak pipeline] segment in
+            guard let self, let pipeline, self.pipeline === pipeline else { return }
             self.segments.append(segment.text)
             self.refreshLiveText()
         }
-        pipeline.onPartialUpdate = { [weak self] text in
-            guard let self else { return }
+        pipeline.onPartialUpdate = { [weak self, weak pipeline] text in
+            guard let self, let pipeline, self.pipeline === pipeline else { return }
             self.partial = text
             self.refreshLiveText()
         }
-        pipeline.onError = { [weak self] error in
-            self?.fail("Dictation stopped: \(error.localizedDescription)")
+        pipeline.onError = { [weak self, weak pipeline] error in
+            guard let self, let pipeline, self.pipeline === pipeline else { return }
+            self.fail("Dictation stopped: \(error.localizedDescription)")
         }
         self.pipeline = pipeline
 
@@ -116,10 +133,11 @@ final class QuickCaptureDictation: ObservableObject {
         do {
             try await pipeline.start(locale: SpeechRecognizerEngine.resolveLocale(language))
         } catch {
+            guard generation == session, self.pipeline === pipeline else { return }
             return fail("Couldn't start dictation: \(error.localizedDescription)")
         }
         // Cancelled while the speech model was loading.
-        guard phase == .preparing, self.pipeline === pipeline else {
+        guard phase == .preparing, generation == session, self.pipeline === pipeline else {
             await pipeline.stop()
             return
         }

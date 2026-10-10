@@ -9,6 +9,18 @@ extension Notification.Name {
     static let scribeNoteChangedInApp = Notification.Name("scribe.noteChangedInApp")
 }
 
+enum QuickCaptureSaveError: LocalizedError {
+    /// Today's daily note exists but its file couldn't be read.
+    case dailyNoteUnreadable
+
+    var errorDescription: String? {
+        switch self {
+        case .dailyNoteUnreadable:
+            return "Today's daily note couldn't be read from the vault, so nothing was added to it."
+        }
+    }
+}
+
 /// What a Quick Capture save produced: where it went (for "save and open")
 /// and the toast text.
 struct QuickCaptureSaveOutcome: Equatable {
@@ -75,8 +87,18 @@ struct QuickCaptureSaver {
         case .appendToDaily(let text):
             let daily = try noteStore.dailyNote(for: now)
             // `dailyNote(for:)` returns the DB row, whose body is only a
-            // placeholder; the real body lives on disk.
-            var note = try noteStore.fetchNote(id: daily.id) ?? daily
+            // placeholder; the real body lives on disk. With a vault, refuse
+            // to append when the file can't be read: appending to the
+            // placeholder would overwrite the day's note with one line.
+            var note = daily
+            if noteStore.fileStore != nil {
+                guard let entry = noteStore.diskEntry(forNoteId: daily.id) else {
+                    throw QuickCaptureSaveError.dailyNoteUnreadable
+                }
+                note.body = entry.file.body
+            } else {
+                note = try noteStore.fetchNote(id: daily.id) ?? daily
+            }
             let entry = QuickCaptureComposer.dailyEntry(text: text, at: now, timeZone: timeZone)
             note.body = QuickCaptureComposer.appendingDailyEntry(entry, to: note.body)
             let tags = try noteStore.tags(for: note.id)

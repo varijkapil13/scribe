@@ -218,7 +218,8 @@ final class NoteDetailViewModel: ObservableObject {
             case .keepBoth:
                 do {
                     if let copy = try store.preserveDiskVersionAsConflictCopy(noteId: note.id) {
-                        errorMessage = "\u{201C}\(note.title)\u{201D} was changed outside Scribe while you were editing. "
+                        let changedBy = ignoreOwnWriteLineage ? "by Quick Capture" : "outside Scribe"
+                        errorMessage = "\u{201C}\(note.title)\u{201D} was changed \(changedBy) while you were editing. "
                             + "Your version was saved; the other version was kept as "
                             + "\u{201C}\(copy.deletingPathExtension().lastPathComponent)\u{201D}."
                         keptConflictCopy = true
@@ -289,6 +290,9 @@ final class NoteDetailViewModel: ObservableObject {
         tags = NoteStore.normalizeTags(file.frontmatter.tags)
         properties = file.frontmatter.properties()
         loadedFingerprint = entry.fingerprint
+        // The editor now holds the disk version, Quick Capture's change
+        // included: Scribe's own write lineage applies again.
+        ignoreOwnWriteLineage = false
         isDirty = false
         backlinks = (try? store.backlinks(for: note.id)) ?? []
         recomputeUnresolvedLinks()
