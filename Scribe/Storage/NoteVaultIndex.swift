@@ -128,7 +128,7 @@ struct NoteFileEntry: Equatable, Sendable {
 final class NoteVaultIndex: @unchecked Sendable {
     private let lock = NSLock()
     private var pathsById: [String: String] = [:]
-    private var lastWrittenById: [String: NoteFileFingerprint] = [:]
+    private var writeChains: [String: WriteChain] = [:]
     private var cacheByPath: [String: NoteFileEntry] = [:]
     private var hasCompleteListing = false
 
@@ -165,10 +165,18 @@ final class NoteVaultIndex: @unchecked Sendable {
         Self.assign(relativePath, to: id, in: &pathsById)
     }
 
+    /// Forgets everything about `id` (its file was deleted).
     func removeId(_ id: String) {
         lock.lock(); defer { lock.unlock() }
         pathsById.removeValue(forKey: id)
-        lastWrittenById.removeValue(forKey: id)
+        writeChains.removeValue(forKey: id)
+    }
+
+    /// Drops only the id → path mapping (the entry turned out stale, e.g.
+    /// the file was moved outside Scribe); Scribe's write history is kept.
+    func removePathMapping(for id: String) {
+        lock.lock(); defer { lock.unlock() }
+        pathsById.removeValue(forKey: id)
     }
 
     /// Drops any id still mapped to `relativePath` (the file is gone).
@@ -198,14 +206,53 @@ final class NoteVaultIndex: @unchecked Sendable {
 
     // MARK: Self-write fingerprints
 
-    func lastWrittenFingerprint(for id: String) -> NoteFileFingerprint? {
-        lock.lock(); defer { lock.unlock() }
-        return lastWrittenById[id]
+    /// Scribe's own consecutive writes to one note's file: the content
+    /// hashes of every version in the unbroken chain (starting with the
+    /// on-disk version the first write was based on) and the latest write.
+    /// The chain restarts whenever a write is based on a version that is
+    /// *not* Scribe's previous write — i.e. something outside Scribe changed
+    /// the file in between.
+    private struct WriteChain {
+        var last: NoteFileFingerprint
+        var hashes: [String]
     }
 
-    func setLastWrittenFingerprint(_ fingerprint: NoteFileFingerprint, for id: String) {
+    private static let maxChainLength = 64
+
+    /// Fingerprint of the last version Scribe itself wrote for `id`.
+    func lastWrittenFingerprint(for id: String) -> NoteFileFingerprint? {
         lock.lock(); defer { lock.unlock() }
-        lastWrittenById[id] = fingerprint
+        return writeChains[id]?.last
+    }
+
+    /// Scribe's last write for `id`, but only when it descends — through
+    /// Scribe's own writes alone — from `base` (e.g. the version an editor
+    /// loaded). A Scribe write that read-modify-wrote an *external* edit
+    /// (font change, property edit, notebook move) therefore doesn't make
+    /// that external edit look like Scribe's own.
+    func lastWrittenFingerprint(for id: String, descendingFrom base: NoteFileFingerprint) -> NoteFileFingerprint? {
+        lock.lock(); defer { lock.unlock() }
+        guard let chain = writeChains[id], chain.hashes.contains(base.contentHash) else { return nil }
+        return chain.last
+    }
+
+    /// Records that Scribe wrote `fingerprint` for `id`, replacing the
+    /// on-disk version `base` (nil when there was no file).
+    func recordOwnWrite(_ fingerprint: NoteFileFingerprint, basedOn base: NoteFileFingerprint?, for id: String) {
+        lock.lock(); defer { lock.unlock() }
+        if let base, var chain = writeChains[id], chain.last.describesSameContent(as: base) {
+            chain.hashes.append(fingerprint.contentHash)
+            if chain.hashes.count > Self.maxChainLength {
+                chain.hashes.removeFirst(chain.hashes.count - Self.maxChainLength)
+            }
+            chain.last = fingerprint
+            writeChains[id] = chain
+        } else {
+            writeChains[id] = WriteChain(
+                last: fingerprint,
+                hashes: (base.map { [$0.contentHash] } ?? []) + [fingerprint.contentHash]
+            )
+        }
     }
 
     // MARK: Parse cache
@@ -233,16 +280,20 @@ final class NoteVaultIndex: @unchecked Sendable {
         return NoteConflictDetector.stripConflictSuffix(name) != nil
     }
 
+    /// True when `candidate` should back an id instead of `current`: a
+    /// regular file beats a `(conflicted copy)`, otherwise the
+    /// lexicographically first path wins — so repeated passes agree, and
+    /// agree with `NoteIndexReconciler.preferredEntries`.
+    nonisolated static func isPreferred(_ candidate: String, over current: String) -> Bool {
+        let candidateIsConflict = isConflictCopy(relativePath: candidate)
+        let currentIsConflict = isConflictCopy(relativePath: current)
+        if candidateIsConflict != currentIsConflict { return !candidateIsConflict }
+        return candidate < current
+    }
+
     private static func assign(_ relativePath: String, to id: String, in map: inout [String: String]) {
         if let existing = map[id], existing != relativePath,
-           !isConflictCopy(relativePath: existing), isConflictCopy(relativePath: relativePath) {
-            return
-        }
-        if let existing = map[id], existing != relativePath,
-           !isConflictCopy(relativePath: existing), !isConflictCopy(relativePath: relativePath),
-           existing < relativePath {
-            // Two regular files claim the same id (a Finder duplicate):
-            // pick deterministically so repeated passes agree.
+           !isPreferred(relativePath, over: existing) {
             return
         }
         map[id] = relativePath

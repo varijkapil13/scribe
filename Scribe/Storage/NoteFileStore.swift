@@ -84,13 +84,14 @@ struct NoteFileStore: Sendable {
 
     /// Full listing with per-file metadata. Unchanged files (same
     /// modification date + size as the cached parse) are not re-read.
-    /// Rebuilds the id → path index from the result. `changedIds` holds the
-    /// ids whose file content differs from the previous listing / Scribe's
-    /// own last write (every id on the first pass).
-    func listEntries() throws -> (entries: [NoteFileEntry], changedIds: Set<String>) {
+    /// Rebuilds the id → path index from the result unless
+    /// `rebuildingIndex` is false (a cache-warming pass). `changedIds` holds
+    /// the ids whose file content differs from the previous listing /
+    /// Scribe's own last write (every id on the first pass).
+    func listEntries(rebuildingIndex: Bool = true) throws -> (entries: [NoteFileEntry], changedIds: Set<String>) {
         try directory.ensureExists()
         let fm = FileManager.default
-        let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey]
         guard let enumerator = fm.enumerator(
             at: directory.root,
             includingPropertiesForKeys: keys,
@@ -111,10 +112,13 @@ struct NoteFileStore: Sendable {
             guard values?.isRegularFile == true else { continue }
             guard let relative = relativePath(of: url) else { continue }
             seenPaths.insert(relative)
+            // Same (uncached) stat source as the cached fingerprint, so an
+            // unchanged file really does compare equal and isn't re-read.
             if let cached = index.cachedEntry(forPath: relative),
-               let modified = values?.contentModificationDate,
+               let stat = NoteFileFingerprint.statFile(at: url),
+               let modified = stat.modificationDate,
                cached.fingerprint.modificationDate == modified,
-               cached.fingerprint.size == values?.fileSize {
+               cached.fingerprint.size == stat.size {
                 out.append(cached)
                 continue
             }
@@ -131,7 +135,9 @@ struct NoteFileStore: Sendable {
             }
         }
         index.pruneCache(keeping: seenPaths)
-        index.replaceAll(with: out)
+        if rebuildingIndex {
+            index.replaceAll(with: out)
+        }
         return (out, changed)
     }
 
@@ -161,6 +167,9 @@ struct NoteFileStore: Sendable {
         try newData.write(to: entry.url, options: .atomic)
         let fingerprint = NoteFileFingerprint.of(data: newData, at: entry.url)
         writeGuard.recordWrite(at: entry.url, fingerprint: fingerprint)
+        // Scribe's own write: an editor that loaded the pre-pin version must
+        // not mistake the pinned file for an external edit.
+        index.recordOwnWrite(fingerprint, basedOn: entry.fingerprint, for: entry.file.id)
         var updated = entry
         updated.hasExplicitId = true
         updated.fingerprint = fingerprint
@@ -184,7 +193,8 @@ struct NoteFileStore: Sendable {
     @discardableResult
     func write(_ file: NoteFile) throws -> URL {
         try directory.ensureExists()
-        let existing = try locate(id: file.id)?.url
+        let existingEntry = try locate(id: file.id)
+        let existing = existingEntry?.url
         let url = try resolveTargetURL(for: file, existing: existing)
         let contents = NoteFrontmatterCodec.encodeFile(
             id: file.id,
@@ -199,7 +209,7 @@ struct NoteFileStore: Sendable {
             withIntermediateDirectories: true
         )
         try data.write(to: url, options: .atomic)
-        recordWrite(of: data, file: file, at: url)
+        recordWrite(of: data, contents: contents, id: file.id, at: url, basedOn: existingEntry?.fingerprint)
         if let existing, !Self.isSameFile(existing, url) {
             removeSupersededFile(at: existing, expectedId: file.id)
         }
@@ -222,9 +232,11 @@ struct NoteFileStore: Sendable {
 
     /// Writes a copy of the current on-disk version of `id` next to it as
     /// `<name> (Scribe conflicted copy <timestamp>).md`, with a fresh id and
-    /// a matching title so it indexes as its own note. Everything except
-    /// those two frontmatter keys is preserved byte-for-byte. Not recorded
-    /// as a self-write, so the vault watcher indexes it.
+    /// a title equal to that file name, so it indexes as its own note (and a
+    /// later in-app edit of the copy saves in place instead of spawning
+    /// another file). Everything except those two frontmatter keys is
+    /// preserved byte-for-byte. Not recorded as a self-write, so the vault
+    /// watcher indexes it.
     func writeConflictCopy(of entry: NoteFileEntry, now: Date = Date()) throws -> URL {
         let data = try Data(contentsOf: entry.url)
         guard let contents = String(data: data, encoding: .utf8) else {
@@ -240,14 +252,16 @@ struct NoteFileStore: Sendable {
         var n = 2
         while fm.fileExists(atPath: target.path) {
             guard n <= 256 else { throw NoteFileStoreError.tooManyCollisions(baseName) }
-            target = folder.appendingPathComponent("\(baseName) \(n).md")
+            // Number *inside* the parentheses so the name still ends in the
+            // "(… conflicted copy …)" marker the detector recognises.
+            target = folder.appendingPathComponent("\(baseName.dropLast()) \(n)).md")
             n += 1
         }
         let copy = NoteFrontmatterCodec.settingRawKeys(
             [
                 (key: "id", value: UUID().uuidString),
                 (key: "title", value: NoteFrontmatterCodec.encodedScalar(
-                    "\(entry.file.frontmatter.title) (conflicted copy)"
+                    target.deletingPathExtension().lastPathComponent
                 )),
             ],
             in: contents
@@ -298,7 +312,7 @@ struct NoteFileStore: Sendable {
             if let entry = try? readEntry(at: url), entry.file.id == id {
                 return entry
             }
-            index.removeId(id)
+            index.removePathMapping(for: id)
         } else if index.isComplete {
             // Not on disk at the last full listing and not written by
             // Scribe since (e.g. a note being created right now).
@@ -321,6 +335,12 @@ struct NoteFileStore: Sendable {
     /// Fingerprint of the last version Scribe itself wrote for `id`.
     func lastWrittenFingerprint(forId id: String) -> NoteFileFingerprint? {
         index.lastWrittenFingerprint(for: id)
+    }
+
+    /// Scribe's last write for `id` if it descends from `base` through
+    /// Scribe's own writes only (see `NoteVaultIndex`).
+    func lastWrittenFingerprint(forId id: String, descendingFrom base: NoteFileFingerprint) -> NoteFileFingerprint? {
+        index.lastWrittenFingerprint(for: id, descendingFrom: base)
     }
 
     /// Path of `url` relative to the vault root, or nil if outside it.
@@ -362,16 +382,30 @@ struct NoteFileStore: Sendable {
         return conflictMatch
     }
 
-    private func recordWrite(of data: Data, file: NoteFile, at url: URL) {
+    private func recordWrite(
+        of data: Data,
+        contents: String,
+        id: String,
+        at url: URL,
+        basedOn base: NoteFileFingerprint?
+    ) {
         let fingerprint = NoteFileFingerprint.of(data: data, at: url)
         writeGuard.recordWrite(at: url, fingerprint: fingerprint)
-        index.setLastWrittenFingerprint(fingerprint, for: file.id)
+        index.recordOwnWrite(fingerprint, basedOn: base, for: id)
         if let relative = relativePath(of: url) {
-            index.setRelativePath(relative, for: file.id)
+            index.setRelativePath(relative, for: id)
+            // Cache the file as a fresh read would parse it (trimmed body,
+            // millisecond dates, …), so the reconciler's stat fast path
+            // indexes exactly what is on disk.
+            let parsed = NoteFrontmatterCodec.decodeFile(
+                contents: contents,
+                fallbackTitle: url.deletingPathExtension().lastPathComponent,
+                fallbackId: id
+            )
             index.cache(NoteFileEntry(
                 url: url,
                 relativePath: relative,
-                file: file,
+                file: NoteFile(id: parsed.id, frontmatter: parsed.frontmatter, body: parsed.body),
                 hasExplicitId: true,
                 fingerprint: fingerprint
             ))

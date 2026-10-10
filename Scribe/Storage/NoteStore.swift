@@ -209,6 +209,15 @@ final class NoteStore: @unchecked Sendable {
         fileStore?.lastWrittenFingerprint(forId: id)
     }
 
+    /// Scribe's last write for the note, provided it descends from `base`
+    /// (the version an editor loaded) through Scribe's own writes only — so
+    /// an in-app read-modify-write on top of an *external* edit (font,
+    /// properties, notebook move) never makes that edit look like Scribe's.
+    func ownWrittenFileFingerprint(forNoteId id: String, descendingFrom base: NoteFileFingerprint?) -> NoteFileFingerprint? {
+        guard let base else { return nil }
+        return fileStore?.lastWrittenFingerprint(forId: id, descendingFrom: base)
+    }
+
     /// Preserves the current on-disk version of the note as a conflict copy
     /// next to it (fresh id, `(Scribe conflicted copy …)` name) before an
     /// in-app version overwrites it. Returns the copy's URL, or nil when

@@ -15,8 +15,8 @@ final class NoteReconcileScheduler: @unchecked Sendable {
     private let onComplete: Completion
     /// One queue for every scheduler, so a pass still running against a
     /// previous vault always finishes before the first pass of the next one.
-    private static let queue = DispatchQueue(label: "com.varij.scribe.note-reconcile", qos: .utility)
-    private var queue: DispatchQueue { Self.queue }
+    private static let sharedQueue = DispatchQueue(label: "com.varij.scribe.note-reconcile", qos: .utility)
+    private var queue: DispatchQueue { Self.sharedQueue }
 
     private let lock = NSLock()
     private var isRunning = false

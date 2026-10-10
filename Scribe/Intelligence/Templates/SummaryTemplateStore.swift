@@ -5,10 +5,12 @@ import Foundation
 ///     <vault>/Templates/Summaries/*.md
 ///     <vault>/Templates/Recipes/*.md
 ///
-/// `NoteFileStore` skips the whole `Templates/` folder, so these files are
-/// never indexed as notes. Built-ins are written on first use (only when a
-/// folder has no `.md` files, so a user who deletes a built-in doesn't get it
-/// back); "Restore built-in templates" rewrites them explicitly.
+/// `NoteFileStore` skips `Templates/Summaries` and `Templates/Recipes`
+/// (case-insensitively), so these files are never indexed as notes; a
+/// user's own notes elsewhere under `Templates/` still are. Built-ins are
+/// written on first use (only when a folder has no `.md` files, so a user
+/// who deletes a built-in doesn't get it back); "Restore built-in templates"
+/// rewrites them explicitly.
 struct SummaryTemplateStore {
 
     static let templatesFolderName = "Templates"

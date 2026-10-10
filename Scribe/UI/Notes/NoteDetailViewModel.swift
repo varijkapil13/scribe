@@ -136,7 +136,7 @@ final class NoteDetailViewModel: ObservableObject {
         // This is a read-modify-write of the *current* file, so it never
         // drops an external body edit. Whether the editor is still in sync
         // with disk decides what happens to the editor afterwards.
-        let lastOwn = store.lastWrittenFileFingerprint(forNoteId: note.id)
+        let lastOwn = store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loadedFingerprint)
         let wasInSync = NoteExternalEditPolicy.isUnchanged(loaded: loadedFingerprint, current: entry.fingerprint)
             || (lastOwn.map { entry.fingerprint.describesSameContent(as: $0) } ?? false)
         var file = entry.file
@@ -193,7 +193,7 @@ final class NoteDetailViewModel: ObservableObject {
             switch NoteExternalEditPolicy.decide(
                 loaded: loaded,
                 current: current,
-                lastWrittenByScribe: store.lastWrittenFileFingerprint(forNoteId: note.id),
+                lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
                 hasUnsavedChanges: isDirty
             ) {
             case .write:
@@ -242,7 +242,7 @@ final class NoteDetailViewModel: ObservableObject {
         let decision = NoteExternalEditPolicy.decide(
             loaded: loaded,
             current: current,
-            lastWrittenByScribe: store.lastWrittenFileFingerprint(forNoteId: note.id),
+            lastWrittenByScribe: store.ownWrittenFileFingerprint(forNoteId: note.id, descendingFrom: loaded),
             hasUnsavedChanges: false
         )
         if decision == .reloadFromDisk {

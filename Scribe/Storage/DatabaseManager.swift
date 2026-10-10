@@ -485,24 +485,38 @@ final class DatabaseManager: @unchecked Sendable {
                 SELECT id, title, body, createdAt, updatedAt, isDailyNote, dailyDate, notebookId
                 FROM notes
                 """)
+            let hasBodies = rows.contains { row in
+                let body: String? = row["body"]
+                return !(body ?? "").isEmpty
+            }
             var vault: NotesDirectory?
             if !rows.isEmpty {
                 do {
                     vault = try NotesDirectory.defaultLocation()
                 } catch {
-                    let hasBodies = rows.contains { row in
-                        let body: String? = row["body"]
-                        return !(body ?? "").isEmpty
-                    }
                     if hasBodies {
                         throw DatabaseMigrationError.vaultUnavailable(error.localizedDescription)
                     }
                     Log.storage.error("v13: vault unavailable; no bodies to flush: \(error.localizedDescription, privacy: .public)")
                 }
             }
+            var store: NoteFileStore?
+            var onDiskIds: Set<String> = []
             if let vault {
-                let store = NoteFileStore(directory: vault)
-                let onDiskIds = Set(try store.listAll().map(\.id))
+                let candidate = NoteFileStore(directory: vault)
+                do {
+                    onDiskIds = Set(try candidate.listAll().map(\.id))
+                    store = candidate
+                } catch {
+                    // Without a listing we can't tell what's already on
+                    // disk. Only fatal when there is a body to lose.
+                    if hasBodies {
+                        throw DatabaseMigrationError.vaultUnavailable(error.localizedDescription)
+                    }
+                    Log.storage.error("v13: vault unreadable; no bodies to flush: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            if let store {
                 for row in rows {
                     let id: String = row["id"]
                     if onDiskIds.contains(id) { continue }

@@ -177,6 +177,71 @@ final class NoteVaultSafetyTests: XCTestCase {
         }
     }
 
+    func testIndexPrefersRegularFileThenFirstPath() {
+        XCTAssertTrue(NoteVaultIndex.isPreferred("B.md", over: "A (conflicted copy).md"))
+        XCTAssertFalse(NoteVaultIndex.isPreferred("A (conflicted copy).md", over: "B.md"))
+        XCTAssertTrue(NoteVaultIndex.isPreferred("A.md", over: "B.md"))
+        XCTAssertTrue(NoteVaultIndex.isPreferred("A (conflicted copy).md", over: "B (conflicted copy).md"))
+    }
+
+    func testWriteChainOnlyVouchesForScribesOwnDescendants() {
+        let index = NoteVaultIndex()
+        func fp(_ hash: String) -> NoteFileFingerprint {
+            NoteFileFingerprint(modificationDate: nil, size: nil, contentHash: hash)
+        }
+        index.recordOwnWrite(fp("w1"), basedOn: fp("loaded"), for: "n")
+        index.recordOwnWrite(fp("w2"), basedOn: fp("w1"), for: "n")
+        XCTAssertEqual(index.lastWrittenFingerprint(for: "n", descendingFrom: fp("loaded"))?.contentHash, "w2")
+        XCTAssertEqual(index.lastWrittenFingerprint(for: "n", descendingFrom: fp("w1"))?.contentHash, "w2")
+
+        // A Scribe write on top of an *external* edit restarts the chain:
+        // it must not vouch for the external version as Scribe's own.
+        index.recordOwnWrite(fp("w3"), basedOn: fp("external"), for: "n")
+        XCTAssertNil(index.lastWrittenFingerprint(for: "n", descendingFrom: fp("loaded")))
+        XCTAssertEqual(index.lastWrittenFingerprint(for: "n", descendingFrom: fp("external"))?.contentHash, "w3")
+        XCTAssertEqual(index.lastWrittenFingerprint(for: "n")?.contentHash, "w3")
+    }
+
+    // MARK: - Daily-date uniqueness
+
+    func testDuplicateDailyDatesDoNotFailReconcile() throws {
+        let header = "isDailyNote: true\ndailyDate: 2026-03-04\n---\n"
+        _ = try writeRaw("---\nid: day-a\ntitle: A\n" + header + "a", to: "Daily/2026-03-04.md")
+        _ = try writeRaw("---\nid: day-b\ntitle: B\n" + header + "b", to: "Elsewhere/2026-03-04.md")
+        let reconciler = NoteIndexReconciler(fileStore: fileStore, dbManager: dbManager)
+
+        var owners: [[String]] = []
+        for _ in 0..<2 {
+            XCTAssertNoThrow(try reconciler.reconcile())
+            owners.append(try dbManager.database.read {
+                try String.fetchAll($0, sql: "SELECT id FROM notes WHERE dailyDate IS NOT NULL")
+            })
+        }
+        let count = try dbManager.database.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM notes") }
+        XCTAssertEqual(count, 2, "both notes stay indexed")
+        XCTAssertEqual(owners[0].count, 1, "exactly one note holds the day")
+        XCTAssertEqual(owners[0], owners[1], "the owner is stable across passes")
+    }
+
+    func testExistingDailyOwnerKeepsItsDay() throws {
+        let header = "isDailyNote: true\ndailyDate: 2026-03-05\n---\n"
+        _ = try writeRaw("---\nid: zz-first\ntitle: First\n" + header + "first", to: "Zed/2026-03-05.md")
+        let reconciler = NoteIndexReconciler(fileStore: fileStore, dbManager: dbManager)
+        _ = try reconciler.reconcile()
+
+        // A second claimant with a "better" path appears later.
+        _ = try writeRaw("---\nid: aa-second\ntitle: Second\n" + header + "second", to: "A/2026-03-05.md")
+        _ = try reconciler.reconcile()
+        let owner = try dbManager.database.read {
+            try String.fetchAll($0, sql: "SELECT id FROM notes WHERE dailyDate IS NOT NULL")
+        }
+        XCTAssertEqual(owner, ["zz-first"])
+        let secondIsDaily = try dbManager.database.read {
+            try Bool.fetchOne($0, sql: "SELECT isDailyNote FROM notes WHERE id = 'aa-second'")
+        }
+        XCTAssertEqual(secondIsDaily, false)
+    }
+
     // MARK: - Templates
 
     func testUserTemplatesFolderIsIndexedButScribeTemplatesAreNot() throws {
@@ -427,6 +492,49 @@ final class NoteExternalEditTests: XCTestCase {
         XCTAssertEqual(vm.note.body, "external change")
         XCTAssertEqual(try store.fetchNote(id: note.id)?.body, "external change")
         XCTAssertTrue(try NoteConflictDetector(fileStore: fileStore).listConflicts().isEmpty)
+    }
+
+    func testInAppRewriteOnTopOfExternalEditStillKeepsBoth() throws {
+        let note = try store.createNote(title: "Fonts", body: "base")
+        let vm = makeVM(try XCTUnwrap(store.fetchNote(id: note.id)))
+        try editExternally(note.id, body: "external change")
+        // A Scribe read-modify-write of the externally edited file must not
+        // make the external body look like Scribe's own version.
+        store.setNoteFont(id: note.id, "serif")
+
+        vm.note.body = "in-app change"
+        vm.markDirty()
+        vm.save()
+
+        XCTAssertEqual(try store.fetchNote(id: note.id)?.body, "in-app change")
+        let conflicts = try NoteConflictDetector(fileStore: fileStore).conflicts(forNoteId: note.id, originalName: "Fonts")
+        XCTAssertEqual(conflicts.count, 1)
+        XCTAssertEqual(try fileStore.read(at: try XCTUnwrap(conflicts.first?.url)).body, "external change")
+    }
+
+    func testConflictCopyIsRecognisedAndEditsInPlace() throws {
+        let note = try store.createNote(title: "Twice", body: "base")
+        let entry = try XCTUnwrap(store.diskEntry(forNoteId: note.id))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = try fileStore.writeConflictCopy(of: entry, now: now)
+        let second = try fileStore.writeConflictCopy(of: entry, now: now)
+        XCTAssertNotEqual(first, second)
+        for url in [first, second] {
+            XCTAssertEqual(
+                NoteConflictDetector.stripConflictSuffix(url.deletingPathExtension().lastPathComponent),
+                "Twice",
+                "a same-second collision must still end in the conflict marker"
+            )
+        }
+
+        // The copy's title matches its file name, so editing it in Scribe
+        // saves in place rather than spawning yet another file.
+        var copy = try fileStore.read(at: first)
+        XCTAssertEqual(copy.frontmatter.title, first.deletingPathExtension().lastPathComponent)
+        copy.body = "edited copy"
+        let written = try fileStore.write(copy)
+        XCTAssertEqual(VaultWriteGuard.normalize(written.path), VaultWriteGuard.normalize(first.path))
+        XCTAssertEqual(try fileStore.read(at: first).body, "edited copy")
     }
 
     func testOrdinarySaveDoesNotCreateConflicts() throws {
