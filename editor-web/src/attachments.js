@@ -23,6 +23,11 @@ let nextId = 1;
 
 const addPending = StateEffect.define();
 const removePending = StateEffect.define();
+/// Drops every in-flight paste/drop position. editor.js adds it to the
+/// whole-document replacement in `scribeSetDoc` (e.g. another note loaded into
+/// this editor), so a save that finishes afterwards is never inserted into a
+/// different document at a meaningless position.
+export const clearPendingAttachments = StateEffect.define();
 // Marks the transaction that inserts a finished attachment, so other pending
 // files at the same spot land after it (keeping multi-file order).
 const insertingAttachment = StateEffect.define();
@@ -48,6 +53,8 @@ const pendingField = StateField.define({
       } else if (e.is(removePending)) {
         if (next === value) next = new Map(value);
         next.delete(e.value);
+      } else if (e.is(clearPendingAttachments)) {
+        next = new Map();
       }
     }
     return next;
@@ -174,15 +181,43 @@ export function attachmentExtensions() {
   return [pendingField, handlers];
 }
 
+function hasFiles(event) {
+  return !!(event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files"));
+}
+
+let documentDropGuardInstalled = false;
+
 export function setAttachmentView(view) {
   editorView = view;
+  if (documentDropGuardInstalled) return;
+  documentDropGuardInstalled = true;
+  // Files dropped outside the text (the fold gutter, page padding, the search
+  // panel) would otherwise get WebKit's default drop handling: navigating the
+  // web view to the file and unloading the editor. Swallow those drops and
+  // insert the files at the caret instead. Drops on the text itself are
+  // handled (and default-prevented) by the CodeMirror handler above first.
+  document.addEventListener("dragover", (event) => {
+    if (hasFiles(event)) event.preventDefault();
+  });
+  document.addEventListener("drop", (event) => {
+    if (event.defaultPrevented || !hasFiles(event)) return;
+    event.preventDefault();
+    const files = filesFrom(event.dataTransfer.files);
+    if (files.length && editorView) {
+      sendFiles(editorView, files, editorView.state.selection.main.head);
+    }
+  });
 }
 
 window.scribeAttachmentSaved = function (id, info) {
   const view = editorView;
   if (!view || !info) return;
   const pending = view.state.field(pendingField, false);
-  const pos = pending && pending.has(id) ? pending.get(id) : view.state.selection.main.head;
+  // No pending entry: the document was replaced (another note loaded) while
+  // the file was being saved. The file stays in the attachments folder but
+  // the link is not inserted into an unrelated document.
+  if (!pending || !pending.has(id)) return;
+  const pos = pending.get(id);
   view.dispatch({ effects: removePending.of(id) });
   insertAt(view, pos, markdownForAttachment(info));
 };

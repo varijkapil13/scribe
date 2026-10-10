@@ -59,7 +59,11 @@ import { foldingExtensions } from "./folding.js";
 import { completionExtensions, setCompletionTitles } from "./completion.js";
 import { outlineExtensions } from "./outline.js";
 import { tableExtensions } from "./tables.js";
-import { attachmentExtensions, setAttachmentView } from "./attachments.js";
+import {
+  attachmentExtensions,
+  setAttachmentView,
+  clearPendingAttachments,
+} from "./attachments.js";
 import { imageExtensions } from "./images.js";
 
 // ── Lazy KaTeX ───────────────────────────────────────────────────────────────
@@ -1043,6 +1047,8 @@ window.scribeSetDoc = function (text) {
   slashMenu.close();
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: next },
+    // In-flight pasted/dropped files belong to the previous document.
+    effects: clearPendingAttachments.of(null),
   });
 };
 
