@@ -199,19 +199,21 @@ struct RecurrenceRule: Equatable, Sendable {
             until = date
         }
 
-        // RFC 5545: COUNT and UNTIL are mutually exclusive.
-        if count != nil && until != nil { throw RecurrenceError.invalidRule(rrule) }
-
+        // Normalise combinations RFC 5545 disallows instead of throwing:
+        // rules stored before these parts were understood (when unknown parts
+        // were ignored) must keep parsing, or their tasks couldn't complete.
+        // - COUNT and UNTIL are mutually exclusive: UNTIL wins.
+        if until != nil { count = nil }
         switch frequency {
         case .daily, .weekly:
             // Month-scoped parts only make sense for MONTHLY / YEARLY.
-            if !byMonthDay.isEmpty || !bySetPos.isEmpty || byOrdinalWeekday != nil {
-                throw RecurrenceError.invalidRule(rrule)
-            }
+            byMonthDay = []
+            bySetPos = []
+            byOrdinalWeekday = nil
         case .monthly, .yearly:
-            // BYSETPOS selects from an expanded set — it needs one.
-            if !bySetPos.isEmpty && byDay.isEmpty && byMonthDay.isEmpty && byOrdinalWeekday == nil {
-                throw RecurrenceError.invalidRule(rrule)
+            // BYSETPOS selects from an expanded set — without one it's moot.
+            if byDay.isEmpty && byMonthDay.isEmpty && byOrdinalWeekday == nil {
+                bySetPos = []
             }
         }
 

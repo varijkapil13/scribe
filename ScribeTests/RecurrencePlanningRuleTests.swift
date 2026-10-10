@@ -31,8 +31,11 @@ final class RecurrencePlanningRuleTests: XCTestCase {
         XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=WEEKLY;COUNT=x"))
     }
 
-    func testCountAndUntilAreMutuallyExclusive() {
-        XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=DAILY;COUNT=3;UNTIL=20261231"))
+    func testCountAndUntilTogetherKeepUntil() throws {
+        // RFC 5545 forbids both; normalise (UNTIL wins) rather than reject.
+        let rule = try RecurrenceRule.parse("FREQ=DAILY;COUNT=3;UNTIL=20261231")
+        XCTAssertNil(rule.count)
+        XCTAssertEqual(rule.until, utc(2026, 12, 31, 23, 59, 59))
     }
 
     func testParseByMonthDayList() throws {
@@ -48,13 +51,16 @@ final class RecurrencePlanningRuleTests: XCTestCase {
         XCTAssertEqual(rule.byDay, [.mo, .tu, .we, .th, .fr])
     }
 
-    func testBySetPosWithoutSetThrows() {
-        XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=MONTHLY;BYSETPOS=-1"))
+    func testBySetPosWithoutSetIsDropped() throws {
+        XCTAssertEqual(try RecurrenceRule.parse("FREQ=MONTHLY;BYSETPOS=-1").rruleString, "FREQ=MONTHLY")
     }
 
-    func testMonthScopedPartsRejectedForWeekly() {
-        XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=WEEKLY;BYMONTHDAY=3"))
-        XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=WEEKLY;BYDAY=MO;BYSETPOS=1"))
+    func testMonthScopedPartsIgnoredForWeekly() throws {
+        // Legacy rules (written when these parts were ignored) still parse.
+        XCTAssertEqual(try RecurrenceRule.parse("FREQ=WEEKLY;BYMONTHDAY=3").rruleString, "FREQ=WEEKLY")
+        XCTAssertEqual(try RecurrenceRule.parse("FREQ=WEEKLY;BYDAY=MO;BYSETPOS=1").rruleString,
+                       "FREQ=WEEKLY;BYDAY=MO")
+        XCTAssertNil(try RecurrenceRule.parse("FREQ=WEEKLY;BYDAY=2MO").byOrdinalWeekday)
     }
 
     func testParseFromCompletionExtension() throws {
