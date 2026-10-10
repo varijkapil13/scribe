@@ -34,6 +34,9 @@ enum MenuBarVisibilityProbe {
     /// (Heuristic by design — it relies on the window's class name, so it
     /// answers `.unknown` rather than guessing when nothing matches.)
     static func current() -> MenuBarItemVisibility {
+        // An auto-hidden / full-screen menu bar hides every status item; that
+        // is not "macOS is hiding Scribe", so don't guess.
+        guard NSMenu.menuBarVisible() else { return .unknown }
         let statusWindows = NSApp.windows.filter {
             NSStringFromClass(type(of: $0)).contains("StatusBarWindow")
         }

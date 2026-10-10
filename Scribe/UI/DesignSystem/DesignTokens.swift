@@ -288,16 +288,12 @@ private struct GlassBackgroundModifier<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        // Floating HUD chrome is Liquid Glass (see GlassStyles.swift); the
-        // other roles keep the system bar/sidebar materials.
-        if role == .hud && !ScribeGlassPolicy.prefersOpaque(reduceTransparency: reduceTransparency,
-                                                            increasedContrast: contrast == .increased) {
-            content.scribeLiquidGlass(in: shape, tint: nil, interactive: false)
-        } else {
-            content.background(style, in: shape)
-        }
+        // Material only. Floating chrome (HUDs, bubbles, toasts, panels) uses
+        // Liquid Glass via `scribeFloatingGlass` (GlassStyles.swift); the
+        // remaining `.hud` callers are panels like the task detail inspector,
+        // which must not turn into a large glass slab.
+        content.background(style, in: shape)
     }
 
     /// Collapses glass to a solid fill when the user needs legibility

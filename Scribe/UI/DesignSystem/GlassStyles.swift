@@ -40,7 +40,10 @@ extension View {
     /// painted background of its own (the sidebar material shows through).
     func scribeEdgeBar<Bar: View>(_ edge: VerticalEdge,
                                   @ViewBuilder content: () -> Bar) -> some View {
-        safeAreaBar(edge: edge, spacing: 0, content: content)
+        // Build the bar eagerly so forwarding works whether or not the SDK
+        // declares `safeAreaBar`'s content closure as escaping.
+        let bar = content()
+        return safeAreaBar(edge: edge, spacing: 0) { bar }
     }
 }
 

@@ -1470,7 +1470,6 @@ struct TaskRowView: View {
                     set: { onSetDue($0) }
                 ))
                 .padding(DesignTokens.Spacing.xs)
-                .scribeGlass(.hud, in: Rectangle())
             }
         } else if affordancesVisible {
             Button { showDuePopover = true } label: {
@@ -1486,7 +1485,6 @@ struct TaskRowView: View {
                     set: { onSetDue($0) }
                 ))
                 .padding(DesignTokens.Spacing.xs)
-                .scribeGlass(.hud, in: Rectangle())
             }
         }
     }
