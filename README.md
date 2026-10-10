@@ -135,6 +135,15 @@ No accounts, no subscriptions, no API keys.
 
 ## Getting Started
 
+### Install with Homebrew
+
+```bash
+brew install --cask varijkapil13/tap/scribe
+```
+
+Updates arrive with `brew upgrade`. The cask installs the latest GitHub Release. Builds are not notarized yet, so the cask clears the download's quarantine flag for you. `brew uninstall --zap scribe` also removes app data, but never your notes vault.
+
+
 ### Build from Source
 
 1. **Clone the repository:**

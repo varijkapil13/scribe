@@ -96,6 +96,22 @@ Edit `Scribe/Resources/Info.plist` → `CFBundleShortVersionString` (marketing,
 e.g. `1.1`) and `CFBundleVersion` (build number, must increase for each
 notarized upload). Then re-run the release script.
 
+### Releasing (GitHub + Homebrew)
+
+Push a tag like `v0.1.0`. `.github/workflows/release-macos.yml` then:
+
+1. Builds the app on the `xcode-27` runner, ad-hoc signed, with the speaker-diarization models bundled.
+2. Publishes `Scribe-v0.1.0.dmg` and `Scribe-v0.1.0.zip` as a GitHub Release with a generated changelog.
+3. Renders `Casks/scribe.rb` with `packaging/homebrew/render-cask.sh` (version and zip sha256) and pushes it to [`varijkapil13/homebrew-tap`](https://github.com/varijkapil13/homebrew-tap). Users install with `brew install --cask varijkapil13/tap/scribe`.
+
+Step 3 needs a repository secret **`HOMEBREW_TAP_TOKEN`**: a fine-grained personal access token with *Contents: Read and write* on `varijkapil13/homebrew-tap` (saral uses the same kind of token). Without it the release still publishes and the cask step only logs a notice; you can then update the tap by hand:
+
+```bash
+packaging/homebrew/render-cask.sh 0.1.0 "$(shasum -a 256 Scribe-v0.1.0.zip | cut -d' ' -f1)" > ../homebrew-tap/Casks/scribe.rb
+```
+
+Once a Developer ID certificate and notarization are wired in, drop the cask's quarantine-clearing `postflight` block.
+
 ## Configuration reference
 
 - **Signing/team/hardened-runtime** live in `project.yml` (regenerated into the
