@@ -177,9 +177,15 @@ enum SpeakerDiarizationCoordinator {
                 let stored = try store.fetchDiarizableSegments(sessionId: sessionId)
                 guard !stored.isEmpty else { return }
 
-                let turns = try await Task.detached(priority: .utility) {
+                let fileTurns = try await Task.detached(priority: .utility) {
                     try await SpeakerDiarizationRunner.turns(forAudioAt: audioURL)
                 }.value
+                // Turns are timed from the start of system.m4a; segments are on
+                // the session clock, where that file starts at its saved offset.
+                let offset = SessionAudioTiming.load(from: directory)?.systemStartOffsetSeconds ?? 0
+                let turns = fileTurns.map {
+                    DiarizedSegmentRebuilder.Turn(speakerId: $0.speakerId, start: $0.start + offset, end: $0.end + offset)
+                }
 
                 let changes = DiarizedSegmentRebuilder.changes(stored: stored, pieces: pieces, turns: turns)
                 guard !changes.isEmpty else {

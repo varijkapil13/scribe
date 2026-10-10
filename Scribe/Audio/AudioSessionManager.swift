@@ -56,10 +56,14 @@ final class AudioSessionManager: ObservableObject {
 
     // MARK: - Callbacks
 
-    /// Called when a microphone audio buffer is captured.
+    /// Called on the main actor, in capture order, for each microphone
+    /// buffer (16 kHz mono Float32). Buffers are hopped off the audio render
+    /// thread through an `AsyncStream`, so consumers may touch main-actor
+    /// state directly.
     var onMicBuffer: ((AVAudioPCMBuffer) -> Void)?
 
-    /// Called when a system audio buffer is captured.
+    /// Called on the main actor, in capture order, for each system-audio
+    /// buffer (16 kHz mono Float32). See ``onMicBuffer``.
     var onSystemBuffer: ((AVAudioPCMBuffer) -> Void)?
 
     /// Called on the main actor when the system-audio capture stream stops
@@ -79,6 +83,32 @@ final class AudioSessionManager: ObservableObject {
     /// failed start.
     var audioRecorder: SessionAudioRecorder?
 
+    /// Lines the mic and system tracks up on one session clock (host time,
+    /// pauses removed): measures each track's start offset, asks the recorder
+    /// to pad gaps with silence, and maps transcript timestamps. Reset at
+    /// every ``startRecording(micDeviceID:captureSystemAudio:)``; kept after
+    /// stop so late transcription results can still be mapped.
+    private let aligner = AudioStreamAligner()
+
+    /// Feeds captured buffers from the capture threads to the main actor, in
+    /// order. Open from start to stop (pauses just stop the flow).
+    private var bufferContinuation: AsyncStream<CapturedAudioBuffer>.Continuation?
+    private var deliveryTask: Task<Void, Never>?
+
+    /// Tail of the chain that runs system-capture starts and stops strictly
+    /// one after another. Without it, pause's fire-and-forget stop could
+    /// still be running when resume's start found `isCapturing` true and
+    /// returned early — after which the stop tore the stream down and remote
+    /// audio silently died.
+    private var systemCaptureOperation: Task<Void, Never>?
+    /// Bumped whenever a start/stop is queued, so a caller can tell whether
+    /// another operation was queued after its own.
+    private var systemCaptureGeneration = 0
+
+    /// True while ``stopRecording()`` is tearing down, so nothing restarts
+    /// capture in the meantime.
+    private var isTearingDown = false
+
     /// UserDefaults key of the "Echo cancellation" setting (registered
     /// default: on).
     static let echoCancellationKey = "echoCancellation"
@@ -91,9 +121,10 @@ final class AudioSessionManager: ObservableObject {
         setting && captureSystemAudio
     }
 
-    /// Closes and drops the session recorder, if any. Idempotent.
+    /// Closes and drops the session recorder, if any, saving each track's
+    /// session-clock start offset next to the files. Idempotent.
     private func finishAudioRecorder() {
-        audioRecorder?.finish()
+        audioRecorder?.finish(timing: aligner.timing)
         audioRecorder = nil
     }
 
@@ -120,17 +151,25 @@ final class AudioSessionManager: ObservableObject {
     ///     Pass `nil` to use the value of ``shouldCaptureSystemAudio`` (defaults to `true`),
     ///     allowing callers to toggle behavior via the property before starting.
     func startRecording(micDeviceID: AudioDeviceID? = nil, captureSystemAudio: Bool? = nil) async throws {
-        guard !isRecording else { return }
+        guard !isRecording, !isTearingDown else { return }
 
         let captureSystemAudio = captureSystemAudio ?? shouldCaptureSystemAudio
         shouldCaptureSystemAudio = captureSystemAudio
 
-        // If starting fails part-way, close any audio files already opened.
+        // Fresh session clock, and an ordered hop to the main actor for the
+        // buffers about to flow.
+        aligner.reset()
+        startBufferDelivery()
+
+        // If starting fails part-way, close any audio files already opened
+        // and the buffer hand-off.
         var didStart = false
         defer {
-            if !didStart { finishAudioRecorder() }
+            if !didStart {
+                endBufferDelivery()
+                finishAudioRecorder()
+            }
         }
-        let recorder = audioRecorder
 
         // Echo cancellation for the mic (applied on the next startCapture).
         let echoSetting = UserDefaults.standard.object(forKey: Self.echoCancellationKey) as? Bool ?? true
@@ -143,29 +182,28 @@ final class AudioSessionManager: ObservableObject {
         // Screen Recording grant) instead of letting remote capture die
         // silently. `systemCapture` is a single long-lived instance, so wiring
         // this once per session start also covers mid-session toggle/resume.
-        systemCapture.onStreamError = { [weak self] error in
-            Task { @MainActor [weak self] in self?.onSystemError?(error) }
-        }
+        systemCapture.onStreamError = Self.makeStreamErrorForwarder(to: WeakAudioSessionManager(self))
 
         // Configure microphone capture.
         if let deviceID = micDeviceID {
             micCapture.selectDevice(id: deviceID)
         }
 
-        micCapture.onAudioBuffer = { [weak self] buffer, _ in
-            recorder?.appendMic(buffer)
-            self?.onMicBuffer?(buffer)
-        }
+        installMicForwarder()
 
         // Forward the raw per-buffer peak (render thread) into the lock-boxed
         // holder; the main-actor `levelTimer` drains + smooths it for the UI.
-        let levelBox = rawLevelBox
-        micCapture.onLevel = { peak in levelBox.recordMic(peak) }
+        micCapture.onLevel = Self.makeMicLevelForwarder(rawLevelBox)
 
         // Fresh session: forget the device captured last time so automatic
         // detection considers all in-use mics afresh (otherwise re-recording
         // with the same call mic would exclude it and fall back to default).
         micCapture.resetCaptureBaseline()
+
+        // The session clock starts now; each track's first buffer measures
+        // how long its capture took to come up.
+        let runStart = Date()
+        aligner.beginRun(atHostSeconds: Self.hostSecondsNow())
 
         do {
             try micCapture.startCapture()
@@ -183,20 +221,16 @@ final class AudioSessionManager: ObservableObject {
         if captureSystemAudio {
             let hasPermission = await systemCapture.checkPermission()
             guard hasPermission else {
-                micCapture.stopCapture()
+                abortMicCapture()
                 throw AudioSessionError.systemAudioPermissionDenied
             }
 
-            systemCapture.onAudioBuffer = { [weak self, levelBox] buffer, _ in
-                levelBox.recordSystem(Self.peak(of: buffer))
-                recorder?.appendSystem(buffer)
-                self?.onSystemBuffer?(buffer)
-            }
+            installSystemForwarder()
 
             do {
-                try await systemCapture.startCapture()
+                try await enqueueSystemCaptureStart().value
             } catch {
-                micCapture.stopCapture()
+                abortMicCapture()
                 throw AudioSessionError.systemCaptureFailure(underlying: error)
             }
         }
@@ -204,7 +238,7 @@ final class AudioSessionManager: ObservableObject {
         didStart = true
 
         currentSessionId = UUID().uuidString
-        recordingStartTime = Date()
+        recordingStartTime = runStart
         accumulatedDuration = 0
         isRecording = true
         isPaused = false
@@ -212,16 +246,32 @@ final class AudioSessionManager: ObservableObject {
         startLevelTimer()
     }
 
+    /// Undoes the mic side of a failed start.
+    private func abortMicCapture() {
+        micCapture.stopObservingDefaultInputDevice()
+        micCapture.stopObservingActiveInputDevice()
+        micCapture.stopCapture()
+    }
+
     /// Stops recording completely and tears down all capture resources.
     func stopRecording() async {
-        guard isRecording else { return }
+        guard isRecording, !isTearingDown else { return }
+        isTearingDown = true
+        defer { isTearingDown = false }
 
         micCapture.stopObservingDefaultInputDevice()
         micCapture.stopObservingActiveInputDevice()
         micCapture.stopCapture()
-        await systemCapture.stopCapture()
-        // Both captures are stopped, so no more buffers arrive: flush and
-        // close the retained-audio files.
+        // Waits for any start/stop still in flight (e.g. a pause's stop).
+        await enqueueSystemCaptureStop().value
+        if !isPaused {
+            aligner.endRun(atHostSeconds: Self.hostSecondsNow())
+        }
+        // Both captures are stopped, so no more buffers arrive. Hand every
+        // buffer still queued to the consumers before they are torn down
+        // (AppState stops transcription right after this returns), then
+        // flush and close the retained-audio files.
+        await endBufferDelivery()?.value
         finishAudioRecorder()
 
         stopDurationTimer()
@@ -236,14 +286,15 @@ final class AudioSessionManager: ObservableObject {
 
     /// Pauses recording without ending the session. Capture taps are removed but the session stays alive.
     func pauseRecording() {
-        guard isRecording, !isPaused else { return }
+        guard isRecording, !isPaused, !isTearingDown else { return }
 
         micCapture.stopCapture()
-        // System capture is stopped synchronously from the caller's perspective;
-        // we fire-and-forget the async stop since pause should feel instant.
-        if shouldCaptureSystemAudio {
-            Task { await systemCapture.stopCapture() }
-        }
+        // Pause should feel instant, so the async system-capture stop isn't
+        // awaited here — but it is queued, so a quick resume's start waits
+        // for it instead of racing it. (A no-op when system audio is off.)
+        enqueueSystemCaptureStop()
+        // Paused time isn't part of the session clock.
+        aligner.endRun(atHostSeconds: Self.hostSecondsNow())
 
         // Accumulate elapsed time so far.
         if let start = recordingStartTime {
@@ -342,6 +393,9 @@ final class AudioSessionManager: ObservableObject {
     private func restartMicCapture(reason: String) {
         Log.audio.info("Restarting mic capture — \(reason, privacy: .public).")
         micCapture.stopCapture()
+        // The restart leaves a short hole in the mic track; its next buffer
+        // measures it so the recording is padded and stays aligned.
+        aligner.trackWillStart(.mic)
         do {
             try micCapture.startCapture()
         } catch {
@@ -354,31 +408,30 @@ final class AudioSessionManager: ObservableObject {
     /// "Capture system audio" toggle in Settings or the live view.
     func setSystemAudioCaptureEnabled(_ enabled: Bool) async {
         shouldCaptureSystemAudio = enabled
-        guard isRecording, !isPaused else { return }
+        guard isRecording, !isPaused, !isTearingDown else { return }
 
         if enabled {
-            if !systemCapture.isCapturing {
-                let levelBox = rawLevelBox
-                let recorder = audioRecorder
-                systemCapture.onAudioBuffer = { [weak self] buffer, _ in
-                    levelBox.recordSystem(Self.peak(of: buffer))
-                    recorder?.appendSystem(buffer)
-                    self?.onSystemBuffer?(buffer)
-                }
-                do {
-                    try await systemCapture.startCapture()
-                } catch {
-                    Log.audio.error("Failed to start system audio mid-session: \(error.localizedDescription, privacy: .private)")
-                    // Don't let the toggle silently lie: the switch flipped on
-                    // but capture never started. Surface it via onSystemError so
-                    // AppState raises the "not capturing remote audio" banner.
-                    onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
-                }
+            installSystemForwarder()
+            let start = enqueueSystemCaptureStart()
+            let generation = systemCaptureGeneration
+            do {
+                try await start.value
+            } catch {
+                Log.audio.error("Failed to start system audio mid-session: \(error.localizedDescription, privacy: .private)")
+                // Don't let the toggle silently lie: the switch flipped on
+                // but capture never started. Surface it via onSystemError so
+                // AppState raises the "not capturing remote audio" banner.
+                onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
+            }
+            // The session may have been paused/stopped, or the toggle flipped
+            // back, while the stream was starting. If nothing queued its own
+            // start/stop since, settle the stream to match.
+            if generation == systemCaptureGeneration,
+               !(isRecording && !isPaused && !isTearingDown && shouldCaptureSystemAudio) {
+                enqueueSystemCaptureStop()
             }
         } else {
-            if systemCapture.isCapturing {
-                await systemCapture.stopCapture()
-            }
+            await enqueueSystemCaptureStop().value
             // No more remote audio — let the meter decay to silence.
             smoothedSystem = 0
             systemLevel = 0
@@ -387,11 +440,17 @@ final class AudioSessionManager: ObservableObject {
 
     /// Resumes a paused recording.
     func resumeRecording() async throws {
-        guard isRecording, isPaused else { return }
+        guard isRecording, isPaused, !isTearingDown else { return }
+
+        // The session clock runs again from now; both tracks' first buffers
+        // measure their restart delay, which the recorder pads with silence.
+        let runStart = Date()
+        aligner.beginRun(atHostSeconds: Self.hostSecondsNow())
 
         do {
             try micCapture.startCapture()
         } catch {
+            aligner.endRun(atHostSeconds: Self.hostSecondsNow())
             throw AudioSessionError.micCaptureFailure(underlying: error)
         }
 
@@ -401,18 +460,214 @@ final class AudioSessionManager: ObservableObject {
         // session back down — otherwise the user is stuck unable to resume at
         // all. Mirrors the mic-only fallback elsewhere in the pipeline.
         if shouldCaptureSystemAudio {
+            // Re-installed so a stream first enabled while paused feeds this
+            // session's recorder and hand-off rather than stale ones.
+            installSystemForwarder()
             do {
-                try await systemCapture.startCapture()
+                // Queued behind pause's stop, so it can't be swallowed by it.
+                try await enqueueSystemCaptureStart().value
             } catch {
                 Log.audio.error("Failed to restart system audio on resume: \(error.localizedDescription, privacy: .private)")
                 onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
             }
         }
 
-        recordingStartTime = Date()
+        recordingStartTime = runStart
         isPaused = false
         startDurationTimer()
         startLevelTimer()
+    }
+
+    // MARK: - Session clock
+
+    /// Maps a transcription segment's timestamps from its track's own audio
+    /// (what that pipeline was fed) onto the shared session clock, so mic and
+    /// remote segments — and the retained audio files — line up even though
+    /// system audio starts later than the mic and again late after a resume.
+    func alignedToSessionClock(_ segment: TranscriptionSegment) -> TranscriptionSegment {
+        let track: AudioSessionAlignment.Track = segment.speaker.lowercased() == "remote" ? .system : .mic
+        let start = aligner.sessionMs(forTrackMs: segment.startMs, track: track)
+        let end = max(start, aligner.sessionMs(forTrackMs: segment.endMs, track: track))
+        return TranscriptionSegment(
+            id: segment.id,
+            sessionOffsetMs: aligner.sessionMs(forTrackMs: segment.sessionOffsetMs, track: track),
+            startMs: start,
+            endMs: end,
+            speaker: segment.speaker,
+            text: segment.text
+        )
+    }
+
+    /// Current host-clock time in seconds (the clock capture timestamps use).
+    nonisolated static func hostSecondsNow() -> Double {
+        AVAudioTime.seconds(forHostTime: mach_absolute_time())
+    }
+
+    /// Host-clock seconds of a captured buffer's first sample: the capture
+    /// timestamp when it carries a host time, otherwise "now minus the
+    /// buffer's duration".
+    nonisolated static func bufferStartHostSeconds(_ buffer: AVAudioPCMBuffer, time: AVAudioTime) -> Double {
+        if time.isHostTimeValid {
+            return AVAudioTime.seconds(forHostTime: time.hostTime)
+        }
+        return hostSecondsNow() - Double(buffer.frameLength) / max(buffer.format.sampleRate, 1)
+    }
+
+    /// `buffer`'s length in frames at the aligner's sample rate.
+    nonisolated static func alignerFrames(of buffer: AVAudioPCMBuffer, alignerRate: Double) -> Int64 {
+        let rate = buffer.format.sampleRate
+        guard rate > 0 else { return Int64(buffer.frameLength) }
+        return Int64((Double(buffer.frameLength) * alignerRate / rate).rounded())
+    }
+
+    // MARK: - Buffer hand-off
+
+    /// Opens the capture → main-actor hand-off. Buffers are delivered to
+    /// ``onMicBuffer`` / ``onSystemBuffer`` in the order they were captured.
+    private func startBufferDelivery() {
+        endBufferDelivery()
+        let (stream, continuation) = AsyncStream<CapturedAudioBuffer>.makeStream()
+        bufferContinuation = continuation
+        deliveryTask = Task { [weak self] in
+            for await captured in stream {
+                guard let self else { return }
+                self.deliver(captured)
+            }
+        }
+    }
+
+    /// Closes the hand-off. The returned task finishes once every buffer
+    /// already queued has been delivered.
+    @discardableResult
+    private func endBufferDelivery() -> Task<Void, Never>? {
+        bufferContinuation?.finish()
+        bufferContinuation = nil
+        let task = deliveryTask
+        deliveryTask = nil
+        return task
+    }
+
+    private func deliver(_ captured: CapturedAudioBuffer) {
+        switch captured.source {
+        case .mic: onMicBuffer?(captured.buffer)
+        case .system: onSystemBuffer?(captured.buffer)
+        }
+    }
+
+    /// Points the mic tap at this session's recorder, aligner and hand-off.
+    /// The forwarder is a stored property on `micCapture`, so it survives
+    /// mid-session restarts.
+    private func installMicForwarder() {
+        guard let continuation = bufferContinuation else { return }
+        micCapture.onAudioBuffer = Self.makeTrackForwarder(
+            track: .mic,
+            recorder: audioRecorder,
+            aligner: aligner,
+            levelBox: nil,
+            continuation: continuation
+        )
+    }
+
+    /// Points system capture at this session's recorder, aligner, level
+    /// meter and hand-off.
+    private func installSystemForwarder() {
+        guard let continuation = bufferContinuation else { return }
+        systemCapture.onAudioBuffer = Self.makeTrackForwarder(
+            track: .system,
+            recorder: audioRecorder,
+            aligner: aligner,
+            levelBox: rawLevelBox,
+            continuation: continuation
+        )
+    }
+
+    /// Builds the per-buffer callback run on a capture thread (the mic's
+    /// render thread or ScreenCaptureKit's sample queue). Built outside the
+    /// main actor so the closure isn't main-actor isolated. It places the
+    /// buffer on the session clock, writes it (plus any gap-filling silence)
+    /// to the recorder — whose own queue does the disk work, keeping it off
+    /// both this thread and the main actor — and yields it to the main actor.
+    nonisolated private static func makeTrackForwarder(
+        track: AudioSessionAlignment.Track,
+        recorder: SessionAudioRecorder?,
+        aligner: AudioStreamAligner,
+        levelBox: RawLevelBox?,
+        continuation: AsyncStream<CapturedAudioBuffer>.Continuation
+    ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        let isMic = track == .mic
+        let source: CapturedAudioBuffer.Source = isMic ? .mic : .system
+        return { buffer, time in
+            guard buffer.frameLength > 0 else { return }
+            levelBox?.recordSystem(AudioSessionManager.peak(of: buffer))
+            let padding = aligner.place(
+                track,
+                frameCount: AudioSessionManager.alignerFrames(of: buffer, alignerRate: aligner.sampleRate),
+                startHostSeconds: AudioSessionManager.bufferStartHostSeconds(buffer, time: time)
+            )
+            if let recorder {
+                if padding > 0 {
+                    recorder.appendSilence(frames: padding, toMic: isMic)
+                }
+                if isMic {
+                    recorder.appendMic(buffer)
+                } else {
+                    recorder.appendSystem(buffer)
+                }
+            }
+            continuation.yield(CapturedAudioBuffer(buffer: buffer, source: source))
+        }
+    }
+
+    /// Mic level callback (render thread) → lock-boxed raw peak.
+    nonisolated private static func makeMicLevelForwarder(_ levelBox: RawLevelBox) -> (Float) -> Void {
+        { peak in levelBox.recordMic(peak) }
+    }
+
+    /// System-stream error callback (background queue) → ``onSystemError``
+    /// on the main actor.
+    nonisolated private static func makeStreamErrorForwarder(
+        to target: WeakAudioSessionManager
+    ) -> (Error) -> Void {
+        { error in
+            Task { @MainActor in target.manager?.onSystemError?(error) }
+        }
+    }
+
+    // MARK: - Serialized system capture
+
+    /// Queues a system-capture start behind any start/stop still running.
+    /// The returned task finishes when this start has finished (or thrown).
+    private func enqueueSystemCaptureStart() -> Task<Void, Error> {
+        let previous = systemCaptureOperation
+        let capture = systemCapture
+        let aligner = self.aligner
+        let start = Task { @MainActor in
+            await previous?.value
+            if !capture.isCapturing {
+                // Its first buffer measures the start-up delay precisely.
+                aligner.trackWillStart(.system)
+            }
+            try await capture.startCapture()
+        }
+        systemCaptureOperation = Task { @MainActor in _ = await start.result }
+        systemCaptureGeneration += 1
+        return start
+    }
+
+    /// Queues a system-capture stop behind any start/stop still running. The
+    /// returned task finishes when the stream is stopped. A no-op stop when
+    /// nothing is capturing.
+    @discardableResult
+    private func enqueueSystemCaptureStop() -> Task<Void, Never> {
+        let previous = systemCaptureOperation
+        let capture = systemCapture
+        let stop = Task { @MainActor in
+            await previous?.value
+            await capture.stopCapture()
+        }
+        systemCaptureOperation = stop
+        systemCaptureGeneration += 1
+        return stop
     }
 
     // MARK: - Device Enumeration
@@ -544,5 +799,30 @@ private final class RawLevelBox: @unchecked Sendable {
         micPeak = 0
         systemPeak = 0
         lock.unlock()
+    }
+}
+
+// MARK: - Capture hand-off types
+
+/// A captured buffer on its way from a capture thread to the main actor.
+/// `@unchecked Sendable`: capture allocates a fresh buffer per callback that
+/// is only ever read afterwards, so handing it across without copying is safe.
+struct CapturedAudioBuffer: @unchecked Sendable {
+    enum Source: Sendable {
+        case mic
+        case system
+    }
+
+    let buffer: AVAudioPCMBuffer
+    let source: Source
+}
+
+/// Weak reference to the manager that can be captured by callbacks running
+/// off the main actor (the manager itself is only touched on the main actor).
+final class WeakAudioSessionManager: @unchecked Sendable {
+    weak var manager: AudioSessionManager?
+
+    init(_ manager: AudioSessionManager) {
+        self.manager = manager
     }
 }

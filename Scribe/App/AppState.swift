@@ -234,6 +234,11 @@ final class AppState: ObservableObject {
     /// actual audio content — silent buffers from the idle stream don't
     /// clobber the label on the active stream, so mic utterances get tagged
     /// "you" and remote utterances get tagged "remote" most of the time.
+    ///
+    /// `AudioSessionManager` hops every buffer from the capture threads to the
+    /// main actor (in capture order) before calling these, so they may touch
+    /// main-actor state and the transcription pipelines directly; the retained
+    /// audio files are written off the main actor before the hop.
     private func wireAudioPipeline() {
         audioManager.onMicBuffer = { [weak self] buffer in
             guard let self else { return }
@@ -277,7 +282,11 @@ final class AppState: ObservableObject {
     /// tiny fragments.
     private func wireTranscriptionResults() {
         speechEngine.onSegmentTranscribed = { [weak self] segment in
-            self?.ingestTranscribedSegment(segment)
+            guard let self else { return }
+            // Each pipeline times segments by the audio it was fed; system
+            // audio starts later than the mic (and late again on resume), so
+            // put both on the shared session clock the audio files use.
+            self.ingestTranscribedSegment(self.audioManager.alignedToSessionClock(segment))
         }
         speechEngine.onSessionError = { [weak self] error in
             self?.report(error)
