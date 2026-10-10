@@ -58,6 +58,8 @@ enum MainSelectionCodec {
         case .upcoming:         return "upcoming"
         case .all:              return "all"
         case .completed:        return "completed"
+        case .someday:          return "someday"
+        case .area(let id):     return "area/\(id)"
         case .project(let id):  return "project/\(id)"
         case .tag(let tag):     return "tag/\(tag)"
         case .dueOn(let date):  return "dueOn/\(Int(date.timeIntervalSince1970.rounded()))"
@@ -72,6 +74,8 @@ enum MainSelectionCodec {
         case "upcoming":  return rest == nil ? .upcoming : nil
         case "all":       return rest == nil ? .all : nil
         case "completed": return rest == nil ? .completed : nil
+        case "someday":   return rest == nil ? .someday : nil
+        case "area":      return nonEmpty(rest).map { .area($0) }
         case "project":   return nonEmpty(rest).map { .project($0) }
         case "tag":       return nonEmpty(rest).map { .tag($0) }
         case "dueOn":

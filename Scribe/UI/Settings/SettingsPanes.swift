@@ -12,6 +12,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case storage
     case dictation
     case calendar
+    case reminders
     case vocabulary
     case hooks
     case shortcuts
@@ -19,6 +20,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case templates
     case mcp
     case about
+    case privacy
+    case backup
 
     var id: String { rawValue }
 
@@ -29,6 +32,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .storage:      return "Storage & Sync"
         case .dictation:    return "Dictation"
         case .calendar:     return "Calendar"
+        case .reminders:    return "Reminders"
         case .vocabulary:   return "Vocabulary"
         case .hooks:        return "Hooks"
         case .shortcuts:    return "Shortcuts"
@@ -36,6 +40,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .templates:    return "Templates"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
+        case .privacy:      return "Privacy"
+        case .backup:       return "Backup"
         }
     }
 
@@ -46,6 +52,7 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .storage:      return "internaldrive"
         case .dictation:    return "mic.badge.plus"
         case .calendar:     return "calendar"
+        case .reminders:    return "checklist"
         case .vocabulary:   return "character.book.closed"
         case .hooks:        return "terminal"
         case .shortcuts:    return "keyboard"
@@ -53,6 +60,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .templates:    return "doc.text.magnifyingglass"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
+        case .privacy:      return "hand.raised"
+        case .backup:       return "externaldrive.badge.timemachine"
         }
     }
 }
@@ -96,6 +105,7 @@ struct SettingsPaneView: View {
         case .storage:      StorageSettingsPane()
         case .dictation:    DictationSettingsPane()
         case .calendar:     CalendarSettingsPane()
+        case .reminders:    RemindersSettingsPane()
         case .vocabulary:   VocabularySettingsPane()
         case .hooks:        HooksSettingsPane()
         case .shortcuts:    ShortcutsSettingsPane()
@@ -103,6 +113,8 @@ struct SettingsPaneView: View {
         case .templates:    TemplatesSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
+        case .privacy:      PrivacySettingsPane()
+        case .backup:       BackupSettingsPane()
         }
     }
 }
@@ -140,11 +152,11 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
     /// Vocabulary.
     var panes: [SettingsPane] {
         switch self {
-        case .general:      return [.general]
+        case .general:      return [.general, .privacy]
         case .recording:    return [.calendar]
         case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
         case .dictation:    return [.dictation]
-        case .storageSync:  return [.storage]
+        case .storageSync:  return [.storage, .reminders, .backup]
         case .shortcuts:    return [.shortcuts, .links]
         case .mcp:          return [.mcp]
         case .about:        return [.about]
@@ -814,7 +826,8 @@ private struct ShortcutsSettingsPane: View {
             Section("Global Shortcuts") {
                 KeyboardShortcuts.Recorder("Toggle Recording:", name: .toggleRecording)
                 KeyboardShortcuts.Recorder("Dictate:", name: .dictation)
-                Text("Press these shortcuts from any app to start or stop recording, or to dictate into the focused app, without opening Scribe.")
+                KeyboardShortcuts.Recorder("Quick Capture:", name: .quickCapture)
+                Text("Press these shortcuts from any app to start or stop recording, dictate into the focused app, or jot down a note or task, without opening Scribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

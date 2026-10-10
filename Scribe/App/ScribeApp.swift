@@ -66,6 +66,14 @@ struct ScribeApp: App {
                 .keyboardShortcut("n", modifiers: .command)
             Button("New Daily Note") { post(.scribeNewDailyNote) }
                 .keyboardShortcut("n", modifiers: [.command, .control])
+            // Shortcutless here: the global ⌃⌥Space (KeyboardShortcuts) owns it.
+            Button("Quick Capture…") { QuickCaptureController.shared.show() }
+        }
+
+        // File → backup / restore (ScribeBackupController runs the panels).
+        CommandGroup(after: .importExport) {
+            Button("Back Up Scribe…") { ScribeBackupController.shared.backUpInteractively() }
+            Button("Restore from Backup…") { ScribeBackupController.shared.restoreInteractively() }
         }
 
         // Recording transport. Start/Stop stays shortcutless so it doesn't

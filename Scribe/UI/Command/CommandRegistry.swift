@@ -57,7 +57,11 @@ enum CommandRegistry {
                     }
                     _ = try? TaskStore.shared.createTask(
                         title: parsed.title, projectId: projectId,
-                        priority: parsed.priority, dueAt: parsed.dueAt, tags: parsed.tags)
+                        priority: parsed.priority, dueAt: parsed.dueAt,
+                        recurrenceRule: parsed.recurrenceRule, tags: parsed.tags,
+                        startAt: parsed.startAt,
+                        scheduleBucket: parsed.scheduleBucket ?? .anytime,
+                        estimatedMinutes: parsed.estimatedMinutes)
                 }))
             items.append(CommandItem(
                 id: "new.note.q", title: "New Note: \(q)", systemImage: "square.and.pencil",

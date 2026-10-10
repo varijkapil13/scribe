@@ -38,6 +38,19 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
     var cancelledAt: Date?
     /// Floats the task to the top of its bucket.
     var isPinned: Bool
+    /// Defer / start date (v20): the task stays out of Today until this day
+    /// arrives. Nil = available now.
+    var startAt: Date?
+    /// Things-style "when" bucket (v20): explicitly Today, This Evening, or
+    /// Someday. `.anytime` leaves the task purely date-driven.
+    var scheduleBucket: TaskScheduleBucket
+    /// Estimated duration in minutes (v20). Nil = no estimate.
+    var estimatedMinutes: Int?
+    /// Area the task belongs to directly when it has no project (v20). Tasks
+    /// inside a project inherit the project's area instead.
+    var areaId: String?
+    /// Heading inside the task's project the task is filed under (v20).
+    var headingId: String?
 
     init(
         id: String = UUID().uuidString,
@@ -55,7 +68,12 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
         sourceSessionId: String? = nil,
         sourceActionItemId: String? = nil,
         cancelledAt: Date? = nil,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        startAt: Date? = nil,
+        scheduleBucket: TaskScheduleBucket = .anytime,
+        estimatedMinutes: Int? = nil,
+        areaId: String? = nil,
+        headingId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -73,6 +91,11 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
         self.sourceActionItemId = sourceActionItemId
         self.cancelledAt = cancelledAt
         self.isPinned = isPinned
+        self.startAt = startAt
+        self.scheduleBucket = scheduleBucket
+        self.estimatedMinutes = estimatedMinutes
+        self.areaId = areaId
+        self.headingId = headingId
     }
 
     var isCompleted: Bool { completedAt != nil }
@@ -81,6 +104,82 @@ struct TodoTask: Codable, Identifiable, Equatable, Hashable {
 
 extension TodoTask: FetchableRecord, PersistableRecord {
     static let databaseTableName = "tasks"
+}
+
+// MARK: - Planning (v20)
+
+/// Things-style "when" bucket for a task. Stored as its raw string in
+/// `tasks.scheduleBucket` (NOT NULL, default `none`).
+enum TaskScheduleBucket: String, Codable, CaseIterable, Hashable, Sendable {
+    /// Date-driven only (the default). Stored as "none"; the case is named
+    /// `anytime` so it never collides with `Optional.none`.
+    case anytime = "none"
+    /// Explicitly planned for today, whatever its due date.
+    case today
+    /// Planned for this evening: shown in Today's "This Evening" section.
+    case evening
+    /// Parked for later: out of Inbox / Today / Upcoming, listed under Someday.
+    case someday
+
+    var title: String {
+        switch self {
+        case .anytime: return "Anytime"
+        case .today:   return "Today"
+        case .evening: return "This Evening"
+        case .someday: return "Someday"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .anytime: return "circle.dashed"
+        case .today:   return "star"
+        case .evening: return "moon"
+        case .someday: return "archivebox"
+        }
+    }
+}
+
+/// An Area groups projects (and loose tasks), like Things' areas of
+/// responsibility. Persisted in the `areas` table (v20).
+struct TaskArea: Codable, Identifiable, Equatable, Hashable {
+    var id: String
+    var name: String
+    var sortOrder: Int
+    /// SF Symbol name; nil falls back to a generic area glyph.
+    var symbol: String?
+
+    init(id: String = UUID().uuidString, name: String, sortOrder: Int = 0, symbol: String? = nil) {
+        self.id = id
+        self.name = name
+        self.sortOrder = sortOrder
+        self.symbol = symbol
+    }
+}
+
+extension TaskArea: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "areas"
+}
+
+/// A heading inside a project's task list (Things-style). Persisted in the
+/// `project_headings` table (v20) with an `ON DELETE CASCADE` FK to its
+/// project; tasks reference it via `tasks.headingId` (`ON DELETE SET NULL`).
+struct ProjectHeading: Codable, Identifiable, Equatable, Hashable {
+    var id: String
+    var projectId: String
+    var title: String
+    var sortOrder: Int
+
+    init(id: String = UUID().uuidString, projectId: String, title: String, sortOrder: Int = 0) {
+        self.id = id
+        self.projectId = projectId
+        self.title = title
+        self.sortOrder = sortOrder
+    }
+}
+
+extension ProjectHeading: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "project_headings"
 }
 
 // MARK: - Junction / history rows

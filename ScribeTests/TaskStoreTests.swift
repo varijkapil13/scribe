@@ -277,7 +277,7 @@ final class TaskStoreTests: XCTestCase {
     func testCreateTaskWithMalformedRuleThrows() throws {
         let due = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertThrowsError(
-            try store.createTask(title: "Bad rule", dueAt: due, recurrenceRule: "FREQ=YEARLY")
+            try store.createTask(title: "Bad rule", dueAt: due, recurrenceRule: "FREQ=HOURLY")
         ) { error in
             guard case RecurrenceError.invalidRule = error else {
                 XCTFail("Expected RecurrenceError.invalidRule, got \(error)")

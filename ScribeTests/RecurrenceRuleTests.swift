@@ -41,7 +41,7 @@ final class RecurrenceRuleTests: XCTestCase {
     }
 
     func testParseUnknownKeysIgnored() throws {
-        let rule = try RecurrenceRule.parse("FREQ=DAILY;UNTIL=20261231T000000Z")
+        let rule = try RecurrenceRule.parse("FREQ=DAILY;WKST=MO")
         XCTAssertEqual(rule.frequency, .daily)
     }
 
@@ -55,7 +55,7 @@ final class RecurrenceRuleTests: XCTestCase {
     }
 
     func testParseInvalidFreqThrows() {
-        XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=YEARLY")) { error in
+        XCTAssertThrowsError(try RecurrenceRule.parse("FREQ=HOURLY")) { error in
             guard case RecurrenceError.invalidRule = error else {
                 XCTFail("Expected RecurrenceError.invalidRule")
                 return

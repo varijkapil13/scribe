@@ -15,22 +15,37 @@ final class TaskListViewModel: ObservableObject {
     enum Bucket: Hashable {
         case overdue
         case today
+        /// Today's "This Evening" section (Things-style evening plan).
+        case evening
         case tomorrow
         case thisWeek
         case later
         case noDate
+        /// Undated tasks parked in Someday.
+        case someday
+        /// A project heading section (project lists with headings only).
+        case heading(ProjectHeading)
         case completed
 
         var title: String {
             switch self {
             case .overdue: return "Overdue"
             case .today: return "Today"
+            case .evening: return "This Evening"
             case .tomorrow: return "Tomorrow"
             case .thisWeek: return "This week"
             case .later: return "Later"
             case .noDate: return "No date"
+            case .someday: return "Someday"
+            case .heading(let heading): return heading.title.isEmpty ? "Untitled heading" : heading.title
             case .completed: return "Completed"
             }
+        }
+
+        /// The heading this section represents, if any.
+        var heading: ProjectHeading? {
+            if case .heading(let heading) = self { return heading }
+            return nil
         }
     }
 
@@ -94,6 +109,9 @@ final class TaskListViewModel: ObservableObject {
     private let store: TaskStore
     private let reminderScheduler: TaskReminderScheduling
     private var cancellable: AnyCancellable?
+    private var headingsCancellable: AnyCancellable?
+    /// Headings of the project being shown (`.project` filter only), in order.
+    @Published private(set) var headings: [ProjectHeading] = []
     private(set) var filter: TaskStore.Filter
     private var recurringClearTasks: [String: Task<Void, Never>] = [:]
     private var settleClearTasks: [String: Task<Void, Never>] = [:]
@@ -119,6 +137,20 @@ final class TaskListViewModel: ObservableObject {
 
     func start() {
         loadProjects()
+        if case .project(let projectId) = filter {
+            headingsCancellable = store.observeHeadings(projectId: projectId)
+                .sink(
+                    receiveCompletion: { _ in },
+                    receiveValue: { [weak self] headings in
+                        guard let self else { return }
+                        self.headings = headings
+                        self.regroup()
+                    }
+                )
+        } else {
+            headingsCancellable = nil
+            headings = []
+        }
         cancellable = store.observeTasks(filter: filter)
             .sink(
                 receiveCompletion: { _ in },
@@ -150,7 +182,7 @@ final class TaskListViewModel: ObservableObject {
                 effective.append(snapshot)
             }
         }
-        let bucketed = Self.bucket(tasks: effective, calendar: .current, now: Date())
+        let bucketed = Self.bucket(tasks: effective, headings: headings, calendar: .current, now: Date())
         groups = bucketed.map { (bucket: $0.bucket, tasks: sorted($0.tasks)) }
         reloadSubtaskProgress()
     }
@@ -204,6 +236,8 @@ final class TaskListViewModel: ObservableObject {
     func stop() {
         cancellable?.cancel()
         cancellable = nil
+        headingsCancellable?.cancel()
+        headingsCancellable = nil
     }
 
     func switchFilter(to newFilter: TaskStore.Filter) {
@@ -249,14 +283,38 @@ final class TaskListViewModel: ObservableObject {
             }
         }
 
+        // Lists that imply a container file the new task there unless the
+        // user typed an explicit +Project.
+        var areaId: String? = nil
+        if projectId == nil, parsed.projectName == nil {
+            switch filter {
+            case .project(let id): projectId = id
+            case .area(let id):    areaId = id
+            default:               break
+            }
+        }
+        let isSomedayList = filter == TaskStore.Filter.someday
+        let bucket: TaskScheduleBucket = parsed.scheduleBucket ?? (isSomedayList ? .someday : .anytime)
+
         do {
             _ = try store.createTask(
                 title: parsed.title,
                 notes: notes,
                 projectId: projectId,
                 priority: parsed.priority,
-                dueAt: parsed.dueAt ?? quickAddDueDate ?? defaultDueDate(),
-                tags: parsed.tags
+                dueAt: parsed.dueAt ?? quickAddDueDate ?? Self.defaultQuickAddDueDate(
+                    filter: filter,
+                    bucket: bucket,
+                    startAt: parsed.startAt,
+                    calendar: .current,
+                    now: Date()
+                ),
+                recurrenceRule: parsed.recurrenceRule,
+                tags: parsed.tags,
+                startAt: parsed.startAt,
+                scheduleBucket: bucket,
+                estimatedMinutes: parsed.estimatedMinutes,
+                areaId: areaId
             )
             quickAddText = ""
             quickAddDueDate = nil
@@ -269,11 +327,27 @@ final class TaskListViewModel: ObservableObject {
     /// type a date phrase and didn't pick one from the calendar popover.
     /// On the `.dueOn(date)` filter we honour the viewed date so tasks
     /// added from "yesterday" or "tomorrow" land in that same rail.
-    private func defaultDueDate() -> Date {
-        if case .dueOn(let date) = filter {
-            return Calendar.current.startOfDay(for: date)
+    ///
+    /// Returns nil (no due date) when the task is planned another way — a
+    /// Someday / This-Evening bucket or a start date — or when added from a
+    /// container list (project / area / Someday), so it isn't silently made
+    /// due today.
+    nonisolated static func defaultQuickAddDueDate(
+        filter: TaskStore.Filter,
+        bucket: TaskScheduleBucket,
+        startAt: Date?,
+        calendar: Calendar,
+        now: Date
+    ) -> Date? {
+        if bucket == .someday || bucket == .evening || startAt != nil { return nil }
+        switch filter {
+        case .dueOn(let date):
+            return calendar.startOfDay(for: date)
+        case .project, .area, .someday:
+            return nil
+        default:
+            return calendar.startOfDay(for: now)
         }
-        return Calendar.current.startOfDay(for: Date())
     }
 
     // MARK: - Row actions
@@ -618,6 +692,7 @@ final class TaskListViewModel: ObservableObject {
     func loadProjects() {
         do {
             availableProjects = try store.fetchProjects()
+            availableAreas = try store.fetchAreas()
         } catch {
             Log.ui.error("TaskListViewModel.loadProjects failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -626,6 +701,95 @@ final class TaskListViewModel: ObservableObject {
     func project(id: String?) -> Project? {
         guard let id else { return nil }
         return availableProjects.first { $0.id == id }
+    }
+
+    // MARK: - Planning (areas, headings, when-buckets)
+
+    @Published private(set) var availableAreas: [TaskArea] = []
+
+    func area(id: String?) -> TaskArea? {
+        guard let id else { return nil }
+        return availableAreas.first { $0.id == id }
+    }
+
+    /// Sets a task's when-bucket. Choosing This Evening on an undated task
+    /// keeps it undated (it shows in Today's evening section); choosing
+    /// Someday clears any start date so the task is parked, not deferred.
+    func setScheduleBucket(_ bucket: TaskScheduleBucket, for task: TodoTask) {
+        var updated = task
+        updated.scheduleBucket = bucket
+        if bucket == .someday { updated.startAt = nil }
+        commitInline(updated)
+    }
+
+    /// Plans a task for this evening: evening bucket, and if it's dated on
+    /// another day, moved to today (time-of-day kept).
+    func planForEvening(_ task: TodoTask) {
+        var updated = task
+        updated.scheduleBucket = .evening
+        updated.startAt = nil
+        let cal = Calendar.current
+        if let due = task.dueAt, !cal.isDateInToday(due) {
+            let time = cal.dateComponents([.hour, .minute], from: due)
+            updated.dueAt = cal.date(bySettingHour: time.hour ?? 0, minute: time.minute ?? 0,
+                                     second: 0, of: Date()) ?? cal.startOfDay(for: Date())
+        }
+        commitInline(updated)
+    }
+
+    /// Reschedules and resets the when-bucket in one write (drag onto a date
+    /// section takes a task out of an Evening / Someday plan).
+    func setDueDate(_ date: Date?, bucket: TaskScheduleBucket, for task: TodoTask) {
+        var updated = task
+        updated.dueAt = date
+        updated.scheduleBucket = bucket
+        commitInline(updated)
+    }
+
+    /// Files a task under one of the current project's headings (nil = none).
+    func setHeading(_ headingId: String?, for task: TodoTask) {
+        do { try store.setHeading(headingId, forTask: task.id) }
+        catch { Log.ui.error("TaskListViewModel.setHeading failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    /// Adds a heading at the bottom of the current project (`.project` only).
+    func addHeading(title: String) {
+        guard case .project(let projectId) = filter else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do { try store.createHeading(in: projectId, title: trimmed) }
+        catch { Log.ui.error("TaskListViewModel.addHeading failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    func renameHeading(_ heading: ProjectHeading, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != heading.title else { return }
+        do { try store.renameHeading(id: heading.id, title: trimmed) }
+        catch { Log.ui.error("TaskListViewModel.renameHeading failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    func deleteHeading(_ heading: ProjectHeading) {
+        do { try store.deleteHeading(id: heading.id) }
+        catch { Log.ui.error("TaskListViewModel.deleteHeading failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    /// Moves a heading one slot up (`delta` −1) or down (+1).
+    func moveHeading(_ heading: ProjectHeading, by delta: Int) {
+        let ids = Self.movingHeading(heading.id, by: delta, in: headings.map(\.id))
+        guard ids != headings.map(\.id) else { return }
+        do { try store.reorderHeadings(ids, in: heading.projectId) }
+        catch { Log.ui.error("TaskListViewModel.moveHeading failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    /// Pure helper: `ids` with `id` shifted by `delta` positions (clamped).
+    nonisolated static func movingHeading(_ id: String, by delta: Int, in ids: [String]) -> [String] {
+        guard let index = ids.firstIndex(of: id) else { return ids }
+        let target = min(max(index + delta, 0), ids.count - 1)
+        guard target != index else { return ids }
+        var out = ids
+        out.remove(at: index)
+        out.insert(id, at: target)
+        return out
     }
 
     // MARK: - Keyboard navigation
@@ -686,8 +850,43 @@ final class TaskListViewModel: ObservableObject {
 
     // MARK: - Bucketing
 
+    /// Like `bucket(tasks:calendar:now:)`, then files active tasks under their
+    /// project headings: un-headed date sections first, then one section per
+    /// heading in order (empty ones included, so they accept drops), then
+    /// Completed. With no headings this is exactly `bucket(tasks:…)`.
+    nonisolated static func bucket(
+        tasks: [TodoTask],
+        headings: [ProjectHeading],
+        calendar: Calendar,
+        now: Date
+    ) -> [(bucket: Bucket, tasks: [TodoTask])] {
+        guard !headings.isEmpty else { return bucket(tasks: tasks, calendar: calendar, now: now) }
+        let headingIds = Set(headings.map(\.id))
+        var headed: [String: [TodoTask]] = [:]
+        var rest: [TodoTask] = []
+        for task in tasks {
+            if !task.isCompleted, let headingId = task.headingId, headingIds.contains(headingId) {
+                headed[headingId, default: []].append(task)
+            } else {
+                rest.append(task)
+            }
+        }
+        let base = bucket(tasks: rest, calendar: calendar, now: now)
+        var out = base.filter { $0.bucket != .completed }
+        for heading in headings {
+            out.append((.heading(heading), headed[heading.id] ?? []))
+        }
+        out.append(contentsOf: base.filter { $0.bucket == .completed })
+        return out
+    }
+
     /// Splits a task list into ordered buckets for the grouped UI. Pure
     /// function so it stays trivially testable.
+    ///
+    /// Planning-aware: overdue always leads; an evening-planned task that's
+    /// due today (or undated) lands in This Evening; an explicit Today plan
+    /// lands in Today; an undated Someday task in Someday; and an undated task
+    /// deferred to a future start date is placed by that start date.
     nonisolated static func bucket(tasks: [TodoTask], calendar: Calendar, now: Date) -> [(bucket: Bucket, tasks: [TodoTask])] {
         let startOfToday = calendar.startOfDay(for: now)
         let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday)!
@@ -700,6 +899,8 @@ final class TaskListViewModel: ObservableObject {
         var thisWeek: [TodoTask] = []
         var later: [TodoTask] = []
         var noDate: [TodoTask] = []
+        var evening: [TodoTask] = []
+        var someday: [TodoTask] = []
         var completed: [TodoTask] = []
 
         for task in tasks {
@@ -707,8 +908,29 @@ final class TaskListViewModel: ObservableObject {
                 completed.append(task)
                 continue
             }
-            guard let due = task.dueAt else {
-                noDate.append(task)
+            if let due = task.dueAt, due < startOfToday {
+                overdue.append(task)
+                continue
+            }
+            if task.scheduleBucket == .evening, (task.dueAt ?? startOfToday) < startOfTomorrow {
+                evening.append(task)
+                continue
+            }
+            if task.scheduleBucket == .today {
+                today.append(task)
+                continue
+            }
+            // Undated + deferred: place by the start date.
+            var effectiveDate = task.dueAt
+            if effectiveDate == nil, let start = task.startAt, start >= startOfTomorrow {
+                effectiveDate = start
+            }
+            guard let due = effectiveDate else {
+                if task.scheduleBucket == .someday {
+                    someday.append(task)
+                } else {
+                    noDate.append(task)
+                }
                 continue
             }
             if due < startOfToday {
@@ -727,10 +949,12 @@ final class TaskListViewModel: ObservableObject {
         var out: [(bucket: Bucket, tasks: [TodoTask])] = []
         if !overdue.isEmpty   { out.append((.overdue, overdue)) }
         if !today.isEmpty     { out.append((.today, today)) }
+        if !evening.isEmpty   { out.append((.evening, evening)) }
         if !tomorrow.isEmpty  { out.append((.tomorrow, tomorrow)) }
         if !thisWeek.isEmpty  { out.append((.thisWeek, thisWeek)) }
         if !later.isEmpty     { out.append((.later, later)) }
         if !noDate.isEmpty    { out.append((.noDate, noDate)) }
+        if !someday.isEmpty   { out.append((.someday, someday)) }
         if !completed.isEmpty { out.append((.completed, completed)) }
         return out
     }

@@ -17,7 +17,7 @@ final class MainWindowRestorationTests: XCTestCase {
         let all: [MainSelection] = [
             .live, .today, .recordings, .taskCalendar, .bases, .ask, .people,
             .task("T-1"), .note("N-1"), .session("S-1"),
-            .tasks(.inbox), .tasks(.today), .tasks(.upcoming), .tasks(.all), .tasks(.completed),
+            .tasks(.inbox), .tasks(.today), .tasks(.upcoming), .tasks(.all), .tasks(.completed), .tasks(.someday), .tasks(.area("a")),
             .tasks(.project("P-1")), .tasks(.tag("errands")), .tasks(.dueOn(day)),
             .notes(.all), .notes(.inbox), .notes(.daily), .notes(.graph),
             .notes(.notebook("NB-1")), .notes(.tag("work")),

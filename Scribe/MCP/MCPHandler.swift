@@ -75,7 +75,7 @@ enum MCPHandler {
                  description: "List tasks. Optionally filter by scope.",
                  properties: [
                     "filter": .init(type: "string",
-                                    description: "today | inbox | upcoming | all | completed — default: all")
+                                    description: "today | inbox | upcoming | someday | all | completed — default: all")
                  ]),
 
             tool("search_tasks",
@@ -311,6 +311,7 @@ enum MCPHandler {
         case "inbox":     return .inbox
         case "upcoming":  return .upcoming
         case "completed": return .completed
+        case "someday":   return .someday
         default:          return .all
         }
     }

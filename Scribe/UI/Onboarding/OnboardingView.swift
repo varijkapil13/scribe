@@ -1,41 +1,40 @@
+import AppKit
 import SwiftUI
 
-/// First-run onboarding sheet. A calm, serif-voiced 4-step primer that:
-/// 1. Welcomes and sets the tone.
-/// 2. Primes Microphone access in context, showing a `LevelMeterView` reacting.
-/// 3. Explains *when* system-audio (ScreenCaptureKit) is relevant — shown only
-///    when the user intends to capture meetings.
-/// 4. Previews the one-time speech-model download and teaches the global
-///    Shift-Cmd-R record shortcut.
+/// First-run onboarding sheet: a short paged flow (see `OnboardingStep`).
 ///
-/// Gated by `@AppStorage("hasCompletedOnboarding")`. Skip and Escape bypass it.
-/// Steps crossfade under Reduce Motion (no horizontal slide).
+/// 1. Welcome — the three surfaces and the on-device promise.
+/// 2. Permissions — microphone, system audio, speech and notifications with
+///    live status (refreshed when Scribe becomes active again, so a grant
+///    made in System Settings shows up immediately).
+/// 3. Meetings — the auto-detection mode and system-audio capture.
+/// 4. Vault — where notes are stored, with a folder picker.
+/// 5. Done — the shortcuts worth knowing.
 ///
-/// Built standalone — the spine presents it as a `.sheet`. (See
-/// `integrationHooksForSpine`.)
+/// Shown once per `OnboardingGate.currentVersion`; Skip, Escape and Get
+/// Started all mark it completed. Steps crossfade under Reduce Motion.
 struct OnboardingView: View {
 
     /// Bound to the presenting sheet so Skip / Done / Escape can dismiss it.
     @Binding var isPresented: Bool
 
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
-    @AppStorage("captureSystemAudio") private var captureSystemAudio: Bool = true
-
-    /// Drives the mic-test preview meter. When a real session isn't running we
-    /// animate a gentle demo level so the meter visibly "breathes".
+    /// Drives the mic preview meter on the permissions step.
     @ObservedObject var audioManager: AudioSessionManager
+
+    @AppStorage("captureSystemAudio") private var captureSystemAudio: Bool = true
+    @AppStorage(MeetingDetectionMode.defaultsKey) private var meetingDetectionMode: MeetingDetectionMode = MeetingDetectionMode.defaultValue
+    @ObservedObject private var vault: VaultCoordinator = .shared
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scribeAccent) private var accent
 
-    @State private var stepIndex: Int = 0
-    @State private var micGranted: Bool = false
-    @State private var micRequestInFlight = false
+    @State private var step: OnboardingStep = .welcome
+    @State private var permissions: [PrivacyPermissionKind: PrivacyPermissionState] = [:]
+    @State private var requesting: PrivacyPermissionKind?
+    @State private var vaultError: String?
     @State private var demoLevel: Float = 0
     @State private var demoTimer: Timer?
-
-    private let steps: [Step] = Step.all
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,13 +47,16 @@ struct OnboardingView: View {
             footer
                 .padding(DesignTokens.Spacing.lg)
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 560, height: 520)
         .background(DesignTokens.Palette.surface)
-        .onAppear(perform: refreshMicStatus)
-        .onChange(of: stepIndex) { _, _ in handleStepChange() }
+        .task { await refreshPermissions() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await refreshPermissions() }
+        }
+        .onChange(of: step) { _, _ in handleStepChange() }
         .onDisappear { stopDemo() }
         // Escape bypasses onboarding entirely.
-        .onExitCommand { skip() }
+        .onExitCommand { finish() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Welcome to Scribe")
     }
@@ -79,134 +81,149 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityElement(children: .combine)
 
             stepExtras
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .id(stepIndex)
+        .id(step)
         .transition(stepTransition)
-        .scribeAnimation(.snappy, value: stepIndex)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(step.title). \(step.body)")
+        .scribeAnimation(.snappy, value: step)
     }
 
-    /// Per-step interactive extras (mic primer meter, system-audio toggle, etc.).
     @ViewBuilder
     private var stepExtras: some View {
-        switch step.kind {
-        case .surfaces:
+        switch step {
+        case .welcome:
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                // A miniature of the sidebar switcher so the three surfaces feel
-                // like one place you move between — "what lives where".
-                surfaceSwitcherPreview
-
-                surfaceRow(symbol: "waveform",
-                           name: "Capture",
-                           detail: "Record & transcribe conversations")
-                surfaceRow(symbol: "doc.text",
-                           name: "Notes",
-                           detail: "A markdown notebook for your ideas")
-                surfaceRow(symbol: "checklist",
-                           name: "Tasks",
-                           detail: "Keep your to-dos within reach")
+                surfaceRow(symbol: "waveform", name: "Capture", detail: "Record & transcribe conversations")
+                surfaceRow(symbol: "doc.text", name: "Notes", detail: "A Markdown notebook for your ideas")
+                surfaceRow(symbol: "checklist", name: "Tasks", detail: "Keep your to-dos within reach")
             }
 
-        case .microphone:
+        case .permissions:
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                ForEach(PrivacyPermissionKind.onboardingKinds) { kind in
+                    permissionRow(kind)
+                }
+                if permissions[.microphone] == .granted {
+                    HStack(spacing: DesignTokens.Spacing.md) {
+                        LevelMeterView(level: previewLevel, tint: accent, barCount: 16, sourceLabel: "Microphone")
+                            .frame(width: 120)
+                        Text("Microphone ready")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 30)
+                }
+                Text("Screen & system audio permission takes effect after Scribe relaunches. Scribe only captures audio, never your screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+        case .meetings:
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                HStack(spacing: DesignTokens.Spacing.md) {
-                    Image(systemName: "mic.fill")
-                        .foregroundStyle(accent)
-                        .accessibilityHidden(true)
-                    LevelMeterView(level: previewLevel,
-                                   tint: accent,
-                                   barCount: 16,
-                                   sourceLabel: "Microphone")
-                        .frame(width: 120)
-                    Spacer()
+                Picker("When a meeting starts", selection: $meetingDetectionMode) {
+                    ForEach(MeetingDetectionMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
                 }
+                .pickerStyle(.radioGroup)
 
-                Button {
-                    requestMic()
-                } label: {
-                    Label(micGranted ? "Microphone ready" : "Allow microphone access",
-                          systemImage: micGranted ? "checkmark.circle.fill" : "mic.circle")
+                Toggle(isOn: $captureSystemAudio) {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+                        Text("Capture system audio for meetings")
+                            .font(.callout.weight(.medium))
+                        Text("Transcribes the people on the other end of a call, not just you.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(micGranted ? .green : accent)
-                .disabled(micGranted || micRequestInFlight)
-                .accessibilityHint(micGranted
-                    ? "Microphone access already granted"
-                    : "Opens the system microphone permission prompt")
-            }
+                .toggleStyle(.switch)
+                .tint(accent)
 
-        case .systemAudio:
-            Toggle(isOn: $captureSystemAudio) {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
-                    Text("Capture system audio for meetings")
-                        .font(.callout.weight(.medium))
-                    Text("Turn this on to transcribe remote participants. You can change it any time.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .tint(accent)
-
-        case .recordShortcut:
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                shortcutKeycap("⇧")
-                shortcutKeycap("⌘")
-                shortcutKeycap("R")
-                Text("starts recording from anywhere")
-                    .font(.callout)
+                Text("Change these any time in Settings → General.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Press Shift Command R to start recording from anywhere")
 
-        case .welcome:
-            EmptyView()
+        case .vault:
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "folder.fill")
+                        .foregroundStyle(accent)
+                        .accessibilityHidden(true)
+                    Text(vaultPath)
+                        .font(.system(.callout, design: .monospaced))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+                HStack {
+                    Button("Choose Another Folder…", action: chooseVaultFolder)
+                        .disabled(vault.isBusy)
+                    if vault.isBusy {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                if let vaultError {
+                    Label(vaultError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text("Pick an empty folder to start fresh there, or an existing notes folder (an Obsidian vault works) to use it as is.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+        case .done:
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                shortcutRow(keys: ["⇧", "⌘", "R"], text: "Start or stop recording from anywhere")
+                shortcutRow(keys: ["⌘", "K"], text: "Search everything and run commands")
+                shortcutRow(keys: ["⌘", "N"], text: "New note")
+                Text("Dictation into any app has its own shortcut in Settings → Dictation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
-    /// Non-interactive miniature of the top-level surface switcher. Purely
-    /// illustrative — it shows the three segments the user will move between so
-    /// the rows below read as "what lives where".
-    private var surfaceSwitcherPreview: some View {
-        HStack(spacing: DesignTokens.Spacing.xxs) {
-            switcherSegment(symbol: "waveform", title: "Capture", selected: true)
-            switcherSegment(symbol: "doc.text", title: "Notes", selected: false)
-            switcherSegment(symbol: "checklist", title: "Tasks", selected: false)
+    private func permissionRow(_ kind: PrivacyPermissionKind) -> some View {
+        let state = permissions[kind] ?? .unknown
+        return HStack(alignment: .center, spacing: DesignTokens.Spacing.md) {
+            Image(systemName: kind.systemImage)
+                .font(.title3)
+                .foregroundStyle(accent)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+                Text(kind.title)
+                    .font(.callout.weight(.medium))
+                Text(kind.purpose)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if state == .granted {
+                Label("Allowed", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+            } else {
+                Button(state.canPrompt ? "Allow…" : "Open Settings") {
+                    request(kind)
+                }
+                .controlSize(.small)
+                .disabled(requesting != nil)
+            }
         }
-        .padding(DesignTokens.Spacing.xxs)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Surface switcher: Capture, Notes, Tasks")
-    }
-
-    private func switcherSegment(symbol: String, title: String, selected: Bool) -> some View {
-        HStack(spacing: DesignTokens.Spacing.xs) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .medium))
-            Text(title)
-                .font(.system(size: 11, weight: selected ? .semibold : .regular))
-        }
-        .foregroundStyle(selected ? accent : Color.secondary)
-        .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, DesignTokens.Spacing.xs)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                .fill(selected
-                      ? DesignTokens.Palette.fill(.selected, contrast: contrast)
-                      : Color.clear)
-        )
-        .accessibilityHidden(true)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(kind.title): \(state.label)")
     }
 
     private func surfaceRow(symbol: String, name: String, detail: String) -> some View {
@@ -230,6 +247,20 @@ struct OnboardingView: View {
         .accessibilityLabel("\(name). \(detail)")
     }
 
+    private func shortcutRow(keys: [String], text: String) -> some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                shortcutKeycap(key)
+            }
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.leading, DesignTokens.Spacing.xs)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(keys.joined(separator: " ")): \(text)")
+    }
+
     private func shortcutKeycap(_ label: String) -> some View {
         Text(label)
             .font(.system(.body, weight: .semibold))
@@ -250,7 +281,7 @@ struct OnboardingView: View {
 
     private var footer: some View {
         HStack {
-            Button("Skip", action: skip)
+            Button("Skip", action: finish)
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityHint("Dismiss onboarding")
@@ -262,12 +293,12 @@ struct OnboardingView: View {
             Spacer()
 
             HStack(spacing: DesignTokens.Spacing.sm) {
-                if stepIndex > 0 {
-                    Button("Back") { advance(by: -1) }
+                if let previous = step.previous {
+                    Button("Back") { go(to: previous) }
                         .keyboardShortcut(.leftArrow, modifiers: [])
                 }
-                Button(isLastStep ? "Get Started" : "Continue") {
-                    if isLastStep { finish() } else { advance(by: 1) }
+                Button(step.isLast ? "Get Started" : "Continue") {
+                    if let next = step.next { go(to: next) } else { finish() }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -277,63 +308,15 @@ struct OnboardingView: View {
 
     private var pageDots: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            ForEach(visibleStepCount.indices, id: \.self) { i in
+            ForEach(OnboardingStep.allCases) { page in
                 Circle()
-                    .fill(i == stepIndex ? accent : DesignTokens.Palette.fill(.strong, contrast: contrast))
+                    .fill(page == step ? accent : DesignTokens.Palette.fill(.strong, contrast: contrast))
                     .frame(width: 6, height: 6)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(stepIndex + 1) of \(visibleStepCount.count)")
+        .accessibilityLabel("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)")
     }
-
-    // MARK: - Steps model
-
-    private enum StepKind { case welcome, surfaces, microphone, systemAudio, recordShortcut }
-
-    private struct Step: Identifiable {
-        let id = UUID()
-        let kind: StepKind
-        let symbol: String
-        let title: String
-        let body: String
-
-        static let all: [Step] = [
-            Step(kind: .welcome,
-                 symbol: "text.quote",
-                 title: "Welcome to Scribe",
-                 body: "A calm place to record conversations, transcribe them on-device, and turn them into notes and tasks — all privately, all yours."),
-            Step(kind: .surfaces,
-                 symbol: "square.grid.2x2",
-                 title: "Three places to work",
-                 body: "Scribe is three surfaces in one. Capture records and transcribes your conversations. Notes is a markdown notebook for writing things down. Tasks keeps your to-dos in view."),
-            Step(kind: .microphone,
-                 symbol: "mic",
-                 title: "Hear yourself think",
-                 body: "Scribe needs your microphone to capture what you say. Grant access below — the meter will move when it can hear you."),
-            Step(kind: .systemAudio,
-                 symbol: "speaker.wave.2",
-                 title: "Bring others into the room",
-                 body: "For calls and meetings, Scribe can also transcribe the people on the other end by capturing your system audio. Skip this if you only record yourself."),
-            Step(kind: .recordShortcut,
-                 symbol: "record.circle",
-                 title: "Ready when you are",
-                 body: "Your first recording downloads a small on-device speech model — about a minute, just once. After that, start instantly from anywhere:")
-        ]
-    }
-
-    /// The set of steps to actually show. The system-audio step is only
-    /// relevant when the user intends to capture meetings.
-    private var visibleStepCount: [Step] {
-        steps.filter { $0.kind != .systemAudio || captureSystemAudio }
-    }
-
-    private var step: Step {
-        let list = visibleStepCount
-        return list[min(stepIndex, list.count - 1)]
-    }
-
-    private var isLastStep: Bool { stepIndex >= visibleStepCount.count - 1 }
 
     private var stepTransition: AnyTransition {
         guard !reduceMotion else { return .opacity }
@@ -345,71 +328,104 @@ struct OnboardingView: View {
 
     // MARK: - Actions
 
-    private func advance(by delta: Int) {
-        let next = stepIndex + delta
-        guard next >= 0, next < visibleStepCount.count else { return }
+    private func go(to target: OnboardingStep) {
         withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
-            stepIndex = next
+            step = target
         }
     }
 
-    private func skip() {
-        finish()
-    }
-
     private func finish() {
-        hasCompletedOnboarding = true
+        OnboardingGate.markCompleted()
         stopDemo()
         isPresented = false
     }
 
     private func handleStepChange() {
-        if step.kind == .microphone {
-            refreshMicStatus()
+        if step == .permissions {
+            Task { await refreshPermissions() }
             startDemoIfNeeded()
         } else {
             stopDemo()
         }
     }
 
-    // MARK: - Microphone
+    private func refreshPermissions() async {
+        permissions = await PrivacyPermissionProbe.states(of: PrivacyPermissionKind.onboardingKinds)
+    }
 
-    private func refreshMicStatus() {
+    private func request(_ kind: PrivacyPermissionKind) {
+        guard requesting == nil else { return }
+        requesting = kind
         Task {
-            let status = await Permissions.checkMicrophonePermission()
-            await MainActor.run { micGranted = (status == .granted) }
+            await PrivacyPermissionProbe.request(kind)
+            await refreshPermissions()
+            requesting = nil
+            if step == .permissions { startDemoIfNeeded() }
         }
     }
 
-    private func requestMic() {
-        guard !micRequestInFlight else { return }
-        micRequestInFlight = true
+    // MARK: - Vault
+
+    private var vaultPath: String {
+        (vault.currentRoot ?? NotesDirectory.builtInDefault()).path
+    }
+
+    private func chooseVaultFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Notes Folder"
+        panel.message = "Choose an empty folder for new notes, or an existing notes folder to use as is."
+        panel.prompt = "Choose"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        vaultError = nil
+
+        // Same "empty" rule as VaultCoordinator.moveVault: dotfiles don't count.
+        let visible = ((try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? [])
+            .filter { !$0.hasPrefix(".") }
         Task {
-            let granted = await Permissions.requestMicrophonePermission()
-            await MainActor.run {
-                micGranted = granted
-                micRequestInFlight = false
-                if !granted {
-                    Permissions.openSystemPreferences(for: "Privacy_Microphone")
+            do {
+                if visible.isEmpty {
+                    try await vault.moveVault(to: url)
+                } else {
+                    let preview = try vault.previewOpen(at: url)
+                    guard confirmOpen(url, toImport: preview.toImport, toRemove: preview.toRemove) else { return }
+                    try await vault.openVault(at: url)
                 }
+            } catch {
+                vaultError = error.localizedDescription
             }
         }
     }
 
+    private func confirmOpen(_ url: URL, toImport: Int, toRemove: Int) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Use “\(url.lastPathComponent)” for your notes?"
+        var text = "Scribe will read \(toImport) note\(toImport == 1 ? "" : "s") from this folder and save new notes there."
+        if toRemove > 0 {
+            text += " \(toRemove) note\(toRemove == 1 ? "" : "s") in the current folder will stay on disk but no longer show in Scribe."
+        }
+        alert.informativeText = text
+        alert.addButton(withTitle: "Use Folder")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     // MARK: - Demo level (preview only)
 
-    /// The level the meter renders: the live mic level if a real session is
-    /// running, otherwise a gentle scripted demo so the user sees motion.
+    /// The live mic level when a session is running, otherwise a gentle
+    /// scripted demo so the meter visibly "breathes".
     private var previewLevel: Float {
         audioManager.isRecording ? audioManager.inputLevel : demoLevel
     }
 
     private func startDemoIfNeeded() {
-        guard !audioManager.isRecording, demoTimer == nil, !reduceMotion else { return }
+        guard !audioManager.isRecording, demoTimer == nil, !reduceMotion,
+              permissions[.microphone] == .granted else { return }
         demoTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { _ in
             Task { @MainActor in
-                // A soft random walk in the low-mid range — clearly alive
-                // without pretending to be real captured audio.
                 let target = Float.random(in: 0.12...0.55)
                 withAnimation(.easeInOut(duration: 0.18)) {
                     demoLevel = target

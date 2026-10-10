@@ -17,6 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - NSApplicationDelegate
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // TipKit must be configured before any view with a `.popoverTip`
+        // appears, i.e. before the main window is created.
+        ScribeTips.configure()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Register default values so UserDefaults queries return sensible results
         // before the user has visited Settings.
@@ -162,6 +168,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // toggle and on a CloudKit-entitled build (CloudKitAvailability).
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.start()
+            RemindersSyncScheduler.shared.start(database: DatabaseManager.shared.database)
+        }
+
+        // Automatic daily backups (off unless enabled in Settings → Backup).
+        // Fixture runs share the real UserDefaults domain, so they must never
+        // write (or prune) archives in the user's backup folder.
+        if !AppLaunchEnvironment.isUITesting && !AppLaunchEnvironment.usesUITestFixtures {
+            ScribeAutoBackupScheduler.shared.start()
         }
 
         // Proactively request microphone and speech-recognition authorization
@@ -198,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func applicationDidBecomeActive(_ notification: Notification) {
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.appDidBecomeActive()
+            RemindersSyncScheduler.shared.appDidBecomeActive()
         }
         Task {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
@@ -288,6 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 Task { @MainActor in DictationController.shared.shortcutReleased() }
             }
         )
+        QuickCaptureController.shared.registerShortcut()
     }
 
     // MARK: - Recording Actions

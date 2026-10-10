@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 
 // `MainSelection`, `NotesFilter`, and `Surface` live in MainSelection.swift so
 // they stay in the SwiftPM test target while this view file is excluded from it
@@ -121,7 +122,7 @@ struct MainWindowView: View {
             // regardless of when the fixture sets `hasCompletedOnboarding`
             // (avoids a set-vs-read race that left the Welcome sheet — and its
             // mic-permission step — covering every captured screen).
-            if !hasCompletedOnboarding && !AppLaunchEnvironment.usesUITestFixtures {
+            if OnboardingGate.shouldShow() && !AppLaunchEnvironment.usesUITestFixtures {
                 showOnboarding = true
             }
         }
@@ -170,6 +171,7 @@ struct MainWindowView: View {
         // Menu-bar commands (the shortcut owners) route here.
         .onReceive(NotificationCenter.default.publisher(for: .scribeToggleCommandBar)) { _ in
             showUniversalSearch.toggle()
+            ScribeTips.quickSearchUsed()
         }
         .onReceive(NotificationCenter.default.publisher(for: .scribeGoBack)) { _ in nav.goBack() }
         // scribe:// links, opened files and Handoff (ScribeEntryRouter).
@@ -299,6 +301,9 @@ struct MainWindowView: View {
                                 } label: {
                                     Label("Edit…", systemImage: "pencil")
                                 }
+                                ProjectAreaMenu(project: project, areas: projectsViewModel.areas) {
+                                    projectsViewModel.assignArea($0, toProject: project.id)
+                                }
                                 Button(role: .destructive) {
                                     projectPendingDelete = project
                                 } label: {
@@ -331,6 +336,13 @@ struct MainWindowView: View {
                         .help("New project")
                     }
                 }
+
+                TaskAreasSidebarSection(
+                    viewModel: projectsViewModel,
+                    isSelected: { nav.current == .tasks(.area($0)) },
+                    onSelect: { nav.navigate(to: .tasks(.area($0))) },
+                    onDeleted: { if nav.current == .tasks(.area($0)) { nav.navigate(to: .tasks(.inbox)) } }
+                )
                 }  // end Tasks surface
 
                 // MARK: Notes surface
@@ -865,9 +877,9 @@ struct SidebarTaskCounts: Equatable {
         let startTomorrow = calendar.date(byAdding: .day, value: 1, to: startToday)!
         let endUpcoming = calendar.date(byAdding: .day, value: 7, to: startTomorrow)!
         for task in tasks {
-            if task.projectId == nil { inbox += 1 }
+            if TaskPlanningRules.isInInbox(task) { inbox += 1 }
+            if TaskPlanningRules.isInToday(task, now: now, calendar: calendar) { today += 1 }
             if let due = task.dueAt {
-                if due < startTomorrow { today += 1 }
                 if due < startToday { overdue += 1 }
                 if due >= startTomorrow && due < endUpcoming { upcoming += 1 }
             }
@@ -886,6 +898,7 @@ struct TaskSidebarItem: Identifiable, Hashable {
         .init(id: "inbox",    title: "Inbox",    systemImage: "tray",            filter: .inbox),
         .init(id: "today",    title: "Today",    systemImage: "sun.max",         filter: .today),
         .init(id: "upcoming", title: "Upcoming", systemImage: "calendar",        filter: .upcoming),
+        .init(id: "someday",  title: "Someday",  systemImage: "archivebox",      filter: .someday),
         .init(id: "all",      title: "All",      systemImage: "list.bullet",     filter: .all),
         .init(id: "completed", title: "Completed", systemImage: "checkmark.circle", filter: .completed)
     ]
