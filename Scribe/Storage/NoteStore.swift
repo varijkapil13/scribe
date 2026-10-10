@@ -74,14 +74,18 @@ final class NoteStore: @unchecked Sendable {
                 try NoteTagRow(noteId: note.id, tag: tag).insert(database)
             }
             try Self.upsertFTS(database, noteId: note.id, title: title, body: body)
+            // Mirror inside the transaction: the reconciler lists the vault
+            // inside its own write transaction, so it can never observe the
+            // row without the file (and delete it). A failed file write
+            // rolls the row back.
+            try mirrorToDisk(note: note, tags: tags)
             return note
         }
-        try mirrorToDisk(note: created, tags: tags)
         return created
     }
 
     func updateNote(_ note: Note, tags: [String]) throws {
-        let mirrored = try db.write { database -> Note in
+        try db.write { database in
             var mutable = note
             mutable.updatedAt = Date()
             mutable.bodyExcerpt = Note.makeExcerpt(from: note.body)
@@ -112,9 +116,9 @@ final class NoteStore: @unchecked Sendable {
                 }
             }
             try Self.upsertFTS(database, noteId: note.id, title: mutable.title, body: note.body)
-            return mutable
+            // Inside the transaction — see `createNote`.
+            try mirrorToDisk(note: mutable, tags: tags)
         }
-        try mirrorToDisk(note: mirrored, tags: tags)
     }
 
     func deleteNote(id: String) throws {
@@ -136,12 +140,14 @@ final class NoteStore: @unchecked Sendable {
             )
             _ = try Note.deleteOne(database, key: id)
             try database.execute(sql: "DELETE FROM notes_fts WHERE noteId = ?", arguments: [id])
+            // Inside the transaction so a concurrent reconcile can't see the
+            // file without the row and resurrect the note.
+            deleteFromDisk(id: id)
             return audioPaths
         }
         for path in audioDirectories {
             SessionAudioStorage.removeDirectory(atPath: path)
         }
-        deleteFromDisk(id: id)
         // Best-effort: remove the note's attachments folder. Failures are
         // logged but don't propagate — the DB row is already gone. Logging
         // the resolved directory path (under public privacy — it contains
@@ -175,13 +181,41 @@ final class NoteStore: @unchecked Sendable {
         guard var note = try db.read({ try Note.fetchOne($0, key: id) }) else { return nil }
         // Prefer the disk body when a file exists for this id — the file
         // is the source of truth for content; the DB column is a mirror
-        // kept for FTS and migration purposes until Slice 5.
-        if let fileStore,
-           let url = try? fileStore.findURL(for: id),
-           let parsed = try? fileStore.read(at: url) {
-            note.body = parsed.body
+        // kept for FTS and migration purposes until Slice 5. Resolved
+        // through the id → path index (one file read, no vault scan).
+        if let fileStore, let entry = try? fileStore.locate(id: id) {
+            note.body = entry.file.body
         }
         return note
+    }
+
+    // MARK: - External-edit support
+
+    /// The note's file as it is on disk right now (parsed + fingerprint),
+    /// or nil when there is no file store / no file for the id.
+    func diskEntry(forNoteId id: String) -> NoteFileEntry? {
+        guard let fileStore else { return nil }
+        return try? fileStore.locate(id: id)
+    }
+
+    /// Current fingerprint of the note's file — one `stat` when `known`
+    /// still matches, otherwise a read + hash.
+    func currentFileFingerprint(forNoteId id: String, reusing known: NoteFileFingerprint?) -> NoteFileFingerprint? {
+        fileStore?.fingerprint(forId: id, reusing: known)
+    }
+
+    /// Fingerprint of the version Scribe itself last wrote for the note.
+    func lastWrittenFileFingerprint(forNoteId id: String) -> NoteFileFingerprint? {
+        fileStore?.lastWrittenFingerprint(forId: id)
+    }
+
+    /// Preserves the current on-disk version of the note as a conflict copy
+    /// next to it (fresh id, `(Scribe conflicted copy …)` name) before an
+    /// in-app version overwrites it. Returns the copy's URL, or nil when
+    /// there is no file to preserve.
+    func preserveDiskVersionAsConflictCopy(noteId id: String) throws -> URL? {
+        guard let fileStore, let entry = try fileStore.locate(id: id) else { return nil }
+        return try fileStore.writeConflictCopy(of: entry)
     }
 
     func fetchAllNotes() throws -> [Note] {
@@ -212,12 +246,27 @@ final class NoteStore: @unchecked Sendable {
     /// explicitly intended (e.g. after the user starts typing).
     func fetchExistingDailyNote(for date: Date) throws -> Note? {
         let key = Self.dailyDateFormatter.string(from: date)
-        return try db.read { try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne($0) }
+        guard let row = try db.read({ try Note.filter(sql: "dailyDate = ?", arguments: [key]).fetchOne($0) }) else {
+            return nil
+        }
+        // The DB row's `body` is only a placeholder — load the real body
+        // from disk, or an editor bound to this note would start empty and
+        // overwrite the file on the first keystroke.
+        return try fetchNote(id: row.id) ?? row
     }
 
     /// Atomically fetches or creates the daily note for `date`. Call only
     /// when creation is intended — for read-only lookup use fetchExistingDailyNote(for:).
     func dailyNote(for date: Date) throws -> Note {
+        try dailyNoteCreatingIfNeeded(for: date).note
+    }
+
+    /// `dailyNote(for:)` that also reports whether this call created the
+    /// note. Callers seeding content (the daily draft editor) must only
+    /// write their text when `created` is true — otherwise the note already
+    /// exists (another window, iCloud, an external editor) and its body must
+    /// not be overwritten.
+    func dailyNoteCreatingIfNeeded(for date: Date) throws -> (note: Note, created: Bool) {
         let key = Self.dailyDateFormatter.string(from: date)
         let title = "Daily Note \u{2013} \(Self.dailyTitleFormatter.string(from: date))"
         // Atomic: INSERT OR IGNORE then SELECT avoids TOCTOU race where two
@@ -243,16 +292,24 @@ final class NoteStore: @unchecked Sendable {
                 // Seed FTS for the new daily note with the title only — body
                 // is empty at creation time.
                 try Self.upsertFTS(database, noteId: note.id, title: title, body: "")
+                // Only mirror on actual creation. The fetched `note` carries an
+                // empty body placeholder (bodies live on disk, not in the DB), so
+                // mirroring an *existing* daily note would clobber its content.
+                try mirrorToDisk(note: note, tags: [])
             }
             return (note, created)
         }
-        // Only mirror on actual creation. The fetched `note` carries an empty
-        // body placeholder (bodies live on disk, not in the DB), so mirroring
-        // an *existing* daily note here would clobber its real on-disk content.
-        if didCreate {
-            try mirrorToDisk(note: note, tags: [])
-        }
-        return note
+        return (note, didCreate)
+    }
+
+    /// Body the daily draft editor may write when it binds to `dailyNote`
+    /// on the first keystroke. A freshly created note takes the draft; an
+    /// existing note is never overwritten — its body is kept (nil = write
+    /// nothing) unless it is still empty.
+    nonisolated static func dailyDraftBodyToWrite(created: Bool, existingBody: String, draft: String) -> String? {
+        if created { return draft }
+        if existingBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return draft }
+        return nil
     }
 
     func fetchNotes(withTag tag: String) throws -> [Note] {
@@ -381,10 +438,22 @@ final class NoteStore: @unchecked Sendable {
 
     func deleteNotebook(id: String) throws {
         try db.write { database in
+            let affected = try String.fetchAll(
+                database,
+                sql: "SELECT id FROM notes WHERE notebookId = ?",
+                arguments: [id]
+            )
             try database.execute(
                 sql: "UPDATE notes SET notebookId = NULL WHERE notebookId = ?",
                 arguments: [id]
             )
+            // The file's frontmatter is the source of truth the reconciler
+            // restores from — rewrite it too, or the next pass would put
+            // the notes straight back into the deleted notebook. A failure
+            // rolls the whole delete back.
+            for noteId in affected {
+                try rewriteFrontmatter(noteId: noteId) { $0.notebookId = nil }
+            }
             // Promote child notebooks to the parent level so they aren't orphaned.
             try database.execute(
                 sql: "UPDATE notebooks SET parentId = NULL WHERE parentId = ?",
@@ -424,7 +493,20 @@ final class NoteStore: @unchecked Sendable {
                 sql: "UPDATE notes SET notebookId = ? WHERE id = ?",
                 arguments: [toNotebookId, id]
             )
+            // Keep the file's `notebookId` in step so the reconciler
+            // doesn't restore the old notebook.
+            try rewriteFrontmatter(noteId: id) { $0.notebookId = toNotebookId }
         }
+    }
+
+    /// Re-writes only the frontmatter of the note's file (body and every
+    /// other key preserved). No-op when there's no file store / file.
+    private func rewriteFrontmatter(noteId: String, _ change: (inout NoteFrontmatter) -> Void) throws {
+        guard let fileStore, let entry = try fileStore.locate(id: noteId) else { return }
+        var file = entry.file
+        change(&file.frontmatter)
+        guard file != entry.file else { return }
+        try fileStore.write(file)
     }
 
     // MARK: - FTS (Phase 5 — Slice 5)
@@ -486,11 +568,7 @@ final class NoteStore: @unchecked Sendable {
         // `font:`, external tools' `aliases:`/`cover:`, …). We rebuild the
         // typed fields from the DB, so without this merge a DB-driven write
         // would silently drop them.
-        let existingExtra: [FrontmatterEntry] = {
-            guard let url = try? fileStore.findURL(for: note.id),
-                  let parsed = try? fileStore.read(at: url) else { return [] }
-            return parsed.frontmatter.extra
-        }()
+        let existingExtra: [FrontmatterEntry] = (try? fileStore.locate(id: note.id))?.file.frontmatter.extra ?? []
         let file = NoteFile(
             id: note.id,
             frontmatter: NoteFrontmatter(
@@ -505,10 +583,9 @@ final class NoteStore: @unchecked Sendable {
             ),
             body: note.body
         )
-        // Stamp the write before it lands so the vault watcher suppresses
-        // the reconcile this FSEvents change would otherwise trigger —
-        // the DB/index is already current in-process.
-        VaultWriteGuard.shared.recordSelfWrite()
+        // `NoteFileStore` records the written path + fingerprint with
+        // `VaultWriteGuard`, so the watcher skips the reconcile this write
+        // would otherwise trigger — the DB/index is already current.
         do {
             try fileStore.write(file)
         } catch {
@@ -517,13 +594,12 @@ final class NoteStore: @unchecked Sendable {
         }
     }
 
-    /// Removes the disk mirror for `id`. Same logging-only policy as
-    /// `mirrorToDisk` — orphaned files are recoverable via the rebuild
-    /// path (Slice 4) so failures here don't propagate.
+    /// Moves the disk mirror for `id` to the Trash (removes it where there
+    /// is no Trash). Logging-only: orphaned files are recoverable via the
+    /// rebuild path (Slice 4) so failures here don't propagate.
     private func deleteFromDisk(id: String) {
         guard let fileStore else { return }
         do {
-            VaultWriteGuard.shared.recordSelfWrite()
             _ = try fileStore.delete(id: id)
         } catch {
             Log.storage.error("NoteStore.deleteFromDisk failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -535,10 +611,8 @@ final class NoteStore: @unchecked Sendable {
     /// Reads the per-note typeface from the file's `font:` frontmatter key.
     /// `nil` means "follow the app default".
     func noteFont(id: String) -> String? {
-        guard let fileStore,
-              let url = try? fileStore.findURL(for: id),
-              let file = try? fileStore.read(at: url) else { return nil }
-        return file.frontmatter.extraValue(forKey: "font")
+        guard let fileStore, let entry = try? fileStore.locate(id: id) else { return nil }
+        return entry.file.frontmatter.extraValue(forKey: "font")
     }
 
     /// Persists the per-note typeface to frontmatter (nil clears it). Disk-only
@@ -546,12 +620,10 @@ final class NoteStore: @unchecked Sendable {
     /// and the choice survives external edits / vault moves. Preserves body +
     /// other extras.
     func setNoteFont(id: String, _ font: String?) {
-        guard let fileStore,
-              let url = try? fileStore.findURL(for: id),
-              var file = try? fileStore.read(at: url) else { return }
+        guard let fileStore, let entry = try? fileStore.locate(id: id) else { return }
+        var file = entry.file
         file.frontmatter.setExtra("font", font)
         do {
-            VaultWriteGuard.shared.recordSelfWrite()
             try fileStore.write(file)
         } catch {
             Log.storage.error("NoteStore.setNoteFont failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")

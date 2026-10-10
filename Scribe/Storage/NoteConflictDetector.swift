@@ -7,9 +7,10 @@ import Foundation
 /// Drive use variants ("conflicted copy", "Conflict"). The detector
 /// returns every candidate so the UI can offer a resolve flow.
 ///
-/// Slice 6 scope: detection only. Picking a winner and deleting the
-/// loser is a follow-up — the user might want a side-by-side diff
-/// before either file goes away.
+/// Detection only — Scribe never deletes a conflict file. Picking a
+/// winner is left to the user. `NoteDetailViewModel` uses this to surface
+/// conflicts for the open note, including the copies Scribe writes itself
+/// when an external edit races an unsaved in-app edit.
 struct NoteConflictDetector {
     let fileStore: NoteFileStore
 
@@ -51,6 +52,27 @@ struct NoteConflictDetector {
             out.append(Match(url: url, displayName: display, originalName: original, noteId: id))
         }
         return out
+    }
+
+    /// Conflicts that belong to one note: files whose frontmatter id is
+    /// `noteId` (iCloud copies the bytes, id included) or whose name minus
+    /// the conflict suffix equals `originalName` (copies Scribe writes when
+    /// an external edit races an unsaved in-app edit get a fresh id).
+    func conflicts(forNoteId noteId: String, originalName: String?) throws -> [Match] {
+        try listConflicts().filter { match in
+            match.noteId == noteId
+                || (originalName.map { match.originalName.caseInsensitiveCompare($0) == .orderedSame } ?? false)
+        }
+    }
+
+    /// Base filename (no extension) for a conflict copy Scribe writes itself.
+    /// Recognised by `stripConflictSuffix`, so the copy surfaces through the
+    /// same detection path as iCloud / Dropbox conflicts.
+    nonisolated static func conflictCopyName(for originalName: String, at date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        return "\(originalName) (Scribe conflicted copy \(f.string(from: date)))"
     }
 
     /// If `name` ends with a recognised conflict suffix, returns the

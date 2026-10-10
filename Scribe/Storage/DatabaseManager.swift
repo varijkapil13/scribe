@@ -475,13 +475,34 @@ final class DatabaseManager: @unchecked Sendable {
             //    existence-gated — running this migration multiple times
             //    (which shouldn't happen, but) is a no-op for already-
             //    flushed rows.
-            if let dir = try? NotesDirectory.defaultLocation() {
-                let store = NoteFileStore(directory: dir)
-                let onDiskIds = Set(((try? store.listAll()) ?? []).map(\.id))
-                let rows = try Row.fetchAll(db, sql: """
-                    SELECT id, title, body, createdAt, updatedAt, isDailyNote, dailyDate, notebookId
-                    FROM notes
-                    """)
+            //
+            //    The column is dropped in step 4, so a body that didn't make
+            //    it to disk would be lost for good. Any such failure — or a
+            //    vault location that can't be resolved while bodies still
+            //    need flushing — therefore throws, aborting (and rolling
+            //    back) the migration; it retries on the next launch.
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, title, body, createdAt, updatedAt, isDailyNote, dailyDate, notebookId
+                FROM notes
+                """)
+            var vault: NotesDirectory?
+            if !rows.isEmpty {
+                do {
+                    vault = try NotesDirectory.defaultLocation()
+                } catch {
+                    let hasBodies = rows.contains { row in
+                        let body: String? = row["body"]
+                        return !(body ?? "").isEmpty
+                    }
+                    if hasBodies {
+                        throw DatabaseMigrationError.vaultUnavailable(error.localizedDescription)
+                    }
+                    Log.storage.error("v13: vault unavailable; no bodies to flush: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            if let vault {
+                let store = NoteFileStore(directory: vault)
+                let onDiskIds = Set(try store.listAll().map(\.id))
                 for row in rows {
                     let id: String = row["id"]
                     if onDiskIds.contains(id) { continue }
@@ -516,11 +537,12 @@ final class DatabaseManager: @unchecked Sendable {
                     do {
                         try store.write(file)
                     } catch {
-                        // Per-file failure shouldn't abort the migration —
-                        // log and keep going. The body still lives in
-                        // bodyExcerpt (truncated) and the file can be
-                        // recovered from a backup if needed.
                         Log.storage.error("v13: failed to flush note \(id, privacy: .public) to disk: \(error.localizedDescription, privacy: .public)")
+                        // An empty body has nothing to lose; anything else
+                        // must reach disk before the column goes.
+                        if !body.isEmpty {
+                            throw DatabaseMigrationError.bodyFlushFailed(noteId: id, reason: error.localizedDescription)
+                        }
                     }
                 }
             }
@@ -623,6 +645,21 @@ final class DatabaseManager: @unchecked Sendable {
         }
 
         return migrator
+    }
+
+    /// Raised by a migration that would otherwise lose data.
+    enum DatabaseMigrationError: LocalizedError {
+        case vaultUnavailable(String)
+        case bodyFlushFailed(noteId: String, reason: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .vaultUnavailable(let reason):
+                return "The notes folder couldn't be opened, so note bodies weren't moved out of the database: \(reason)"
+            case .bodyFlushFailed(let noteId, let reason):
+                return "Note \(noteId) couldn't be written to the notes folder, so the database upgrade was stopped to keep it: \(reason)"
+            }
+        }
     }
 
     /// Date formatter used inside v13's body-flush step. POSIX local-time

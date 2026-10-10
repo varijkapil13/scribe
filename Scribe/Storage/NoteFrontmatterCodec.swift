@@ -95,14 +95,14 @@ enum NoteFrontmatterCodec {
     ///   - fallbackTitle: Title to use when frontmatter is missing or has
     ///     no `title` key — typically the filename minus extension.
     ///   - fallbackId: ID to use when frontmatter is missing or has no
-    ///     `id` key — caller supplies a freshly generated UUID so reads
-    ///     remain deterministic.
+    ///     `id` key — `NoteFileStore` supplies an id derived from the
+    ///     vault-relative path so repeated reads agree on the same id.
     static func decodeFile(
         contents: String,
         fallbackTitle: String,
         fallbackId: String
     ) -> (id: String, frontmatter: NoteFrontmatter, body: String) {
-        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines = splitLines(contents)
 
         guard let (headerLines, bodyStartIndex) = extractFrontmatterBlock(lines: lines) else {
             // No frontmatter — use defaults, treat the entire file as body.
@@ -137,7 +137,69 @@ enum NoteFrontmatterCodec {
         return (id: id, frontmatter: frontmatter, body: body)
     }
 
+    // MARK: - Raw frontmatter edits
+
+    /// The `id` the file's frontmatter pins, or nil when the file has no
+    /// frontmatter block or the block carries no non-empty `id:`. Used to tell
+    /// a pinned id apart from the deterministic path-derived fallback.
+    static func explicitId(in contents: String) -> String? {
+        let lines = splitLines(contents)
+        guard let block = extractFrontmatterBlock(lines: lines) else { return nil }
+        let value = parseHeaderLines(block.headerLines)["id"]
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    /// Returns `contents` with the given frontmatter keys set, touching
+    /// nothing else: every line outside the frontmatter block — and every
+    /// other line inside it — is preserved byte-for-byte (including CRLF
+    /// line endings). Existing lines for the keys are removed and the new
+    /// `key: value` lines are inserted directly after the opening delimiter,
+    /// in the given order. A file without a frontmatter block gets a new
+    /// minimal block prepended.
+    ///
+    /// Values are emitted verbatim; callers pass already-encoded scalars
+    /// (see `encodedScalar(_:)`).
+    static func settingRawKeys(_ pairs: [(key: String, value: String)], in contents: String) -> String {
+        let lines = splitLines(contents)
+        guard let block = extractFrontmatterBlock(lines: lines) else {
+            let header = ([delimiter] + pairs.map { "\($0.key): \($0.value)" } + [delimiter])
+                .joined(separator: "\n") + "\n"
+            return header + contents
+        }
+        let keys = Set(pairs.map(\.key))
+        // Closing delimiter sits at bodyStartIndex - 1; header lines are 1..<that.
+        let closingIndex = block.bodyStartIndex - 1
+        let eol = lines[0].hasSuffix("\r") ? "\r" : ""
+        var out: [String] = [lines[0]]
+        out.append(contentsOf: pairs.map { "\($0.key): \($0.value)" + eol })
+        for i in 1..<closingIndex {
+            if let pair = splitKeyValue(lines[i]), keys.contains(pair.key) { continue }
+            out.append(lines[i])
+        }
+        out.append(contentsOf: lines[closingIndex...])
+        return out.joined(separator: "\n")
+    }
+
+    /// Scalar encoding used for typed values such as `title:` — exposed so
+    /// raw edits (`settingRawKeys`) quote exactly like `encode` does.
+    static func encodedScalar(_ s: String) -> String {
+        escapeScalar(s)
+    }
+
     // MARK: - Helpers
+
+    /// Splits on LF scalars. `String.split(separator: "\n")` works on
+    /// Characters, where a CRLF pair is one grapheme that never equals
+    /// "\n", so CRLF files would look frontmatter-less. Splitting the
+    /// unicode-scalar view leaves the `\r` at the end of each line (trimmed
+    /// where it matters) and keeps `joined(separator: "\n")` lossless.
+    private static func splitLines(_ contents: String) -> [String] {
+        let newline: Unicode.Scalar = "\n"
+        return contents.unicodeScalars
+            .split(separator: newline, omittingEmptySubsequences: false)
+            .map { String(String.UnicodeScalarView($0)) }
+    }
 
     /// Returns the lines *inside* the frontmatter block (without the
     /// delimiter lines) plus the index in `lines` where the body begins,
@@ -145,11 +207,12 @@ enum NoteFrontmatterCodec {
     /// first line to be `---`; trailing whitespace on delimiter lines is
     /// tolerated so a CRLF-saved file still parses.
     private static func extractFrontmatterBlock(lines: [String]) -> (headerLines: [String], bodyStartIndex: Int)? {
-        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == delimiter else {
+        guard lines.count > 1, let first = lines.first,
+              first.trimmingCharacters(in: .whitespacesAndNewlines) == delimiter else {
             return nil
         }
         for i in 1..<lines.count {
-            if lines[i].trimmingCharacters(in: .whitespaces) == delimiter {
+            if lines[i].trimmingCharacters(in: .whitespacesAndNewlines) == delimiter {
                 let headerLines = Array(lines[1..<i])
                 let bodyStart = min(i + 1, lines.count)
                 return (headerLines, bodyStart)
@@ -182,8 +245,8 @@ enum NoteFrontmatterCodec {
 
     private static func splitKeyValue(_ line: String) -> (key: String, value: String)? {
         guard let colonIdx = line.firstIndex(of: ":") else { return nil }
-        let key = String(line[..<colonIdx]).trimmingCharacters(in: .whitespaces)
-        let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+        let key = String(line[..<colonIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return nil }
         return (key, value)
     }
