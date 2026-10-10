@@ -28,7 +28,7 @@ enum EditorCommand: Equatable, Hashable, Sendable {
     case findPrevious
 
     /// The command name the JS dispatcher understands.
-    nonisolated var jsName: String {
+    var jsName: String {
         switch self {
         case .bold:           return "bold"
         case .italic:         return "italic"
@@ -48,7 +48,7 @@ enum EditorCommand: Equatable, Hashable, Sendable {
     }
 
     /// The numeric argument passed alongside the name, if any.
-    nonisolated var argument: Int? {
+    var argument: Int? {
         if case .heading(let level) = self { return max(0, min(6, level)) }
         return nil
     }
@@ -56,8 +56,8 @@ enum EditorCommand: Equatable, Hashable, Sendable {
     /// The JavaScript evaluated in the editor page. Guarded so a page that
     /// predates the dispatcher (or hasn't mounted yet) ignores it instead of
     /// throwing. Names are fixed ASCII identifiers, so no escaping is needed.
-    nonisolated var javaScript: String {
-        let arg = argument.map(String.init) ?? "null"
+    var javaScript: String {
+        let arg = argument.map { String($0) } ?? "null"
         return "(function(){if(typeof window.scribeCommand==='function'){return window.scribeCommand('\(jsName)',\(arg))===true;}return false;})();"
     }
 }

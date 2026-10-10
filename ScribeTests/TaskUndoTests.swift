@@ -90,7 +90,8 @@ final class TaskUndoTests: XCTestCase {
 
     @MainActor
     func testViewModelRegistersUndoForCompletionAndDelete() throws {
-        let store = TaskStore(databaseManager: try DatabaseManager(path: ":memory:"))
+        let database = try DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: database)
         let undoManager = UndoManager()
         undoManager.groupsByEvent = false
         let vm = TaskListViewModel(filter: .all, store: store,
@@ -126,7 +127,8 @@ final class TaskUndoTests: XCTestCase {
 
     @MainActor
     func testViewModelRegistersUndoForPriorityChange() throws {
-        let store = TaskStore(databaseManager: try DatabaseManager(path: ":memory:"))
+        let database = try DatabaseManager(path: ":memory:")
+        let store = TaskStore(databaseManager: database)
         let undoManager = UndoManager()
         undoManager.groupsByEvent = false
         let vm = TaskListViewModel(filter: .all, store: store,

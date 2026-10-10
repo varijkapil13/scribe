@@ -87,7 +87,8 @@ final class NoteUndoTests: XCTestCase {
     func testDeleteRegistersUndoAndRedo() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = NoteStore(databaseManager: try DatabaseManager(path: ":memory:"),
+        let database = try DatabaseManager(path: ":memory:")
+        let store = NoteStore(databaseManager: database,
                               fileStore: NoteFileStore(directory: NotesDirectory(root: root)))
         let undoManager = UndoManager()
         undoManager.groupsByEvent = false
