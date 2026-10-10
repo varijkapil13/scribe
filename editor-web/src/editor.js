@@ -22,7 +22,10 @@
 //   native -> JS:  window.scribeSetDoc(text)    replace the whole document
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px) optional body font-size override
+//                  window.scribeSetPlantUMLRemote(bool) allow plantuml.com rendering
 //                  window.scribeFocus()         focus the editor
+//   config:        window.scribeConfig = { plantUMLRemote: bool } injected by
+//                  native at document start (read once at module load)
 
 import { EditorView, keymap, Decoration, WidgetType, ViewPlugin } from "@codemirror/view";
 import { EditorState, Compartment, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
@@ -35,7 +38,12 @@ import {
 } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { tags as t } from "@lezer/highlight";
-import { getDiagram, onDiagramRendered } from "./diagrams.js";
+import {
+  getDiagram,
+  onDiagramRendered,
+  isPlantUMLRemoteEnabled,
+  setPlantUMLRemoteEnabled,
+} from "./diagrams.js";
 
 // ── Lazy KaTeX ───────────────────────────────────────────────────────────────
 // KaTeX (the JS engine ~0.6 MB plus its inlined-font CSS) is LAZY-LOADED via a
@@ -309,20 +317,40 @@ class MathWidget extends WidgetType {
 // Rendered diagram (mermaid offline / plantuml via <img>). Async results arrive
 // through the diagram cache; onDiagramRendered triggers a re-decoration.
 class DiagramWidget extends WidgetType {
-  constructor(kind, src, dark) {
+  constructor(kind, src, dark, remote) {
     super();
     this.kind = kind;
     this.src = src;
     this.dark = dark;
+    // PlantUML remote-render flag at construction time; part of eq() so
+    // flipping the Settings toggle rebuilds the widget DOM.
+    this.remote = remote;
   }
   eq(other) {
-    return other.kind === this.kind && other.src === this.src && other.dark === this.dark;
+    return (
+      other.kind === this.kind &&
+      other.src === this.src &&
+      other.dark === this.dark &&
+      other.remote === this.remote
+    );
   }
   toDOM() {
     const wrap = document.createElement("div");
     wrap.className = "cm-sl-diagram";
     const entry = getDiagram(this.kind, this.src, this.dark);
-    if (entry.status === "pending") {
+    if (entry.status === "disabled") {
+      // Remote PlantUML rendering is off (privacy default): show a notice plus
+      // the raw source instead of fetching from plantuml.com.
+      wrap.classList.add("cm-sl-diagram-disabled");
+      const note = document.createElement("div");
+      note.className = "cm-sl-diagram-notice";
+      note.textContent =
+        "PlantUML rendering is off (sends data to plantuml.com) \u2014 enable in Settings";
+      const pre = document.createElement("pre");
+      pre.textContent = this.src;
+      wrap.appendChild(note);
+      wrap.appendChild(pre);
+    } else if (entry.status === "pending") {
       wrap.classList.add("cm-sl-diagram-pending");
       wrap.textContent = `Rendering ${this.kind}…`;
     } else if (entry.status === "error") {
@@ -615,7 +643,7 @@ function maybeDecorateFence(state, deco, node, rangeActive, consumed) {
     from: node.from,
     to: node.to,
     value: Decoration.replace({
-      widget: new DiagramWidget(lang, src, currentDark),
+      widget: new DiagramWidget(lang, src, currentDark, lang === "plantuml" && isPlantUMLRemoteEnabled()),
       block: true,
     }),
     sortSide: -1,
@@ -1015,6 +1043,15 @@ window.scribeSetFontSize = function (px) {
   view.dispatch({
     effects: fontSizeCompartment.reconfigure(makeFontSize(size)),
   });
+};
+
+// Native pushes the "Render PlantUML diagrams with plantuml.com" Settings
+// toggle. Off (the default) never sends diagram source over the network.
+window.scribeSetPlantUMLRemote = function (enabled) {
+  const next = enabled === true;
+  if (next === isPlantUMLRemoteEnabled()) return;
+  setPlantUMLRemoteEnabled(next);
+  view.dispatch({ effects: diagramReady.of(null) });
 };
 
 window.scribeFocus = function () {

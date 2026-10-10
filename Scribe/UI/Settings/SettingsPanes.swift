@@ -118,6 +118,8 @@ private struct GeneralSettingsPane: View {
     @AppStorage(MeetingDetector.includeBrowsersKey) var detectBrowserMeetings: Bool = true
     @AppStorage(MeetingDetector.includeOtherAppsKey) var detectOtherApps: Bool = false
     @AppStorage(MenuBarPreferences.showIconKey) var showMenuBarIcon: Bool = true
+    @AppStorage(PlantUMLRenderingPreference.remoteEnabledKey)
+    var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
 
     @State private var openAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var openConfirm: OpenConfirm?
@@ -164,6 +166,14 @@ private struct GeneralSettingsPane: View {
                 Text("Move copies your current notes into a new folder. Open switches Scribe to use an existing folder as the vault — your current files stay where they are.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Diagrams") {
+                toggleWithCaption(
+                    "Render PlantUML diagrams with plantuml.com",
+                    isOn: $plantUMLRemoteEnabled,
+                    caption: "Sends diagram source to the internet (plantuml.com) to draw ```plantuml``` blocks. Off by default; when off, PlantUML blocks show their source. Mermaid diagrams always render on your Mac."
+                )
             }
 
             Section("Audio") {
