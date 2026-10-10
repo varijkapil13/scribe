@@ -277,8 +277,9 @@ private struct GeneralSettingsPane: View {
                 toggleWithCaption(
                     "Capture system audio",
                     isOn: $captureSystemAudio,
-                    caption: "Record remote participants via ScreenCaptureKit. Requires Screen Recording permission."
+                    caption: "Record remote participants — the audio other apps play."
                 )
+                SystemAudioSourceSettings(captureEnabled: captureSystemAudio)
                 toggleWithCaption(
                     "Echo cancellation (use when not wearing headphones)",
                     isOn: $echoCancellation,

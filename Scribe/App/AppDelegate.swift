@@ -388,8 +388,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // to register Scribe with TCC — this puts it in the System Settings
         // list and triggers the native "Allow" prompt. Then we show our own
         // alert with clear next steps.
+        // Only when ScreenCaptureKit is the sole way to get system audio: the
+        // Core Audio tap (the default) needs System Audio Recording instead,
+        // which macOS prompts for itself on first use.
         var captureSystemAudio = UserDefaults.standard.bool(forKey: "captureSystemAudio")
-        if captureSystemAudio && !Permissions.hasScreenCapturePermission() {
+        if captureSystemAudio && SystemAudioRouter.requiresScreenRecording()
+            && !Permissions.hasScreenCapturePermission() {
             // Register Scribe with TCC and fire the OS prompt. Returns the
             // pre-response state, so we can't rely on the bool — we just need
             // the side effect of registering + prompting.
