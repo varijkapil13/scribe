@@ -79,6 +79,7 @@ struct TaskDetailPanel: View {
             footer
         }
         .scribeGlass(.hud, in: Rectangle())
+        .modifier(TaskHandoffModifier(taskId: task.id, title: viewModel.title))
         .onChange(of: viewModel.lastSavedAt) { _, newValue in
             guard newValue != nil else { return }
             flashSaved()

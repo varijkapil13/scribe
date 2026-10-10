@@ -280,6 +280,7 @@ struct NoteLeafRow: View {
             } label: {
                 Label("Open", systemImage: "arrow.up.right.square")
             }
+            NoteLinkMenuItems(noteId: note.id)
             Divider()
             Button(role: .destructive) {
                 // Deleting a note cascades to its recordings; confirm first
