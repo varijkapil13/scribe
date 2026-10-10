@@ -48,6 +48,11 @@ struct MeetingSummarizer {
 
 
         let transcript = formatTranscriptForPrompt(segments: segments)
+        // Moments the user bookmarked while recording (meeting copilot) are
+        // passed as emphasis; empty when there are none.
+        let emphasis = SessionBookmarkFormatter.emphasisSection(
+            bookmarks: (try? SessionBookmarkStore.shared.fetch(sessionId: sessionId)) ?? []
+        ).map { "\n\($0)\n" } ?? ""
 
         let prompt = """
         You are an expert meeting analyst. Analyze the following meeting transcript \
@@ -66,7 +71,7 @@ struct MeetingSummarizer {
         - "followUpQuestions": An array of open questions needing follow-up.
 
         Respond ONLY with valid JSON. Do not include markdown code fences.
-
+        \(emphasis)
         TRANSCRIPT:
         \(transcript)
         """
