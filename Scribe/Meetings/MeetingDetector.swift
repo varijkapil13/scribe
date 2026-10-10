@@ -275,6 +275,13 @@ final class MeetingDetector: ObservableObject {
         case .off:
             return
         case .notify:
+            // "Scribe Focus" filter: no "start transcribing?" prompts while it
+            // asks. Notices about a recording that is actually running
+            // (auto-started / still recording / stopped) are kept.
+            guard !ScribeFocusPreferences.isMutingMeetingPrompts() else {
+                Log.audio.info("Meeting prompt muted by the Scribe Focus filter.")
+                return
+            }
             post(
                 id: Self.startRequestId,
                 category: Self.startCategoryId,
@@ -376,11 +383,6 @@ final class MeetingDetector: ObservableObject {
     }
 
     private func post(id: String, category: String, title: String, body: String, app: MeetingApp) {
-        // "Scribe Focus" filter: no meeting-detection prompts while it asks.
-        guard !ScribeFocusPreferences.isMutingMeetingPrompts() else {
-            Log.audio.info("Meeting notification muted by the Scribe Focus filter.")
-            return
-        }
         Task {
             // Lazy authorization, shared with task reminders: the first
             // detected meeting is the moment the prompt makes sense.

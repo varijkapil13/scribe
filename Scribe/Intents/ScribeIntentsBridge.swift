@@ -4,6 +4,7 @@ import Foundation
 /// Errors App Intents surface to Shortcuts / Siri.
 enum ScribeIntentError: Error, CustomLocalizedStringResourceConvertible {
     case noteNotFound
+    case noteUnreadable
     case taskNotFound
     case meetingNotFound
     case noMeetings
@@ -16,6 +17,7 @@ enum ScribeIntentError: Error, CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .noteNotFound:         return "That note no longer exists."
+        case .noteUnreadable:       return "Scribe couldn't read that note's file, so nothing was added."
         case .taskNotFound:         return "That task no longer exists."
         case .meetingNotFound:      return "That meeting no longer exists."
         case .noMeetings:           return "There are no recorded meetings yet."
@@ -50,7 +52,7 @@ enum ScribeIntentsBridge {
     /// The app delegate, waiting briefly when an intent launched the app and
     /// runs before launch finished.
     static func readyAppDelegate() async throws -> AppDelegate {
-        for _ in 0..<30 {
+        for _ in 0..<50 {
             if let delegate = appDelegate { return delegate }
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -59,23 +61,36 @@ enum ScribeIntentsBridge {
 
     // MARK: - Notes
 
-    static func createNote(title: String, body: String) throws -> NoteEntity {
+    /// Note writes wait for launch to finish (vault set up, legacy bodies
+    /// migrated to disk) so a note isn't written before the store is ready.
+    static func createNote(title: String, body: String) async throws -> NoteEntity {
+        _ = try await readyAppDelegate()
         let note = try ScribeIntentsData.live.createNote(title: title, body: body)
         return NoteEntity(note: note)
     }
 
     /// Appends through `NoteAIEditWriter` so an open editor replays the same
     /// edit in memory instead of overwriting it on its next autosave.
-    static func append(_ text: String, toNoteId noteId: String) throws -> NoteEntity {
-        guard try NoteStore.shared.fetchNote(id: noteId) != nil else { throw ScribeIntentError.noteNotFound }
-        try NoteAIEditWriter.apply(.appendText(text), toNoteId: noteId)
+    static func append(_ text: String, toNoteId noteId: String) async throws -> NoteEntity {
+        _ = try await readyAppDelegate()
+        let store = NoteStore.shared
+        guard let current = try store.fetchNote(id: noteId) else { throw ScribeIntentError.noteNotFound }
+        // `fetchNote` falls back to an empty body when the note's file can't
+        // be found or read; appending to that would overwrite the file with
+        // just the new text. A non-empty excerpt means the note has content
+        // we didn't get, so refuse instead of writing.
+        if current.body.isEmpty, !(current.bodyExcerpt ?? "").isEmpty {
+            throw ScribeIntentError.noteUnreadable
+        }
+        try NoteAIEditWriter.apply(.appendText(text), toNoteId: noteId, noteStore: store)
         guard let updated = try ScribeIntentsData.live.notes(ids: [noteId]).first else {
             throw ScribeIntentError.noteNotFound
         }
         return NoteEntity(note: updated)
     }
 
-    static func openNote(id: String) throws {
+    static func openNote(id: String) async throws {
+        _ = try await readyAppDelegate()
         guard try !ScribeIntentsData.live.notes(ids: [id]).isEmpty else { throw ScribeIntentError.noteNotFound }
         ScribeMainWindowNavigator.show(.note(id))
     }
@@ -98,7 +113,9 @@ enum ScribeIntentsBridge {
     /// their next occurrence and re-arm their reminder; one-off tasks drop it.
     static func completeTask(id: String) async throws -> TaskEntity {
         let store = TaskStore.shared
-        guard try store.fetchTask(id: id) != nil else { throw ScribeIntentError.taskNotFound }
+        guard let existing = try store.fetchTask(id: id) else { throw ScribeIntentError.taskNotFound }
+        // Already done: don't log a second completion or move completedAt.
+        if existing.isCompleted { return TaskEntity(task: existing) }
         try store.completeTask(id: id)
         guard let refreshed = try store.fetchTask(id: id) else { throw ScribeIntentError.taskNotFound }
         if refreshed.isCompleted {
