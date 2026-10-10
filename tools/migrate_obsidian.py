@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Migrate Obsidian vault data to Scribe via its MCP server (port 3333)."""
+"""Migrate Obsidian vault data to Scribe via its MCP server (port 3333).
+
+The MCP server requires its bearer token (Settings > MCP > Copy Token):
+
+    SCRIBE_MCP_TOKEN=<token> python3 tools/migrate_obsidian.py
+"""
 
 import json
+import os
 import time
 import threading
 import urllib.request
@@ -9,6 +15,8 @@ import urllib.error
 from typing import Optional
 
 BASE_URL = "http://127.0.0.1:3333"
+MCP_TOKEN = os.environ.get("SCRIBE_MCP_TOKEN", "")
+AUTH_HEADERS = {"Authorization": f"Bearer {MCP_TOKEN}"}
 session_path: Optional[str] = None
 session_ready = threading.Event()
 _req_id = [0]
@@ -22,7 +30,7 @@ def _next_id() -> int:
 def _keep_sse_alive():
     """Open SSE stream, capture session path, then hold connection open."""
     global session_path
-    req = urllib.request.Request(BASE_URL + "/sse")
+    req = urllib.request.Request(BASE_URL + "/sse", headers=AUTH_HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=300) as f:
             for raw in f:
@@ -47,7 +55,7 @@ def _post(payload: dict) -> int:
     req = urllib.request.Request(
         BASE_URL + session_path,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **AUTH_HEADERS},
         method="POST",
     )
     with urllib.request.urlopen(req) as f:
@@ -76,6 +84,10 @@ def create_task(title: str, notes: str = "", project: str = "",
 
 
 def main():
+    if not MCP_TOKEN:
+        print("ERROR: set SCRIBE_MCP_TOKEN to the token from Settings > MCP.")
+        return
+
     # Start SSE listener thread.
     t = threading.Thread(target=_keep_sse_alive, daemon=True)
     t.start()

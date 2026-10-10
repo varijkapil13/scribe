@@ -38,14 +38,22 @@ final class MCPServer: ObservableObject {
     /// The port the listener was last asked to bind.
     @Published private(set) var port: UInt16 = MCPPortPolicy.defaultPort
 
+    /// Per-connection key. A monotonically increasing counter rather than
+    /// `ObjectIdentifier(conn)`: a deallocated connection's address can be
+    /// reused by a new one, and late callbacks (the request timeout, a
+    /// `.cancelled` state update after `closeAllConnections`) would then act
+    /// on the wrong connection.
+    private typealias ConnectionID = UInt64
+
     // Active SSE sessions keyed by sessionId.
     private var sessions: [String: NWConnection] = [:]
-    private var sessionIdByConnection: [ObjectIdentifier: String] = [:]
+    private var sessionIdByConnection: [ConnectionID: String] = [:]
     // Every open connection, so stop() can tear them all down and the
     // connection cap can be enforced.
-    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var connections: [ConnectionID: NWConnection] = [:]
     // Connections that have not yet delivered a complete request.
-    private var awaitingRequest: Set<ObjectIdentifier> = []
+    private var awaitingRequest: Set<ConnectionID> = []
+    private var nextConnectionID: ConnectionID = 0
 
     private var listener: NWListener?
     /// Bumped on every start/stop so callbacks from a previous listener
@@ -158,7 +166,8 @@ final class MCPServer: ObservableObject {
             conn.cancel()
             return
         }
-        let id = ObjectIdentifier(conn)
+        nextConnectionID &+= 1
+        let id = nextConnectionID
         connections[id] = conn
         awaitingRequest.insert(id)
 
@@ -171,7 +180,7 @@ final class MCPServer: ObservableObject {
             }
         }
         conn.start(queue: .global(qos: .userInitiated))
-        read(conn: conn, buffer: Data())
+        read(conn: conn, id: id, buffer: Data())
 
         // Drop connections that never finish sending a request.
         Task { @MainActor [weak self] in
@@ -183,7 +192,7 @@ final class MCPServer: ObservableObject {
 
     /// Called (via stateUpdateHandler) when a connection fails or is
     /// cancelled — removes it and any SSE session it backed.
-    private func connectionClosed(_ id: ObjectIdentifier) {
+    private func connectionClosed(_ id: ConnectionID) {
         connections.removeValue(forKey: id)
         awaitingRequest.remove(id)
         if let sessionId = sessionIdByConnection.removeValue(forKey: id) {
@@ -191,18 +200,18 @@ final class MCPServer: ObservableObject {
         }
     }
 
-    private func read(conn: NWConnection, buffer: Data) {
+    private func read(conn: NWConnection, id: ConnectionID, buffer: Data) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
             let failed = error != nil
             Task { @MainActor [weak self] in
                 guard let self else { conn.cancel(); return }
-                self.handleReceived(conn: conn, buffer: buffer, data: data,
+                self.handleReceived(conn: conn, id: id, buffer: buffer, data: data,
                                     isComplete: isComplete, failed: failed)
             }
         }
     }
 
-    private func handleReceived(conn: NWConnection, buffer: Data, data: Data?,
+    private func handleReceived(conn: NWConnection, id: ConnectionID, buffer: Data, data: Data?,
                                 isComplete: Bool, failed: Bool) {
         if failed { conn.cancel(); return }
         var accumulated = buffer
@@ -210,21 +219,21 @@ final class MCPServer: ObservableObject {
 
         switch MCPHTTPParser.parse(accumulated) {
         case .complete(let req):
-            awaitingRequest.remove(ObjectIdentifier(conn))
-            route(req: req, conn: conn)
+            awaitingRequest.remove(id)
+            route(req: req, conn: conn, id: id)
         case .invalid(let parseError):
-            awaitingRequest.remove(ObjectIdentifier(conn))
+            awaitingRequest.remove(id)
             respond(conn: conn, status: parseError.status, body: Data("bad request".utf8), close: true)
         case .incomplete:
             // Peer closed before sending the whole request.
             if isComplete { conn.cancel(); return }
-            read(conn: conn, buffer: accumulated)
+            read(conn: conn, id: id, buffer: accumulated)
         }
     }
 
     // MARK: - Routing
 
-    private func route(req: MCPHTTPRequest, conn: NWConnection) {
+    private func route(req: MCPHTTPRequest, conn: NWConnection, id: ConnectionID) {
         if let rejection = MCPRequestGuard.validate(req, port: port, expectedToken: token) {
             var extra: [(String, String)] = []
             if rejection == .unauthorized { extra.append(("WWW-Authenticate", "Bearer")) }
@@ -236,7 +245,7 @@ final class MCPServer: ObservableObject {
         switch (req.method, req.path) {
         case ("GET", "/sse"):
             let viaQuery = MCPRequestGuard.presentedToken(in: req)?.viaQuery ?? false
-            openSSE(conn: conn, echoTokenInEndpoint: viaQuery)
+            openSSE(conn: conn, id: id, echoTokenInEndpoint: viaQuery)
         case ("POST", "/message"):
             let sessionId = req.queryValue("sessionId") ?? ""
             receiveMessage(body: req.body, sessionId: sessionId, reqConn: conn)
@@ -251,7 +260,7 @@ final class MCPServer: ObservableObject {
 
     // MARK: - SSE session
 
-    private func openSSE(conn: NWConnection, echoTokenInEndpoint: Bool) {
+    private func openSSE(conn: NWConnection, id: ConnectionID, echoTokenInEndpoint: Bool) {
         guard sessions.count < Self.maxSessions else {
             respond(conn: conn, status: "503 Service Unavailable",
                     body: Data("too many sessions".utf8), close: true)
@@ -259,7 +268,7 @@ final class MCPServer: ObservableObject {
         }
         let sessionId = UUID().uuidString
         sessions[sessionId] = conn
-        sessionIdByConnection[ObjectIdentifier(conn)] = sessionId
+        sessionIdByConnection[id] = sessionId
 
         let headerBlock = "HTTP/1.1 200 OK\r\n"
             + "Content-Type: text/event-stream\r\n"

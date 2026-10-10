@@ -160,9 +160,11 @@ struct MCPSettingsPane: View {
                 mcpPort = Int(MCPPortPolicy.defaultPort)
             }
             portText = String(effectivePort)
-            server.loadToken()
-            if mcpEnabled && !server.isRunning {
-                server.start(port: effectivePort)
+            // Only touch the Keychain when the server is (being) enabled;
+            // start() and the toggle load the token on demand.
+            if mcpEnabled {
+                server.loadToken()
+                if !server.isRunning { server.start(port: effectivePort) }
             }
         }
     }
