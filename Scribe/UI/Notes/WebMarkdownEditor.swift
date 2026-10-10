@@ -28,14 +28,25 @@
 //                    {type:"ready"}             editor mounted
 //                    {type:"change", text}      debounced doc edit
 //                    {type:"wikilink", target}  user clicked a [[wiki link]]
+//                    {type:"outline", headings:[{level,text,line}]}  heading list
+//                    {type:"attachment", id, filename, mime, data}   pasted/dropped file
+//                    {type:"attachmentRejected", filename, reason}   over the size cap
+//                    {type:"requestCompletionData"}  `[[` / `#` completion wants data
 //   native -> JS:  window.scribeSetDoc(text)
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px)
 //                  window.scribeSetKnownTitles([title, …])  resolved-link styling
 //                  window.scribeSetPlantUMLRemote(bool)  opt-in plantuml.com rendering
 //                  window.scribeFocus()
+//                  window.scribeCommand(name, arg)  WebEditorCommand (find, replace,
+//                                   findNext, findPrevious, fold…, scrollToLine)
+//                  window.scribeSetCompletionData({titles, tags})
+//                  window.scribeAttachmentSaved(id, {path, name, isImage})
+//                  window.scribeAttachmentFailed(id, message)
+//                  window.scribeInsertAttachment({path, name, isImage})
 //   config:        window.scribeConfig = {plantUMLRemote}  document-start user script
 
+import AppKit
 import SwiftUI
 import WebKit
 import OSLog
@@ -46,6 +57,10 @@ private let log = Logger(subsystem: "com.varij.scribe", category: "web-markdown-
 /// See `EditorAssetSchemeHandler` and the file header for why file:// fails.
 private let editorAssetScheme = "scribe-asset"
 private let editorAssetHost = "editor"
+/// Host under the same scheme that serves note attachments (images only) from
+/// the vault, so `![](attachments/<noteId>/x.png)` renders inline. See
+/// `EditorAttachmentFiles.servedAttachmentURL` for what may be served.
+private let vaultAssetHost = "vault"
 
 /// Serves the bundled `Editor/` directory to the WKWebView for
 /// `scribe-asset://editor/...` requests, mapping each URL path to a file under
@@ -77,6 +92,10 @@ private final class EditorAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        if let url = urlSchemeTask.request.url, url.host == vaultAssetHost {
+            serveVaultAttachment(url, task: urlSchemeTask)
+            return
+        }
         guard let rootDir,
               let url = urlSchemeTask.request.url,
               let fileURL = Self.resolve(url, under: rootDir),
@@ -109,6 +128,31 @@ private final class EditorAssetSchemeHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
         // Responses complete synchronously in `start`; nothing to cancel.
+    }
+
+    /// Serves an attachment image from the notes vault for
+    /// `scribe-asset://vault/attachments/<noteId>/<file>`.
+    private func serveVaultAttachment(_ url: URL, task urlSchemeTask: any WKURLSchemeTask) {
+        let root = AttachmentsDirectory.defaultRoot()
+        guard let fileURL = EditorAttachmentFiles.servedAttachmentURL(forRequestPath: url.path, root: root),
+              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        let headers = [
+            "Content-Type": EditorAttachmentFiles.mimeType(forFilename: fileURL.lastPathComponent),
+            "Content-Length": String(data.count),
+            "Cache-Control": "no-cache",
+        ]
+        guard let response = HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers
+        ) else {
+            urlSchemeTask.didFailWithError(URLError(.cannotParseResponse))
+            return
+        }
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
     }
 
     /// Maps a request URL to a file under `root`, defaulting to `index.html`
@@ -165,6 +209,16 @@ struct WebMarkdownEditor: NSViewRepresentable {
     /// the diagram source over the internet). Off by default — see
     /// `PlantUMLRenderingPreference`.
     var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
+    /// Note whose attachments folder receives pasted / dropped / imported
+    /// files. nil (e.g. an unsaved daily-note draft) saves to
+    /// `attachments/unfiled/`.
+    var attachmentNoteId: String? = nil
+    /// Supplies note titles + tags for `[[` / `#` autocomplete. Called on load
+    /// and whenever the editor asks for fresh data.
+    var completionDataProvider: (() -> EditorCompletionData)? = nil
+    /// Optional observable model receiving the heading outline and offering a
+    /// handle to send commands to this editor.
+    var model: WebEditorModel? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onWikiLink: onWikiLink)
@@ -190,8 +244,9 @@ struct WebMarkdownEditor: NSViewRepresentable {
             EditorAssetSchemeHandler(rootDir: Self.resourceDir),
             forURLScheme: editorAssetScheme
         )
+        EditorWebViewConfigurator.enableFullWritingTools(on: config)
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = ScribeEditorWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         // Transparent so the page background (set from CSS/theme) shows through
         // and there's no white flash on dark mode before the bundle loads.
@@ -206,6 +261,16 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.pendingFontSize = fontSize
         context.coordinator.pendingTitles = knownTitles
         context.coordinator.initialPlantUMLRemote(plantUMLRemoteEnabled)
+        context.coordinator.attachmentNoteId = attachmentNoteId
+        context.coordinator.completionDataProvider = completionDataProvider
+        context.coordinator.attach(model: model)
+        webView.onDeviceImport = { [weak coordinator = context.coordinator] data, name, mime in
+            coordinator?.importDeviceFile(data: data, filename: name, mimeType: mime)
+        }
+        webView.onEditorCommand = { [weak coordinator = context.coordinator] command in
+            coordinator?.run(command) ?? false
+        }
+        WebEditorCommandCenter.shared.register(context.coordinator)
 
         if Self.resourceDir != nil, let entryURL = Self.editorEntryURL {
             webView.load(URLRequest(url: entryURL))
@@ -226,6 +291,18 @@ struct WebMarkdownEditor: NSViewRepresentable {
         if let fontSize { context.coordinator.setFontSize(fontSize) }
         context.coordinator.setKnownTitles(knownTitles)
         context.coordinator.setPlantUMLRemote(plantUMLRemoteEnabled)
+        context.coordinator.attachmentNoteId = attachmentNoteId
+        context.coordinator.completionDataProvider = completionDataProvider
+        context.coordinator.attach(model: model)
+    }
+
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        WebEditorCommandCenter.shared.unregister(coordinator)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "scribe")
+        if let editorWebView = webView as? ScribeEditorWebView {
+            editorWebView.onDeviceImport = nil
+            editorWebView.onEditorCommand = nil
+        }
     }
 
     // MARK: - Bundle lookup
@@ -276,6 +353,14 @@ struct WebMarkdownEditor: NSViewRepresentable {
         var pendingTitles: [String]?
         var pendingPlantUMLRemote: Bool?
 
+        /// Folder (note id) for pasted / dropped / imported attachments.
+        var attachmentNoteId: String?
+        /// Supplies `[[` / `#` completion data (see WebMarkdownEditor).
+        var completionDataProvider: (() -> EditorCompletionData)?
+        /// Latest heading outline reported by the editor.
+        private(set) var outline: [EditorOutlineHeading] = []
+        private weak var model: WebEditorModel?
+
         init(text: Binding<String>, onWikiLink: ((String) -> Void)? = nil) {
             self.parentText = text
             self.onWikiLink = onWikiLink
@@ -314,6 +399,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
                     pendingPlantUMLRemote = nil
                     if remote != lastSentPlantUMLRemote { pushPlantUMLRemote(remote) }
                 }
+                pushCompletionData()
             case "change":
                 guard let text = body["text"] as? String else { return }
                 lastSentText = text
@@ -325,8 +411,158 @@ struct WebMarkdownEditor: NSViewRepresentable {
                 let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return }
                 onWikiLink?(trimmed)
+            case "outline":
+                let headings = EditorOutlineHeading.parseList(body["headings"])
+                outline = headings
+                if let model, model.outline != headings { model.outline = headings }
+            case "requestCompletionData":
+                pushCompletionData()
+            case "attachment":
+                guard let id = body["id"] as? String,
+                      let base64 = body["data"] as? String else { return }
+                importAttachment(
+                    base64: base64,
+                    filename: body["filename"] as? String ?? "",
+                    mimeType: body["mime"] as? String ?? "",
+                    replyID: id
+                )
+            case "attachmentRejected":
+                let name = body["filename"] as? String ?? "file"
+                log.error("WebMarkdownEditor: attachment \(name, privacy: .private) rejected (over the size limit)")
+                NSSound.beep()
             default:
                 break
+            }
+        }
+
+        // MARK: Model / commands
+
+        /// Connects (or swaps) the observable model that mirrors this editor.
+        func attach(model newModel: WebEditorModel?) {
+            guard newModel !== model else { return }
+            if let old = model, old.coordinator === self { old.coordinator = nil }
+            model = newModel
+            if let newModel {
+                newModel.coordinator = self
+                if newModel.outline != outline { newModel.outline = outline }
+            }
+        }
+
+        /// Runs a native → JS editor command. Returns false until the editor
+        /// has loaded.
+        @discardableResult
+        func run(_ command: WebEditorCommand) -> Bool {
+            guard isReady, let webView else { return false }
+            webView.evaluateJavaScript(command.javaScript, completionHandler: nil)
+            return true
+        }
+
+        /// Whether this editor's web view holds keyboard focus in `window`.
+        func isFirstResponder(in window: NSWindow) -> Bool {
+            guard let webView, let responder = window.firstResponder as? NSView else { return false }
+            return responder === webView || responder.isDescendant(of: webView)
+        }
+
+        // MARK: Completion data
+
+        private func pushCompletionData() {
+            guard isReady, let provider = completionDataProvider else { return }
+            let data = provider()
+            webView?.evaluateJavaScript(
+                "window.scribeSetCompletionData && window.scribeSetCompletionData(\(data.javaScriptLiteral));",
+                completionHandler: nil
+            )
+        }
+
+        // MARK: Attachments
+
+        /// Saves a pasted / dropped file (base64 from JS) off the main actor,
+        /// then tells JS where it landed so it can insert the markdown link.
+        private func importAttachment(base64: String, filename: String, mimeType: String, replyID: String) {
+            let noteId = attachmentNoteId
+            let root = AttachmentsDirectory.defaultRoot()
+            Task { [weak self] in
+                let outcome = await Coordinator.saveDetached(
+                    base64: base64, data: nil, filename: filename, mimeType: mimeType, noteId: noteId, root: root
+                )
+                self?.finishAttachment(outcome, replyID: replyID)
+            }
+        }
+
+        /// Saves an image imported from a nearby device (Continuity Camera) and
+        /// inserts it at the caret.
+        func importDeviceFile(data: Data, filename: String, mimeType: String) {
+            let noteId = attachmentNoteId
+            let root = AttachmentsDirectory.defaultRoot()
+            Task { [weak self] in
+                let outcome = await Coordinator.saveDetached(
+                    base64: nil, data: data, filename: filename, mimeType: mimeType, noteId: noteId, root: root
+                )
+                self?.finishAttachment(outcome, replyID: nil)
+            }
+        }
+
+        private nonisolated static func saveDetached(
+            base64: String?,
+            data: Data?,
+            filename: String,
+            mimeType: String,
+            noteId: String?,
+            root: URL
+        ) async -> Result<SavedEditorAttachment, EditorAttachmentFilesError> {
+            await Task.detached(priority: .userInitiated) { () -> Result<SavedEditorAttachment, EditorAttachmentFilesError> in
+                do {
+                    let saved: SavedEditorAttachment
+                    if let data {
+                        saved = try EditorAttachmentFiles.save(
+                            data: data, suggestedName: filename, mimeType: mimeType, noteId: noteId, root: root
+                        )
+                    } else {
+                        saved = try EditorAttachmentFiles.saveBase64(
+                            base64 ?? "", suggestedName: filename, mimeType: mimeType, noteId: noteId, root: root
+                        )
+                    }
+                    return .success(saved)
+                } catch let error as EditorAttachmentFilesError {
+                    return .failure(error)
+                } catch {
+                    log.error("WebMarkdownEditor: saving attachment failed — \(error.localizedDescription, privacy: .public)")
+                    return .failure(.invalidData)
+                }
+            }.value
+        }
+
+        private func finishAttachment(
+            _ outcome: Result<SavedEditorAttachment, EditorAttachmentFilesError>,
+            replyID: String?
+        ) {
+            switch outcome {
+            case .success(let saved):
+                let info = WebEditorJS.jsonLiteral(
+                    ["path": saved.relativePath, "name": saved.filename, "isImage": saved.isImage] as [String: Any],
+                    fallback: "null"
+                )
+                if let replyID {
+                    webView?.evaluateJavaScript(
+                        "window.scribeAttachmentSaved && window.scribeAttachmentSaved(\(WebEditorJS.stringLiteral(replyID)), \(info));",
+                        completionHandler: nil
+                    )
+                } else {
+                    webView?.evaluateJavaScript(
+                        "window.scribeInsertAttachment && window.scribeInsertAttachment(\(info));",
+                        completionHandler: nil
+                    )
+                }
+            case .failure(let error):
+                log.error("WebMarkdownEditor: attachment not saved — \(error.localizedDescription, privacy: .public)")
+                NSSound.beep()
+                if let replyID {
+                    let message = WebEditorJS.stringLiteral(error.localizedDescription)
+                    webView?.evaluateJavaScript(
+                        "window.scribeAttachmentFailed && window.scribeAttachmentFailed(\(WebEditorJS.stringLiteral(replyID)), \(message));",
+                        completionHandler: nil
+                    )
+                }
             }
         }
 

@@ -12,6 +12,9 @@ struct NoteEditorView: View {
     /// chrome. The editor only owns the per-block dim; chrome hiding lives in
     /// the detail view.
     var focusModeEnabled: Bool = false
+    /// Optional model that receives the editor's heading outline (for a table
+    /// of contents) and can send it commands. When nil the view keeps its own.
+    var editorModel: WebEditorModel? = nil
 
     // Per-note + default typography / measure preferences.
     @AppStorage(NotePageWidth.storageKey) private var pageWidthRaw: String = NotePageWidth.full.rawValue
@@ -31,6 +34,8 @@ struct NoteEditorView: View {
     /// Known note titles, refreshed when the editor appears / the note changes,
     /// so the web editor can style `[[wiki links]]` as resolved vs broken.
     @State private var knownTitles: [String] = []
+    /// Fallback outline/command model when the owner doesn't supply one.
+    @State private var ownEditorModel = WebEditorModel()
 
     private var pageWidth: NotePageWidth {
         NotePageWidth(rawValue: pageWidthRaw) ?? .full
@@ -74,7 +79,15 @@ struct NoteEditorView: View {
                     fontSize: bodyFontSize,
                     knownTitles: knownTitles,
                     onWikiLink: { anchor in onNavigate(anchor) },
-                    plantUMLRemoteEnabled: plantUMLRemoteEnabled
+                    plantUMLRemoteEnabled: plantUMLRemoteEnabled,
+                    attachmentNoteId: noteId,
+                    completionDataProvider: { [noteStore] in
+                        EditorCompletionData(
+                            titles: (try? noteStore.allNoteTitles()) ?? [],
+                            tags: (try? noteStore.allNoteTags()) ?? []
+                        )
+                    },
+                    model: editorModel ?? ownEditorModel
                 )
                 // Full width by default. The finite presets (Regular/Wide)
                 // centre the text column at the chosen reading measure
