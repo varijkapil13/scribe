@@ -53,6 +53,12 @@ struct ScribeApp: App {
                 .keyboardShortcut("n", modifiers: [.command, .control])
         }
 
+        // File → backup / restore (ScribeBackupController runs the panels).
+        CommandGroup(after: .importExport) {
+            Button("Back Up Scribe…") { ScribeBackupController.shared.backUpInteractively() }
+            Button("Restore from Backup…") { ScribeBackupController.shared.restoreInteractively() }
+        }
+
         // Recording transport. Start/Stop stays shortcutless so it doesn't
         // double-bind the global ⇧⌘R registered via KeyboardShortcuts.
         CommandMenu("Recording") {
