@@ -2,8 +2,9 @@ name: Release macOS
 
 # Build the shippable macOS app and publish it as a downloadable GitHub Release
 # whenever a version tag (v*) is pushed. Also runnable manually
-# (workflow_dispatch) — a manual run still builds + packages and uploads a
-# workflow artifact, but only a tag push creates a Release.
+# (workflow_dispatch): with a `version` input it creates tag v<version> and the
+# Release from the chosen commit; without one it only builds + uploads a
+# workflow artifact.
 #
 # NOTE ON SIGNING: CI has no "Developer ID Application" certificate (see
 # BUILD.md), so the app is ad-hoc signed (CODE_SIGN_IDENTITY="-") and NOT
@@ -14,6 +15,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (creates tag v<version> on this commit). Leave empty for a build-only run."
+        required: false
+        default: ""
 
 concurrency:
   group: release-macos-${{ github.ref }}
@@ -26,6 +32,10 @@ jobs:
   release:
     name: build + package macOS app
     runs-on: xcode-27
+    env:
+      # The release tag: the pushed tag, or v<version> from a manual run. Empty
+      # means build + upload a workflow artifact only, no GitHub Release.
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.version != '' && format('v{0}', inputs.version) || '') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,9 +64,9 @@ jobs:
         # release tag — no manual Info.plist bump. The committed Info.plist keeps
         # its dev placeholder; this only stamps the CI artifact. (manual_dispatch
         # runs without a tag keep the committed version.)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           PLIST="Scribe/Resources/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$PLIST"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST"
@@ -92,8 +102,8 @@ jobs:
           [ -d "$APP" ] || { echo "::error::Scribe.app not found at $APP"; exit 1; }
 
           # Prefer the pushed tag for naming; fall back to the bundle version.
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            NAME="${GITHUB_REF_NAME}"
+          if [ -n "${RELEASE_TAG}" ]; then
+            NAME="${RELEASE_TAG}"
           else
             NAME="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
           fi
@@ -118,12 +128,12 @@ jobs:
           if-no-files-found: error
 
       - name: Generate changelog + publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           NOTES="dist/RELEASE_NOTES.md"
 
           # Download / Gatekeeper blurb (the artifact is not notarized).
@@ -147,8 +157,10 @@ jobs:
           EOF
 
           # Changelog from conventional commits since the previous v* tag.
-          PREV="$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)"
-          RANGE="${PREV:+${PREV}..}${TAG}"
+          # HEAD is the release commit (the pushed tag, or the dispatched commit
+          # whose tag gh creates below), so look for the previous tag before it.
+          PREV="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)"
+          RANGE="${PREV:+${PREV}..}HEAD"
           section () { # $1 = subject ERE, $2 = heading
             local items
             items="$(git log "$RANGE" --no-merges --pretty='%s' \
@@ -168,8 +180,11 @@ jobs:
             printf '_Initial release — see the README for the full feature set._\n\n' >> "$NOTES"
           fi
 
+          # --target creates the tag on this commit for manual runs; for a pushed
+          # tag it already exists and points here.
           gh release create "${TAG}" \
             dist/Scribe-*.dmg dist/Scribe-*.zip \
+            --target "${GITHUB_SHA}" \
             --title "Scribe ${TAG}" \
             --notes-file "$NOTES"
 
@@ -179,7 +194,7 @@ jobs:
         # token with Contents: read & write on varijkapil13/homebrew-tap, the
         # same one saral uses). Without it the release still succeeds and this
         # step only leaves a notice.
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAP: varijkapil13/homebrew-tap
@@ -189,8 +204,8 @@ jobs:
             echo "::notice::HOMEBREW_TAP_TOKEN is unset; release published without updating the Homebrew cask"
             exit 0
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          ZIP="dist/Scribe-${GITHUB_REF_NAME}.zip"
+          VERSION="${RELEASE_TAG#v}"
+          ZIP="dist/Scribe-${RELEASE_TAG}.zip"
           SHA256="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
 
           git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP}.git" tap

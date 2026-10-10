@@ -98,7 +98,7 @@ notarized upload). Then re-run the release script.
 
 ### Releasing (GitHub + Homebrew)
 
-Push a tag like `v0.1.0`. `.github/workflows/release-macos.yml` then:
+Push a tag like `v0.1.0`, or run the **Release macOS** workflow from the Actions tab with a `version` (e.g. `0.1.0`), which creates the `v0.1.0` tag on that commit. `.github/workflows/release-macos.yml` then:
 
 1. Builds the app on the `xcode-27` runner, ad-hoc signed, with the speaker-diarization models bundled.
 2. Publishes `Scribe-v0.1.0.dmg` and `Scribe-v0.1.0.zip` as a GitHub Release with a generated changelog.
