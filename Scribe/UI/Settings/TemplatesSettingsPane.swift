@@ -73,6 +73,8 @@ struct TemplatesSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            NoteTemplatesSettingsSection()
         }
         .formStyle(.grouped)
         .onAppear(perform: reload)

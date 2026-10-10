@@ -700,6 +700,7 @@ final class DatabaseManager: @unchecked Sendable {
         }
 
         registerRemindersLinkMigration(in: &migrator)
+        NoteVersionStore.registerNoteVersionsMigration(in: &migrator)
 
         // Meeting copilot: moments the user bookmarked during a recording
         // (⌃⌥M / "Mark moment"). Offset is milliseconds into the session, on

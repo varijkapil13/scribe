@@ -47,7 +47,8 @@ enum NoteAIEditWriter {
         if updated != note.body {
             note.body = updated
             let tags = try noteStore.tags(for: noteId)
-            try noteStore.updateNote(note, tags: tags)
+            // Always keep the pre-edit content in version history.
+            try noteStore.updateNote(note, tags: tags, versionReason: .aiEdit)
         }
         NotificationCenter.default.post(
             name: .scribeNoteAIEditApplied,

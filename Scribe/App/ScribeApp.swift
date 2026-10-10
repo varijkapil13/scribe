@@ -26,6 +26,7 @@ struct ScribeApp: App {
         .commands { scribeCommands }
         .commands { ScribeMenuCommands() }
         .commands { MediaAICommands() }
+        .commands { NotePowerMenuCommands() }
 
         // Standalone note windows (File › Open in New Window, ⌥⌘O). Restored
         // with their note on relaunch.
