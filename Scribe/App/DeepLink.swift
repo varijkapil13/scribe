@@ -17,6 +17,7 @@ import Foundation
 ///     scribe://dictate                      toggle dictation
 ///     scribe://search?q=<query>             open the command bar with a query
 ///     scribe://today                        go to Today
+///     scribe://import-share                 import items from the Share extension
 ///
 /// Pure value type: parsing and URL building never touch app state, so the
 /// grammar is unit-tested in isolation (`ScribeDeepLinkTests`). The routing
@@ -33,6 +34,7 @@ enum ScribeDeepLink: Equatable, Sendable {
     case dictate
     case search(query: String)
     case today
+    case importShared
 
     static let scheme = "scribe"
 
@@ -111,6 +113,10 @@ enum ScribeDeepLink: Equatable, Sendable {
             guard rest.isEmpty else { return nil }
             return .today
 
+        case "import-share", "importshare":
+            guard rest.isEmpty else { return nil }
+            return .importShared
+
         default:
             return nil
         }
@@ -158,6 +164,8 @@ enum ScribeDeepLink: Equatable, Sendable {
             items = [URLQueryItem(name: "q", value: query)]
         case .today:
             components.host = "today"
+        case .importShared:
+            components.host = "import-share"
         }
         if !items.isEmpty {
             // Encode with form semantics so `parse` (which reads `+` as a

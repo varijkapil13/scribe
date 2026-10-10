@@ -26,6 +26,17 @@
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
 
+	<!--
+	  App Group shared with the widget, Share and Quick Look extensions
+	  (Extensions/). The app writes widget-snapshot.json and reads the
+	  widgets' task requests and the Share inbox from this container. Must
+	  match ScribeAppGroup.identifier and each extension's entitlements.
+	-->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.varij.scribe</string>
+	</array>
+
 	<!-- Read/write access to user-selected files (NSSavePanel for export). -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>

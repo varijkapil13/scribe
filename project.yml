@@ -48,6 +48,12 @@ targets:
       - package: swift-markdown
         product: Markdown
       - package: FluidAudio
+      # App extensions (Extensions/), embedded into Scribe.app/Contents/PlugIns.
+      # Shared App Group model code lives in Scribe/Shared/ (compiled by this
+      # target and SwiftPM) and is listed file-by-file in each extension.
+      - target: ScribeWidgets
+      - target: ScribeQuickLook
+      - target: ScribeShare
       # The note editor is now the CodeMirror 6 bundle hosted in a WKWebView
       # (WebMarkdownEditor + Scribe/Resources/Editor/). The old native
       # CodeEditSourceEditor engine has been removed, so it is no longer a
@@ -100,6 +106,71 @@ targets:
           else
             echo "Diarizer models not fetched; app will download on first use."
           fi
+  # App extensions. They live OUTSIDE Scribe/ because `swift test` compiles
+  # every file under Scribe/ into the app's SwiftPM executable target, and
+  # extension code (WidgetKit bundle @main, QLPreviewingController, share
+  # view controller) must not be part of it. Each one is sandboxed and shares
+  # the App Group group.com.varij.scribe with the app (see ScribeAppGroup).
+  ScribeWidgets:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Extensions/ScribeWidgets
+      - path: Scribe/Shared/ScribeAppGroup.swift
+      - path: Scribe/Shared/SharedSnapshot.swift
+      - path: Scribe/Shared/ScribeWidgetTaskRequest.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe.widgets
+        INFOPLIST_FILE: Extensions/ScribeWidgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Extensions/ScribeWidgets/ScribeWidgets.entitlements
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "27.0"
+        ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=macosx*]: x86_64
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: "YES"
+        SKIP_INSTALL: "YES"
+  ScribeQuickLook:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Extensions/ScribeQuickLook
+      - path: Scribe/Shared/ScribeMarkdownPreviewParser.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe.quicklook
+        INFOPLIST_FILE: Extensions/ScribeQuickLook/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Extensions/ScribeQuickLook/ScribeQuickLook.entitlements
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "27.0"
+        ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=macosx*]: x86_64
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: "YES"
+        SKIP_INSTALL: "YES"
+  ScribeShare:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Extensions/ScribeShare
+      - path: Scribe/Shared/ScribeAppGroup.swift
+      - path: Scribe/Shared/ScribeSharePayload.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe.share
+        INFOPLIST_FILE: Extensions/ScribeShare/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Extensions/ScribeShare/ScribeShare.entitlements
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "27.0"
+        ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=macosx*]: x86_64
+        DEVELOPMENT_TEAM: U8A3QH6Y84
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: "YES"
+        SKIP_INSTALL: "YES"
   # XCUITest target. Drives the built Scribe app through the accessibility
   # tree. The app is launched with `--uitesting` (see AppLaunchEnvironment) so
   # it boots without the audio / ScreenCaptureKit capture stack.
