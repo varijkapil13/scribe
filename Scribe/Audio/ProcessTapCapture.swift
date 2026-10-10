@@ -34,6 +34,9 @@ enum ProcessTapCaptureError: LocalizedError, Equatable {
     case unsupportedFormat
     /// The pipeline's output format couldn't be built.
     case formatUnavailable
+    /// The tap only hears silence while other apps play audio: System Audio
+    /// Recording looks denied (see ``ProcessTapPermissionProbe``).
+    case permissionLikelyDenied
 
     var errorDescription: String? {
         switch self {
@@ -43,6 +46,8 @@ enum ProcessTapCaptureError: LocalizedError, Equatable {
             return "System audio tap delivers an unsupported audio format."
         case .formatUnavailable:
             return "System audio tap couldn't set up its audio format."
+        case .permissionLikelyDenied:
+            return "System audio tap hears only silence; System Audio Recording may be turned off for Scribe."
         }
     }
 
@@ -520,8 +525,8 @@ enum ProcessTapCoreAudio {
 
     /// A private aggregate device holding only the tap (no hardware
     /// sub-device, so a headset's mic can't leak into the remote track).
-    /// Not auto-started by the tap: `AudioDeviceStart` would otherwise block
-    /// until some app plays audio.
+    /// Tap auto-start on, as in Apple's process-tap sample: starting the
+    /// device starts its tap.
     static func createAggregateDevice(tapUUID: String) throws -> AudioObjectID {
         let tap: [String: Any] = [
             kAudioSubTapUIDKey: tapUUID,
@@ -534,7 +539,7 @@ enum ProcessTapCoreAudio {
             kAudioAggregateDeviceUIDKey: "com.varij.scribe.system-audio-tap." + UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
-            kAudioAggregateDeviceTapAutoStartKey: false,
+            kAudioAggregateDeviceTapAutoStartKey: true,
             kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: taps,
         ]
@@ -1000,7 +1005,8 @@ final class ProcessTapCapture: SystemAudioSource, @unchecked Sendable {
         converter = nil
         onCaptureWillRestart?()
         do {
-            install(try makeRun(for: request))
+            let newRun = try makeRun(for: request)
+            install(newRun)
         } catch {
             Log.audio.error("System audio tap couldn't restart: \(error.localizedDescription, privacy: .public)")
             drainTimer?.cancel()

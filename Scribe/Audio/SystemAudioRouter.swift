@@ -28,6 +28,8 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
     private var _active: SystemAudioBackendKind?
     private var _plan: [SystemAudioBackendKind] = []
     private var _sampleRate: Double = 16000
+    /// The meeting app the current session's tap narrows to (nil = global).
+    private var _sessionMeetingBundleID: String?
     /// Bumped by every start and stop; a switch only commits while it holds.
     private var _generation = 0
     private var _switchTask: Task<Void, Never>?
@@ -136,6 +138,7 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
             _generation += 1
             _plan = plan
             _sampleRate = sampleRate
+            _sessionMeetingBundleID = meeting
             _active = nil
             return _generation
         }
@@ -224,8 +227,12 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
                   let next = SystemAudioSourcePolicy.fallback(after: old, in: _plan) else { return false }
             let generation = _generation
             let sampleRate = _sampleRate
+            let meeting = _sessionMeetingBundleID
             _switchTask = Task { [weak self] in
-                await self?.performSwitch(from: old, to: next, generation: generation, sampleRate: sampleRate)
+                await self?.performSwitch(
+                    from: old, to: next, generation: generation,
+                    sampleRate: sampleRate, meetingBundleID: meeting
+                )
             }
             return true
         }
@@ -235,7 +242,8 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
         from old: SystemAudioBackendKind,
         to next: SystemAudioBackendKind,
         generation: Int,
-        sampleRate: Double
+        sampleRate: Double,
+        meetingBundleID: String?
     ) async {
         Log.audio.info("Switching system audio from \(old.rawValue, privacy: .public) to \(next.rawValue, privacy: .public).")
         await stop(old)
@@ -248,7 +256,7 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
 
         onCaptureWillRestart?()
         do {
-            try await start(next, sampleRate: sampleRate, meetingBundleID: nil)
+            try await start(next, sampleRate: sampleRate, meetingBundleID: meetingBundleID)
             let committed = lock.withLock { () -> Bool in
                 guard _generation == generation else { return false }
                 _switchTask = nil
@@ -257,6 +265,8 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
             if !committed {
                 // A stop came in while starting; it may have missed this one.
                 await stop(next)
+            } else if next == .processTap {
+                startPermissionProbe(generation: generation, meetingBundleID: meetingBundleID)
             }
         } catch {
             Log.audio.error("System audio fallback to \(next.rawValue, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
@@ -297,7 +307,12 @@ final class SystemAudioRouter: SystemAudioSource, @unchecked Sendable {
                 case .suspectedDenied:
                     Log.audio.error("System audio tap hears only silence while other apps play audio — System Audio Recording looks denied.")
                     ProcessTapPermissionState.suspectedDenied.store(in: UserDefaults.standard)
-                    self.scheduleSwitch(from: .processTap)
+                    if !self.scheduleSwitch(from: .processTap) {
+                        // No fallback (Screen Recording not granted): keep
+                        // the tap running in case this is a false alarm, but
+                        // tell the user instead of recording silence quietly.
+                        self.onStreamError?(ProcessTapCaptureError.permissionLikelyDenied)
+                    }
                     return
                 case .inconclusive:
                     return
