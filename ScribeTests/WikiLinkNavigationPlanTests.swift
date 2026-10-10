@@ -40,8 +40,8 @@ final class WikiLinkNavigationPlanTests: XCTestCase {
         XCTAssertEqual(plan("#Section"), .scrollCurrent(line: 3))
         XCTAssertEqual(plan("#^here"), .scrollCurrent(line: 5))
         XCTAssertEqual(plan("Current#Section"), .scrollCurrent(line: 3))
-        XCTAssertEqual(plan("#Missing"), .none)
-        XCTAssertEqual(plan("Current"), .none)
+        XCTAssertEqual(plan("#Missing"), .stay)
+        XCTAssertEqual(plan("Current"), .stay)
     }
 
     func testUnknownNoteIsMissing() {

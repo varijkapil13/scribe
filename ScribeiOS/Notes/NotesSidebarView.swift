@@ -62,7 +62,10 @@ struct NotesSidebarView: View {
                 titleVisibility: .visible
             ) {
                 Button("Delete Notebook", role: .destructive) {
-                    if let notebook = notebookToDelete { library.deleteNotebook(notebook) }
+                    if let notebook = notebookToDelete {
+                        if selection?.wrappedValue == .notebook(notebook.id) { selection?.wrappedValue = .all }
+                        library.deleteNotebook(notebook)
+                    }
                     notebookToDelete = nil
                 }
                 Button("Cancel", role: .cancel) { notebookToDelete = nil }

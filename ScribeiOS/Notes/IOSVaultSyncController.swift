@@ -57,6 +57,7 @@ final class IOSVaultSyncController {
     @ObservationIgnored private var observedRoot: URL?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var isConfiguring = false
+    @ObservationIgnored private var needsReconfigure = false
     @ObservationIgnored private var lastSeenPreference: String?
     @ObservationIgnored private var defaultsToken: NSObjectProtocol?
 
@@ -75,8 +76,9 @@ final class IOSVaultSyncController {
             return
         }
         started = true
-        lastSeenPreference = UserDefaults.standard.string(forKey: NotesDirectory.userPreferenceKey)
-        // Settings flips the vault by writing the stored path; follow it.
+        lastSeenPreference = Self.preferenceSignature()
+        // Settings flips the vault by writing the stored path and the toggle;
+        // follow both.
         defaultsToken = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { _ in
@@ -101,17 +103,36 @@ final class IOSVaultSyncController {
         UserDefaults.standard.bool(forKey: Self.iCloudNotesEnabledKey)
     }
 
+    /// The stored vault path + the iCloud toggle, as one comparable value.
+    private static func preferenceSignature() -> String {
+        let defaults = UserDefaults.standard
+        let path = defaults.string(forKey: NotesDirectory.userPreferenceKey) ?? ""
+        return "\(defaults.bool(forKey: iCloudNotesEnabledKey))|\(path)"
+    }
+
     private func preferenceMayHaveChanged() {
-        let current = UserDefaults.standard.string(forKey: NotesDirectory.userPreferenceKey)
+        let current = Self.preferenceSignature()
         guard current != lastSeenPreference else { return }
         lastSeenPreference = current
         Task { await configureVault() }
     }
 
+    /// Serialised: a request while a pass is in flight runs one more pass
+    /// afterwards (the settings may have changed mid-way).
     private func configureVault() async {
-        guard !isConfiguring else { return }
+        if isConfiguring {
+            needsReconfigure = true
+            return
+        }
         isConfiguring = true
         defer { isConfiguring = false }
+        repeat {
+            needsReconfigure = false
+            await configureVaultOnce()
+        } while needsReconfigure
+    }
+
+    private func configureVaultOnce() async {
 
         let target: URL
         let newLocation: Location

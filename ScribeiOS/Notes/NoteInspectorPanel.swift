@@ -155,7 +155,7 @@ struct NoteInspectorPanel: View {
                             Button {
                                 onOpenNote(note.id)
                             } label: {
-                                NoteLinkRow(title: NoteBrowserQuery.displayTitle(note), excerpt: note.bodyExcerpt)
+                                NoteBacklinkRow(title: NoteBrowserQuery.displayTitle(note), excerpt: note.bodyExcerpt)
                             }
                         }
                     }
@@ -258,7 +258,7 @@ struct NoteInspectorPanel: View {
 }
 
 /// Title + excerpt row used by backlinks.
-struct NoteLinkRow: View {
+struct NoteBacklinkRow: View {
     let title: String
     let excerpt: String?
 

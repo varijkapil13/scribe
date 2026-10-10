@@ -16,7 +16,7 @@ enum WikiLinkNavigationPlan: Equatable, Sendable {
     /// No note has this title; offer to create one.
     case missing(title: String)
     /// Nothing to do (a same-note link to a heading / block that isn't there).
-    case none
+    case stay
 
     /// - Parameters:
     ///   - anchor: the link text between the brackets (as the editor posts it).
@@ -32,15 +32,15 @@ enum WikiLinkNavigationPlan: Equatable, Sendable {
     ) -> WikiLinkNavigationPlan {
         let parsed = WikiLinkTarget.parse(anchor)
         if parsed.refersToSameNote {
-            guard let index = NoteBlockReference.lineIndex(for: parsed, in: currentBody) else { return .none }
+            guard let index = NoteBlockReference.lineIndex(for: parsed, in: currentBody) else { return .stay }
             return .scrollCurrent(line: index + 1)
         }
         guard let resolved = resolve(anchor) else {
-            return parsed.title.isEmpty ? .none : .missing(title: parsed.title)
+            return parsed.title.isEmpty ? .stay : .missing(title: parsed.title)
         }
         let target = NoteEmbedExpander.effectiveTarget(parsed, anchor: anchor, resolvedTitle: resolved.title)
         if resolved.id == currentNoteId {
-            guard let index = NoteBlockReference.lineIndex(for: target, in: currentBody) else { return .none }
+            guard let index = NoteBlockReference.lineIndex(for: target, in: currentBody) else { return .stay }
             return .scrollCurrent(line: index + 1)
         }
         guard target.hasFragment, let body = bodyOf(resolved.id),

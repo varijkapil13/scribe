@@ -14,6 +14,7 @@
 //   scrollToLine (arg: 1-based line number)            (outline.js)
 //   embedContent / invalidateEmbeds / copyBlockLink /
 //   insertTemplate / setCursorOffset                   (notepower.js)
+//   bold / italic / … / wikiLink / undo / redo         (commands.js)
 
 export function postToNative(message) {
   try {

@@ -271,13 +271,23 @@ struct NoteEditorScreen: View {
                 NoteFormatBar(
                     bridge: bridge,
                     onPhotoLibrary: { showPhotoPicker = true },
-                    onCamera: NoteAttachmentSources.isCameraAvailable ? { showCamera = true } : nil,
-                    onScan: NoteAttachmentSources.isScannerAvailable ? { showScanner = true } : nil,
+                    onCamera: cameraAction,
+                    onScan: scanAction,
                     onDismissKeyboard: { dismissKeyboard() }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+    }
+
+    private var cameraAction: (() -> Void)? {
+        guard NoteAttachmentSources.isCameraAvailable else { return nil }
+        return { showCamera = true }
+    }
+
+    private var scanAction: (() -> Void)? {
+        guard NoteAttachmentSources.isScannerAvailable else { return nil }
+        return { showScanner = true }
     }
 
     private var lockedPlaceholder: some View {
@@ -449,7 +459,7 @@ struct NoteEditorScreen: View {
             open(id)
         case .missing(let title):
             missingLinkTitle = title
-        case .none:
+        case .stay:
             break
         }
     }
