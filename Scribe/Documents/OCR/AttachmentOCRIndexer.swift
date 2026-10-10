@@ -162,7 +162,7 @@ final class AttachmentOCRIndexer: ObservableObject {
     }
 
     private func refreshCount() {
-        indexedCount = (try? AttachmentTextStore.shared.allRecords().count) ?? 0
+        indexedCount = (try? AttachmentTextStore.shared.recordCount()) ?? 0
     }
 
     // MARK: - Pass (background)

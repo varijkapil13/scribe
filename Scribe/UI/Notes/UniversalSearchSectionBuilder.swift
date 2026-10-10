@@ -21,7 +21,10 @@ enum UniversalSearchSectionBuilder {
             SearchResult(
                 id: "note-\(note.id)",
                 title: note.title.isEmpty ? "(Untitled)" : note.title,
-                snippet: String(note.body.prefix(80)),
+                // A locked note's body is ciphertext: show the placeholder.
+                snippet: LockedNoteEnvelope.isLocked(note.body)
+                    ? LockedNoteEnvelope.excerptPlaceholder
+                    : String(note.body.prefix(80)),
                 destination: .note(note.id),
                 icon: "note.text"
             )

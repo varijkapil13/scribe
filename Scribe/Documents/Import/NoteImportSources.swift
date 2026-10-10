@@ -243,11 +243,11 @@ enum NoteImportSources {
                 let name = ((decoded as NSString).lastPathComponent as NSString).deletingPathExtension
                 return name.isEmpty ? nil : "[[\(name)]]"
             }
-            var placeholder = attachmentPlaceholder(forRelative: match.destination, folder: folder, root: root, collector: &collector)
-            if placeholder == nil {
-                placeholder = attachmentPlaceholder(byName: decoded, index: index, collector: &collector)
+            var resolved = attachmentPlaceholder(forRelative: match.destination, folder: folder, root: root, collector: &collector)
+            if resolved == nil {
+                resolved = attachmentPlaceholder(byName: decoded, index: index, collector: &collector)
             }
-            guard let placeholder else { return nil }
+            guard let placeholder = resolved else { return nil }
             return match.isImage ? "![\(match.text)](\(placeholder))" : "[\(match.text)](\(placeholder))"
         }
         body = MarkdownImportRewriter.rewriteEmbeds(in: body) { target in
@@ -255,11 +255,11 @@ enum NoteImportSources {
             if ext.isEmpty || markdownExtensions.contains(ext) {
                 return "[[\((target as NSString).deletingPathExtension)]]"
             }
-            var placeholder = attachmentPlaceholder(byName: target, index: index, collector: &collector)
-            if placeholder == nil {
-                placeholder = attachmentPlaceholder(forRelative: target, folder: folder, root: root, collector: &collector)
+            var resolved = attachmentPlaceholder(byName: target, index: index, collector: &collector)
+            if resolved == nil {
+                resolved = attachmentPlaceholder(forRelative: target, folder: folder, root: root, collector: &collector)
             }
-            guard let placeholder else { return nil }
+            guard let placeholder = resolved else { return nil }
             let label = (target as NSString).lastPathComponent
             return EditorAttachmentFiles.isImage(filename: target, mimeType: nil)
                 ? "![\(label)](\(placeholder))"

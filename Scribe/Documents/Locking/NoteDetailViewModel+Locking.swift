@@ -19,6 +19,18 @@ enum LockedNotePhase: Equatable, Sendable {
     case unlocked
 }
 
+/// Why a locked note's save was refused.
+enum LockedNoteSaveError: Error, LocalizedError {
+    case plaintextWhileLocked
+
+    var errorDescription: String? {
+        switch self {
+        case .plaintextWhileLocked:
+            return "This locked note wasn't saved, so that its contents never reach the disk unencrypted. Unlock it and try again."
+        }
+    }
+}
+
 /// Per-editor locking state that isn't published. Only touched by its
 /// (main-actor) view model.
 final class LockedNoteEditorState {
@@ -74,6 +86,11 @@ extension NoteDetailViewModel {
     /// (the envelope while locked, plaintext for ordinary notes). Never
     /// returns the plaintext of a locked note.
     func bodyForStorage() throws -> String {
+        if lockPhase == .locked, !LockedNoteEnvelope.isLocked(note.body) {
+            // Defense in depth: a locked note's body must be its envelope;
+            // anything else here would be plaintext about to reach disk.
+            throw LockedNoteSaveError.plaintextWhileLocked
+        }
         guard lockPhase == .unlocked else { return note.body }
         guard let key = lockState.key else { throw LockedNoteEnvelopeError.wrongKey }
         return try LockedNoteEnvelope.seal(note.body, key: key)

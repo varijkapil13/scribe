@@ -110,6 +110,11 @@ final class AttachmentTextStore: Sendable {
         try db.read { try AttachmentTextRecord.fetchAll($0) }
     }
 
+    /// Number of recognized attachments (without loading their text).
+    func recordCount() throws -> Int {
+        try db.read { try AttachmentTextRecord.fetchCount($0) }
+    }
+
     /// Records for one note's attachments, by path.
     func records(forNoteId noteId: String) throws -> [AttachmentTextRecord] {
         try db.read { database in

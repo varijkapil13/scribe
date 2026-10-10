@@ -192,7 +192,14 @@ struct NoteDetailView: View {
                 NoteEditorView(
                     text: Binding(
                         get: { vm.note.body },
-                        set: { vm.note.body = $0; vm.markDirty() }
+                        set: {
+                            // A late edit from the editor (its debounced
+                            // change) after the note re-locked must not put
+                            // plaintext back into the locked body.
+                            guard vm.lockPhase != .locked else { return }
+                            vm.note.body = $0
+                            vm.markDirty()
+                        }
                     ),
                     noteStore: .shared,
                     noteId: vm.note.id,
