@@ -62,11 +62,11 @@ enum OnboardingStep: Int, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .welcome:     return "Welcome to Scribe"
-        case .permissions: return "A few permissions"
-        case .meetings:    return "Meetings, noticed"
-        case .vault:       return "Where your notes live"
-        case .done:        return "Ready when you are"
+        case .welcome:     return String(localized: "Welcome to Scribe")
+        case .permissions: return String(localized: "A few permissions")
+        case .meetings:    return String(localized: "Meetings, noticed")
+        case .vault:       return String(localized: "Where your notes live")
+        case .done:        return String(localized: "Ready when you are")
         }
     }
 

@@ -42,8 +42,10 @@ DISABLE_SWIFTLINT=YES xcodebuild -project Scribe.xcodeproj -scheme Scribe \
 > once with `defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES`
 > (Apple's key is misspelled — copy it verbatim).
 
-On first launch macOS will prompt for **Microphone**, **Screen Recording**
-(system-audio capture via ScreenCaptureKit — audio only, no video), and later
+On first launch macOS will prompt for **Microphone**, **System Audio
+Recording** (other apps' audio via a Core Audio process tap; **Screen
+Recording** instead when ScreenCaptureKit is chosen under Settings → General →
+Audio, or as the fallback), and later
 **Notifications** (the first time a task reminder is saved). All transcription
 and AI run on-device.
 
@@ -112,6 +114,19 @@ packaging/homebrew/render-cask.sh 0.1.0 "$(shasum -a 256 Scribe-v0.1.0.zip | cut
 
 Once a Developer ID certificate and notarization are wired in, drop the cask's quarantine-clearing `postflight` block.
 
+#### Optional release secrets (signing, notarization, Sparkle)
+
+Every stage below is skipped when its secrets are missing, so the plain ad-hoc release keeps working.
+
+| Secret / variable | Enables |
+|---|---|
+| `MACOS_CERTIFICATE_P12` (base64 `.p12` of the *Developer ID Application* cert) + `MACOS_CERTIFICATE_PASSWORD` (+ optional `APPLE_TEAM_ID` to pick the identity) | Re-signing with Developer ID + Hardened Runtime (`scripts/codesign-developer-id.sh`) in a temporary keychain |
+| `NOTARY_API_KEY` (`.p8` text or base64) + `NOTARY_API_KEY_ID` + `NOTARY_API_ISSUER_ID`, **or** `APPLE_ID` + `APPLE_APP_PASSWORD` + `APPLE_TEAM_ID` | Notarizing the app and DMG (`scripts/notarize.sh`), stapling, `spctl` checks |
+| `SPARKLE_PRIVATE_KEY` (EdDSA private key from Sparkle's `generate_keys`) | Signing the `.zip` with `sign_update` and attaching `appcast.xml` to the Release |
+| `SPARKLE_PUBLIC_ED_KEY` (repository **variable** or secret; the matching public key) | Compiled into `Info.plist` `SUPublicEDKey` via the `SPARKLE_PUBLIC_ED_KEY` build setting. Empty → the in-app updater stays off |
+
+The app's feed is `https://github.com/varijkapil13/scribe/releases/latest/download/appcast.xml`. The cask declares `auto_updates true`, so Homebrew leaves upgrades to Sparkle; copies installed by an older cask without that flag show "Updates are managed by Homebrew" in Settings › About.
+
 ## Configuration reference
 
 - **Signing/team/hardened-runtime** live in `project.yml` (regenerated into the
@@ -121,7 +136,7 @@ Once a Developer ID certificate and notarization are wired in, drop the cask's q
 - **Entitlements**: audio-input, user-selected file read/write.
 - **Min OS**: macOS 27.0 (`LSMinimumSystemVersion`). Apple Silicon only
   (`ARCHS=arm64`).
-- **Usage strings** (mic / screen / speech) are in `Info.plist`.
+- **Usage strings** (mic / system audio / screen / speech) are in `Info.plist`.
 
 ## Troubleshooting
 

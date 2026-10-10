@@ -209,6 +209,7 @@ final class ScribeDeepLinkTests: XCTestCase {
             .dictate,
             .search(query: "road map"),
             .today,
+            .importShared,
         ]
         for link in links {
             guard let url = link.url else {

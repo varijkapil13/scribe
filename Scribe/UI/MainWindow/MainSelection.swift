@@ -45,9 +45,9 @@ enum Surface: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .capture: return "Capture"
-        case .notes:   return "Notes"
-        case .tasks:   return "Tasks"
+        case .capture: return String(localized: "Capture")
+        case .notes:   return String(localized: "Notes")
+        case .tasks:   return String(localized: "Tasks")
         }
     }
 

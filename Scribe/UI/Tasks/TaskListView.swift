@@ -54,6 +54,9 @@ struct TaskListView: View {
     @State private var sortMode: TaskListViewModel.TaskSort = .smart
     /// Add / rename heading prompt (project lists).
     @State private var headingPrompt: HeadingPrompt?
+    /// List or Kanban board, and the board's grouping — both per filter.
+    @State private var layoutMode: TaskListLayoutMode = .list
+    @State private var boardGrouping: TaskBoardGrouping = .status
 
     init(
         filter: TaskStore.Filter,
@@ -102,6 +105,22 @@ struct TaskListView: View {
             ?? TaskListViewModel.TaskSort.smart.rawValue
         sortMode = TaskListViewModel.TaskSort(rawValue: raw) ?? .smart
         viewModel.sortMode = sortMode
+    }
+
+    private func loadBoardPreferences() {
+        layoutMode = TaskBoardPreferences.layoutMode(forFilterKey: Self.filterKey(filter))
+        boardGrouping = TaskBoardPreferences.grouping(forFilterKey: Self.filterKey(filter))
+    }
+
+    private func setLayoutMode(_ mode: TaskListLayoutMode) {
+        if mode == .board { viewModel.exitSelectMode() }
+        layoutMode = mode
+        TaskBoardPreferences.setLayoutMode(mode, forFilterKey: Self.filterKey(filter))
+    }
+
+    private func setBoardGrouping(_ grouping: TaskBoardGrouping) {
+        boardGrouping = grouping
+        TaskBoardPreferences.setGrouping(grouping, forFilterKey: Self.filterKey(filter))
     }
 
     private func setSort(_ sort: TaskListViewModel.TaskSort) {
@@ -223,15 +242,26 @@ struct TaskListView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                listControlsBar
+                if layoutMode == .board && !viewModel.isSearching {
+                    Divider()
+                    TaskBoardView(
+                        viewModel: viewModel,
+                        filter: filter,
+                        grouping: Binding(get: { boardGrouping }, set: { setBoardGrouping($0) }),
+                        selectedTaskId: selectedTask?.id,
+                        onOpen: { openInspector($0) }
+                    )
+                } else {
+                    listControlsBar
 
-                Divider()
+                    Divider()
 
-                content
-                    .focusable(true)
-                    .focused($listFocused)
-                    .focusEffectDisabled()
-                    .onKeyPress(action: handleListKeyPress)
+                    content
+                        .focusable(true)
+                        .focused($listFocused)
+                        .focusEffectDisabled()
+                        .onKeyPress(action: handleListKeyPress)
+                }
             }
             .frame(minWidth: 280)
 
@@ -257,6 +287,7 @@ struct TaskListView: View {
             viewModel.start()
             loadCollapsedBuckets()
             loadSortMode()
+            loadBoardPreferences()
             if let focusTaskId {
                 viewModel.focusedTaskId = focusTaskId
             } else {
@@ -270,6 +301,7 @@ struct TaskListView: View {
             todayUpcomingExpanded = false
             loadCollapsedBuckets()
             loadSortMode()
+            loadBoardPreferences()
         }
         // Focus is handled directly by HighlightingQuickAddField observing .scribeFocusQuickAdd.
         .confirmationDialog(
@@ -290,6 +322,11 @@ struct TaskListView: View {
             Button("Cancel", role: .cancel) { pendingDelete = nil }
         }
         .toolbar { projectHeaderToolbar }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                TaskLayoutModePicker(mode: Binding(get: { layoutMode }, set: { setLayoutMode($0) }))
+            }
+        }
         .background(shortcutButtons)
         .modifier(HeadingPromptModifier(prompt: $headingPrompt) { prompt, text in
             switch prompt {
@@ -576,8 +613,8 @@ struct TaskListView: View {
             .accessibilityLabel("Quick-add syntax help")
             .popoverTip(ScribeTips.taskQuickAdd)
             .popover(isPresented: $showQuickAddSyntaxHelp, arrowEdge: .bottom) {
+                // No custom backing: the system popover is already glass.
                 quickAddSyntaxHelp
-                    .scribeGlass(.hud, in: Rectangle())
             }
             .help("Quick-add syntax")
 
@@ -598,7 +635,6 @@ struct TaskListView: View {
             .popover(isPresented: $showQuickAddDatePicker, arrowEdge: .bottom) {
                 InlineDatePickerView(selectedDate: $viewModel.quickAddDueDate)
                     .padding(DesignTokens.Spacing.xs)
-                    .scribeGlass(.hud, in: Rectangle())
             }
             .help(viewModel.quickAddDueDate.map {
                 "Due: \($0.formatted(date: .abbreviated, time: .omitted))"
@@ -1471,7 +1507,6 @@ struct TaskRowView: View {
                     set: { onSetDue($0) }
                 ))
                 .padding(DesignTokens.Spacing.xs)
-                .scribeGlass(.hud, in: Rectangle())
             }
         } else if affordancesVisible {
             Button { showDuePopover = true } label: {
@@ -1487,7 +1522,6 @@ struct TaskRowView: View {
                     set: { onSetDue($0) }
                 ))
                 .padding(DesignTokens.Spacing.xs)
-                .scribeGlass(.hud, in: Rectangle())
             }
         }
     }

@@ -29,23 +29,23 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
 
     var title: String {
         switch self {
-        case .general:      return "General"
-        case .intelligence: return "Intelligence"
-        case .storage:      return "Storage & Sync"
-        case .dictation:    return "Dictation"
-        case .calendar:     return "Calendar"
-        case .reminders:    return "Reminders"
-        case .vocabulary:   return "Vocabulary"
-        case .hooks:        return "Hooks"
-        case .shortcuts:    return "Shortcuts"
-        case .links:        return "Links & Handoff"
-        case .templates:    return "Templates"
-        case .copilot:      return "Meeting Copilot"
-        case .mcp:          return "MCP Server"
-        case .about:        return "About"
-        case .privacy:      return "Privacy"
-        case .backup:       return "Backup"
-        case .documents:    return "Documents"
+        case .general:      return String(localized: "General")
+        case .intelligence: return String(localized: "Intelligence")
+        case .storage:      return String(localized: "Storage & Sync")
+        case .dictation:    return String(localized: "Dictation")
+        case .calendar:     return String(localized: "Calendar")
+        case .reminders:    return String(localized: "Reminders")
+        case .vocabulary:   return String(localized: "Vocabulary")
+        case .hooks:        return String(localized: "Hooks")
+        case .shortcuts:    return String(localized: "Shortcuts")
+        case .links:        return String(localized: "Links & Handoff")
+        case .templates:    return String(localized: "Templates")
+        case .copilot:      return String(localized: "Meeting Copilot")
+        case .mcp:          return String(localized: "MCP Server")
+        case .about:        return String(localized: "About")
+        case .privacy:      return String(localized: "Privacy")
+        case .backup:       return String(localized: "Backup")
+        case .documents:    return String(localized: "Documents")
         }
     }
 
@@ -144,14 +144,14 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .general:      return "General"
-        case .recording:    return "Recording"
-        case .intelligence: return "Intelligence"
-        case .dictation:    return "Dictation"
-        case .storageSync:  return "Storage & Sync"
-        case .shortcuts:    return "Shortcuts"
-        case .mcp:          return "MCP"
-        case .about:        return "About"
+        case .general:      return String(localized: "General")
+        case .recording:    return String(localized: "Recording")
+        case .intelligence: return String(localized: "Intelligence")
+        case .dictation:    return String(localized: "Dictation")
+        case .storageSync:  return String(localized: "Storage & Sync")
+        case .shortcuts:    return String(localized: "Shortcuts")
+        case .mcp:          return String(localized: "MCP")
+        case .about:        return String(localized: "About")
         }
     }
 
@@ -285,8 +285,9 @@ private struct GeneralSettingsPane: View {
                 toggleWithCaption(
                     "Capture system audio",
                     isOn: $captureSystemAudio,
-                    caption: "Record remote participants via ScreenCaptureKit. Requires Screen Recording permission."
+                    caption: "Record remote participants — the audio other apps play."
                 )
+                SystemAudioSourceSettings(captureEnabled: captureSystemAudio)
                 toggleWithCaption(
                     "Echo cancellation (use when not wearing headphones)",
                     isOn: $echoCancellation,
@@ -887,8 +888,11 @@ private struct AboutSettingsPane: View {
                 Label("PlantUML diagrams are sent to plantuml.com only if you enable it in General.", systemImage: "point.3.connected.trianglepath.dotted")
             }
 
+            UpdatesSettingsSection()
+            DiagnosticsSettingsSection()
+
             Section("Acknowledgements") {
-                Text("Built with GRDB, KeyboardShortcuts, Apple SpeechAnalyzer, FoundationModels, and FluidAudio. Speaker separation uses the pyannote community-1 models (CC BY 4.0) converted to Core ML by FluidInference.")
+                Text("Built with GRDB, KeyboardShortcuts, Sparkle, Apple SpeechAnalyzer, FoundationModels, and FluidAudio. Speaker separation uses the pyannote community-1 models (CC BY 4.0) converted to Core ML by FluidInference.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(copyright)
@@ -904,7 +908,7 @@ private struct AboutSettingsPane: View {
 
 /// System-Settings-style toggle with a caption describing what it does.
 @ViewBuilder
-fileprivate func toggleWithCaption(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {
+fileprivate func toggleWithCaption(_ title: LocalizedStringKey, isOn: Binding<Bool>, caption: LocalizedStringKey) -> some View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
         Toggle(title, isOn: isOn)
         Text(caption)

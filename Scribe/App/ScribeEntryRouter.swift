@@ -104,6 +104,8 @@ final class ScribeEntryRouter {
             showCommandBar(query: query)
         case .today:
             show(.today)
+        case .importShared:
+            ScribeExtensionsBridge.shared.handleImportShareLink()
         }
     }
 

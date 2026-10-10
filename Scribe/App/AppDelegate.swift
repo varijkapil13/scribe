@@ -113,6 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         observeSpeechErrors()
         // scribe:// links, opened Markdown files, Dock + Services menus.
         installEntryPoints()
+        // Widgets snapshot, widget task toggles, Share-extension inbox.
+        ScribeExtensionsBridge.shared.start()
 
         // Start MCP server if the user had it enabled in a previous session.
         if UserDefaults.standard.bool(forKey: "mcpEnabled") {
@@ -165,6 +167,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 await self?.startRecording(calendarEvent: event)
             }
             CalendarService.shared.start()
+            // Time blocking (Settings → Calendar): mirrors scheduled tasks as events.
+            TaskCalendarMirrorService.shared.start()
         }
 
         // iCloud task sync on the Mac: launch / toggle-on / app-active
@@ -186,6 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !AppLaunchEnvironment.isUITesting {
             DocumentsServices.start()
         }
+        // Sparkle updates, on-device MetricKit diagnostics, and periodic
+        // maintenance (each self-gates on UI-test / fixture launches).
+        ScribeUpdater.shared.start()
+        if !AppLaunchEnvironment.isUITesting { ScribeMetricKitCollector.shared.start() }
+        ScribeBackgroundMaintenance.shared.start(transcriptStore: appState.transcriptStore)
 
         // Proactively request microphone and speech-recognition authorization
         // so the system prompts appear on first launch rather than silently
@@ -223,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             TaskSyncScheduler.shared.appDidBecomeActive()
             RemindersSyncScheduler.shared.appDidBecomeActive()
         }
+        ScribeExtensionsBridge.shared.appDidBecomeActive()
         Task {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }
@@ -397,8 +407,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // to register Scribe with TCC — this puts it in the System Settings
         // list and triggers the native "Allow" prompt. Then we show our own
         // alert with clear next steps.
+        // Only when ScreenCaptureKit is the sole way to get system audio: the
+        // Core Audio tap (the default) needs System Audio Recording instead,
+        // which macOS prompts for itself on first use.
         var captureSystemAudio = UserDefaults.standard.bool(forKey: "captureSystemAudio")
-        if captureSystemAudio && !Permissions.hasScreenCapturePermission() {
+        if captureSystemAudio && SystemAudioRouter.requiresScreenRecording()
+            && !Permissions.hasScreenCapturePermission() {
             // Register Scribe with TCC and fire the OS prompt. Returns the
             // pre-response state, so we can't rely on the bool — we just need
             // the side effect of registering + prompting.

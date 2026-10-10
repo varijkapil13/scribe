@@ -28,14 +28,20 @@ cask "scribe" do
     strategy :github_latest
   end
 
+  # Scribe updates itself with Sparkle (Settings › About › Updates), so
+  # brew upgrade skips it unless run with --greedy; the app also reads this
+  # flag to decide whether to leave updates to Homebrew.
+  auto_updates true
+
   # Apple Silicon only. The app itself requires macOS 27 (LSMinimumSystemVersion).
   depends_on arch: :arm64
 
   app "Scribe.app"
 
-  # Release builds are ad-hoc signed, not notarized (no Developer ID yet), so
-  # Gatekeeper would block the first launch. Clear the quarantine flag that
-  # the download added, the same way the saral cask does.
+  # Release builds without a Developer ID are ad-hoc signed, not notarized,
+  # so Gatekeeper would block the first launch. Clear the quarantine flag that
+  # the download added, the same way the saral cask does (harmless for
+  # notarized builds).
   postflight do
     system_command "/usr/bin/xattr",
                    args:         ["-dr", "com.apple.quarantine", "#{appdir}/Scribe.app"],

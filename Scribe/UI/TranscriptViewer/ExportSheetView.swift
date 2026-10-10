@@ -11,7 +11,6 @@ struct ExportSheetView: View {
 
     @Environment(\.dismiss) var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     let session: Session
@@ -92,11 +91,8 @@ struct ExportSheetView: View {
         }
         .padding(DesignTokens.Spacing.xl)
         .frame(width: 600, height: 520)
-        // The sheet is transient chrome → glass, collapsing to a solid fill
-        // under Reduce Transparency / Increase Contrast.
-        .readerGlassBackground(reduceTransparency: reduceTransparency,
-                               contrast: contrast,
-                               cornerRadius: DesignTokens.Radius.xl)
+        // No custom backing: the system sheet supplies its own (Liquid Glass)
+        // material and handles Reduce Transparency itself.
         .onChange(of: selectedFormat) {
             copied = false
             updatePreview()

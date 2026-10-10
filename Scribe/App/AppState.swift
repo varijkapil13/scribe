@@ -304,7 +304,7 @@ final class AppState: ObservableObject {
     /// only the remote side goes quiet.
     static let systemAudioRevokedMessage =
         "Not capturing remote audio. Grant Scribe access under System Settings → "
-        + "Privacy & Security → Screen Recording, then stop and restart recording."
+        + "Privacy & Security → Screen & System Audio Recording, then stop and restart recording."
 
     /// Connects transcription engine output to coalescing + storage + live view.
     ///
