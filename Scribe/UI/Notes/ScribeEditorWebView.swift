@@ -37,7 +37,16 @@ final class ScribeEditorWebView: WKWebView {
            onEditorCommand?(command) == true {
             return
         }
-        super.performTextFinderAction(sender)
+        // Only forward to super when WKWebView (or an ancestor) actually
+        // implements the action: the selector is declared in an NSResponder
+        // category, and messaging super for an unimplemented selector would
+        // raise "unrecognized selector" instead of falling through.
+        let action = #selector(NSResponder.performTextFinderAction(_:))
+        if WKWebView.instancesRespond(to: action) {
+            super.performTextFinderAction(sender)
+        } else {
+            _ = nextResponder?.tryToPerform(action, with: sender)
+        }
     }
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
