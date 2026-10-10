@@ -67,6 +67,13 @@ final class IOSNoteEditorModel {
             let ids = NoteVaultChange.noteIds(from: notification) ?? []
             MainActor.assumeIsolated { self?.vaultFilesChanged(ids) }
         })
+        // In-app writes outside this editor (Siri / Shortcuts "Append to
+        // Note", Share-extension imports — ios-system) carry the same
+        // note-id payload; treat them like a vault change.
+        observers.append(center.addObserver(forName: .scribeNoteChangedInApp, object: nil, queue: .main) { [weak self] notification in
+            let ids = NoteVaultChange.noteIds(from: notification) ?? []
+            MainActor.assumeIsolated { self?.vaultFilesChanged(ids) }
+        })
         observers.append(center.addObserver(forName: .scribeIOSLockedNotesWillLock, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.relock() }
         })

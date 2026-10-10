@@ -101,8 +101,8 @@ final class IOSVaultSyncController {
         // activation right after launch); it reconciles on its own.
         guard location != .unknown else { return }
         if location == .iCloudUnavailable || location == .iCloud || scheduler == nil {
-            // (No scheduler yet: the DB → disk migration for this vault
-            // hasn't succeeded, so retry the whole configuration.)
+            // (No scheduler yet: the launch DB → disk migration hasn't
+            // succeeded, so retry the whole configuration.)
             Task { await configureVault() }
         } else {
             scheduler?.requestReconcile()
@@ -168,35 +168,38 @@ final class IOSVaultSyncController {
         let fileStore = activateFileStore(at: target)
         location = newLocation
         // The reconciler deletes every index row without a file on disk, so
-        // notes that only exist in SQLite (created before disk mirroring, or
-        // left behind by a vault move) must be written into a local vault
-        // first — the same order as the Mac's launch (AppDelegate). Until that
-        // has succeeded for this vault, don't observe or reconcile it at all.
-        // Not for the iCloud vault: there a row without a listed file is
-        // usually a cloud-only placeholder, and SQLite holds no note bodies,
-        // so "migrating" it would upload an empty file over the real note.
-        // (Turning iCloud on moves the local vault with ICloudVaultMigrator.)
-        guard newLocation == .iCloud || migrateNotesToDiskIfNeeded(root: fileStore.directory.root) else {
-            stopObserving()
-            return
+        // notes that only exist in SQLite (created before disk mirroring)
+        // are written into the vault first — the same order as the Mac's
+        // launch (AppDelegate). Once per launch, and only for the local
+        // vault: SQLite holds no note bodies, so for the iCloud vault (where
+        // a row without a listed file is usually a cloud-only placeholder)
+        // or a vault the user just switched to (rows still describe the old
+        // vault until this reconcile) it would write empty copies of real
+        // notes. Until it has succeeded, don't observe or reconcile at all.
+        if launchMigrationPending {
+            if newLocation == .local {
+                guard migrateNotesToDisk() else {
+                    stopObserving()
+                    return
+                }
+            }
+            launchMigrationPending = false
         }
         startObserving(fileStore, iCloud: newLocation == .iCloud)
         scheduler?.requestReconcile()
     }
 
-    /// The vault root `migrateNotesToDisk()` last completed for.
-    @ObservationIgnored private var migratedVaultRoot: URL?
+    /// The launch-time DB → disk migration hasn't run (or failed).
+    @ObservationIgnored private var launchMigrationPending = true
 
-    /// Mirrors DB-only notes into the vault once per vault root. Returns
-    /// false (retried on the next activation / refresh) when it failed.
-    private func migrateNotesToDiskIfNeeded(root: URL) -> Bool {
-        if migratedVaultRoot == root { return true }
+    /// Mirrors DB-only notes into the active vault. Returns false (retried
+    /// on the next activation / refresh) when it failed.
+    private func migrateNotesToDisk() -> Bool {
         do {
             let migrated = try noteStore.migrateNotesToDisk()
             if migrated > 0 {
                 Log.storage.info("IOSVaultSyncController: migrated \(migrated) note(s) from SQLite to disk")
             }
-            migratedVaultRoot = root
             lastError = nil
             return true
         } catch {
