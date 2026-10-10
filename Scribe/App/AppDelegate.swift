@@ -109,6 +109,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         observeSpeechErrors()
         // scribe:// links, opened Markdown files, Dock + Services menus.
         installEntryPoints()
+        // Widgets snapshot, widget task toggles, Share-extension inbox.
+        ScribeExtensionsBridge.shared.start()
 
         // Start MCP server if the user had it enabled in a previous session.
         if UserDefaults.standard.bool(forKey: "mcpEnabled") {
@@ -214,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             TaskSyncScheduler.shared.appDidBecomeActive()
             RemindersSyncScheduler.shared.appDidBecomeActive()
         }
+        ScribeExtensionsBridge.shared.appDidBecomeActive()
         Task {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }
