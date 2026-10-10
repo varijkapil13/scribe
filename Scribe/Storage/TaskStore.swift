@@ -46,6 +46,11 @@ final class TaskStore {
         case project(String)
         /// Tasks tagged with a specific tag.
         case tag(String)
+        /// Active tasks parked in the Someday bucket.
+        case someday
+        /// Active tasks in an Area: filed directly under it, or in one of its
+        /// projects.
+        case area(String)
     }
 
     // MARK: - Properties
@@ -116,6 +121,154 @@ final class TaskStore {
         return observation.publisher(in: db, scheduling: .async(onQueue: .main))
     }
 
+    // MARK: - Areas (v20)
+
+    @discardableResult
+    func createArea(name: String, symbol: String? = nil) throws -> TaskArea {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try db.write { database in
+            let nextOrder = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM areas") ?? 0
+            let area = TaskArea(name: trimmed, sortOrder: nextOrder, symbol: symbol)
+            try area.insert(database)
+            return area
+        }
+    }
+
+    func updateArea(_ area: TaskArea) throws {
+        try db.write { try area.update($0) }
+    }
+
+    /// Deletes an area. Its projects and loose tasks stay, un-grouped (the
+    /// FKs are `ON DELETE SET NULL`; cleared explicitly too so affected tasks
+    /// get a fresh `updatedAt` for sync).
+    func deleteArea(id: String) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE tasks SET areaId = NULL, updatedAt = ? WHERE areaId = ?",
+                arguments: [Date(), id])
+            try database.execute(sql: "UPDATE projects SET areaId = NULL WHERE areaId = ?", arguments: [id])
+            _ = try TaskArea.deleteOne(database, key: id)
+        }
+    }
+
+    func fetchAreas() throws -> [TaskArea] {
+        try db.read { try Self.fetchAreas($0) }
+    }
+
+    fileprivate static func fetchAreas(_ database: Database) throws -> [TaskArea] {
+        try TaskArea
+            .order(Column("sortOrder").asc, Column("name").asc)
+            .fetchAll(database)
+    }
+
+    /// Persists a new manual ordering for the sidebar's Areas list.
+    func reorderAreas(_ orderedIds: [String]) throws {
+        try db.write { database in
+            for (index, id) in orderedIds.enumerated() {
+                try database.execute(sql: "UPDATE areas SET sortOrder = ? WHERE id = ?",
+                                     arguments: [index, id])
+            }
+        }
+    }
+
+    /// Files a project under an area (or removes it from any area when nil).
+    func setArea(_ areaId: String?, forProject projectId: String) throws {
+        try db.write { database in
+            try database.execute(sql: "UPDATE projects SET areaId = ? WHERE id = ?",
+                                 arguments: [areaId, projectId])
+        }
+    }
+
+    func observeAreas() -> DatabasePublishers.Value<[TaskArea]> {
+        let observation = ValueObservation.tracking { database -> [TaskArea] in
+            try Self.fetchAreas(database)
+        }
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
+    // MARK: - Project headings (v20)
+
+    @discardableResult
+    func createHeading(in projectId: String, title: String) throws -> ProjectHeading {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try db.write { database in
+            let nextOrder = try Int.fetchOne(database,
+                sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM project_headings WHERE projectId = ?",
+                arguments: [projectId]) ?? 0
+            let heading = ProjectHeading(projectId: projectId, title: trimmed, sortOrder: nextOrder)
+            try heading.insert(database)
+            return heading
+        }
+    }
+
+    func renameHeading(id: String, title: String) throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        try db.write { database in
+            try database.execute(sql: "UPDATE project_headings SET title = ? WHERE id = ?",
+                                 arguments: [trimmed, id])
+        }
+    }
+
+    /// Deletes a heading; its tasks stay in the project, un-headed.
+    func deleteHeading(id: String) throws {
+        try db.write { database in
+            try database.execute(
+                sql: "UPDATE tasks SET headingId = NULL, updatedAt = ? WHERE headingId = ?",
+                arguments: [Date(), id])
+            _ = try ProjectHeading.deleteOne(database, key: id)
+        }
+    }
+
+    func headings(in projectId: String) throws -> [ProjectHeading] {
+        try db.read { try Self.headings($0, in: projectId) }
+    }
+
+    fileprivate static func headings(_ database: Database, in projectId: String) throws -> [ProjectHeading] {
+        try ProjectHeading
+            .filter(Column("projectId") == projectId)
+            .order(Column("sortOrder").asc, Column("title").asc)
+            .fetchAll(database)
+    }
+
+    /// Persists a new heading order within one project. Ids belonging to a
+    /// different project are skipped.
+    func reorderHeadings(_ orderedIds: [String], in projectId: String) throws {
+        try db.write { database in
+            for (index, id) in orderedIds.enumerated() {
+                try database.execute(
+                    sql: "UPDATE project_headings SET sortOrder = ? WHERE id = ? AND projectId = ?",
+                    arguments: [index, id, projectId])
+            }
+        }
+    }
+
+    /// Files a task under a heading (nil = no heading). Filing under a heading
+    /// also moves the task into the heading's project.
+    func setHeading(_ headingId: String?, forTask taskId: String) throws {
+        try db.write { database in
+            guard var task = try TodoTask.fetchOne(database, key: taskId) else { return }
+            if let headingId {
+                guard let heading = try ProjectHeading.fetchOne(database, key: headingId) else { return }
+                if task.projectId != heading.projectId {
+                    Self.applyProjectMove(&task, to: heading.projectId)
+                }
+                task.headingId = heading.id
+            } else {
+                task.headingId = nil
+            }
+            task.updatedAt = Date()
+            try task.update(database)
+        }
+    }
+
+    func observeHeadings(projectId: String) -> DatabasePublishers.Value<[ProjectHeading]> {
+        let observation = ValueObservation.tracking { database -> [ProjectHeading] in
+            try Self.headings(database, in: projectId)
+        }
+        return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
     // MARK: - Task CRUD
 
     @discardableResult
@@ -129,7 +282,12 @@ final class TaskStore {
         recurrenceRule: String? = nil,
         sourceSessionId: String? = nil,
         sourceActionItemId: String? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        startAt: Date? = nil,
+        scheduleBucket: TaskScheduleBucket = .anytime,
+        estimatedMinutes: Int? = nil,
+        areaId: String? = nil,
+        headingId: String? = nil
     ) throws -> TodoTask {
         try validateRecurrence(rule: recurrenceRule, dueAt: dueAt)
         return try db.write { database in
@@ -150,7 +308,13 @@ final class TaskStore {
                 updatedAt: now,
                 sortOrder: nextOrder,
                 sourceSessionId: sourceSessionId,
-                sourceActionItemId: sourceActionItemId
+                sourceActionItemId: sourceActionItemId,
+                startAt: startAt,
+                scheduleBucket: scheduleBucket,
+                estimatedMinutes: estimatedMinutes.map { max(0, $0) },
+                // A task inside a project inherits the project's area.
+                areaId: projectId == nil ? areaId : nil,
+                headingId: projectId == nil ? nil : headingId
             )
 
             try task.insert(database)
@@ -186,11 +350,20 @@ final class TaskStore {
             let nextOrder = try Int.fetchOne(database,
                 sql: "SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM tasks WHERE projectId IS ?",
                 arguments: [projectId]) ?? 0
-            task.projectId = projectId
+            Self.applyProjectMove(&task, to: projectId)
             task.sortOrder = nextOrder
             task.updatedAt = Date()
             try task.update(database)
         }
+    }
+
+    /// Re-files a task under `projectId`, keeping the planning links
+    /// consistent: a heading only lives inside its own project, and a task in
+    /// a project inherits the project's area instead of its own.
+    fileprivate static func applyProjectMove(_ task: inout TodoTask, to projectId: String?) {
+        if task.projectId != projectId { task.headingId = nil }
+        task.projectId = projectId
+        if projectId != nil { task.areaId = nil }
     }
 
     /// Marks a task complete. For recurring tasks, advances `dueAt` to the
@@ -198,24 +371,53 @@ final class TaskStore {
     /// `completedAt`. Either way a `task_completions` history row is written.
     func completeTask(id: String, at date: Date = Date()) throws {
         try db.write { database in
-            guard var task = try TodoTask.fetchOne(database, key: id) else { return }
+            guard let task = try TodoTask.fetchOne(database, key: id) else { return }
             try TaskCompletion(taskId: id, completedAt: date).insert(database)
-
-            if let ruleStr = task.recurrenceRule,
-               let due = task.dueAt {
-                let rule = try RecurrenceRule.parse(ruleStr)
-                // Advance in the user's local calendar: dueAt carries local
-                // wall-clock semantics, so weekday/month extraction and DST
-                // handling must use Calendar.current, not UTC.
-                task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule, calendar: .current)
-                task.completedAt = nil
-            } else {
-                task.completedAt = date
-            }
-
-            task.updatedAt = date
-            try task.update(database)
+            // Advance in the user's local calendar: dueAt carries local
+            // wall-clock semantics, so weekday/month extraction and DST
+            // handling must use Calendar.current, not UTC.
+            let completed = try Self.completing(task, at: date, calendar: .current)
+            try completed.update(database)
         }
+    }
+
+    /// Pure completion transition (no I/O). For a recurring task whose series
+    /// continues, advances `dueAt` to the next occurrence (honouring
+    /// X-SCRIBE-FROM=COMPLETION, UNTIL and COUNT — COUNT is decremented in the
+    /// stored rule), shifts any `startAt` by the same number of calendar days
+    /// so the defer offset is kept, drops an explicit Today plan, and leaves
+    /// the task open. Otherwise — one-off, or the series just ended — marks it
+    /// completed. Completion always clears a cancellation.
+    static func completing(_ task: TodoTask, at date: Date, calendar: Calendar) throws -> TodoTask {
+        var task = task
+        task.updatedAt = date
+        task.cancelledAt = nil
+        guard let ruleStr = task.recurrenceRule, let due = task.dueAt else {
+            task.completedAt = date
+            return task
+        }
+        let rule = try RecurrenceRule.parse(ruleStr)
+        guard let step = RecurrenceEngine.nextOccurrence(dueAt: due, completedAt: date,
+                                                         rule: rule, calendar: calendar) else {
+            // Series ended (COUNT exhausted / past UNTIL): complete for good.
+            task.completedAt = date
+            return task
+        }
+        if let start = task.startAt {
+            let dayShift = calendar.dateComponents(
+                [.day],
+                from: calendar.startOfDay(for: due),
+                to: calendar.startOfDay(for: step.dueAt)
+            ).day ?? 0
+            task.startAt = calendar.date(byAdding: .day, value: dayShift, to: start) ?? start
+        }
+        task.dueAt = step.dueAt
+        // Only rewrite the stored rule when its state changed (COUNT), so a
+        // rule written by another tool keeps its original spelling.
+        if step.rule.count != rule.count { task.recurrenceRule = step.rule.rruleString }
+        if task.scheduleBucket == .today { task.scheduleBucket = .anytime }
+        task.completedAt = nil
+        return task
     }
 
     /// Reverses a completion (undoes `completeTask`).
@@ -305,16 +507,27 @@ final class TaskStore {
 
         switch filter {
         case .inbox:
+            // Someday tasks have been triaged (parked), so they leave the Inbox.
             request = request
                 .filter(Column("projectId") == nil)
                 .filter(Column("completedAt") == nil)
+                .filter(Column("scheduleBucket") != TaskScheduleBucket.someday.rawValue)
         case .today:
             // Half-open window `dueAt < startOfTomorrow` includes overdue and
-            // every dueAt today regardless of sub-second precision.
+            // every dueAt today regardless of sub-second precision. Mirrors
+            // `TaskPlanningRules.isInToday`: not deferred (startAt before
+            // tomorrow), and either due by today, explicitly planned for
+            // Today, or an undated This-Evening task.
             let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
+            let available = Column("startAt") == nil || Column("startAt") < startOfTomorrow
+            let dueByToday = Column("dueAt") != nil && Column("dueAt") < startOfTomorrow
+            let plannedToday = Column("scheduleBucket") == TaskScheduleBucket.today.rawValue
+            let undatedEvening = Column("scheduleBucket") == TaskScheduleBucket.evening.rawValue
+                && Column("dueAt") == nil
             request = request
                 .filter(Column("completedAt") == nil)
-                .filter(Column("dueAt") != nil && Column("dueAt") < startOfTomorrow)
+                .filter(available)
+                .filter(dueByToday || plannedToday || undatedEvening)
         case .dueOn(let date):
             let startOfDay = calendar.startOfDay(for: date)
             let startOfNext = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: startOfDay)!)
@@ -328,11 +541,18 @@ final class TaskStore {
             // next-7-days window (overdue + today + the coming week). The view
             // buckets these into Overdue / Today / Next 7 days. Undated tasks
             // are excluded — this is a date-driven view.
+            // Tasks deferred to start inside the window (no due date needed)
+            // are listed on their start day too — mirrors
+            // `TaskPlanningRules.isInUpcoming`.
             let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
             let endOfWindow = calendar.date(byAdding: .day, value: 7, to: startOfTomorrow)!
+            let dueInWindow = Column("dueAt") != nil && Column("dueAt") < endOfWindow
+            let startsInWindow = Column("startAt") != nil
+                && Column("startAt") >= startOfTomorrow
+                && Column("startAt") < endOfWindow
             request = request
                 .filter(Column("completedAt") == nil)
-                .filter(Column("dueAt") != nil && Column("dueAt") < endOfWindow)
+                .filter(dueInWindow || startsInWindow)
         case .all:
             request = request.filter(Column("completedAt") == nil)
         case .completed:
@@ -351,6 +571,15 @@ final class TaskStore {
             request = request
                 .filter(ids.contains(Column("id")))
                 .filter(Column("completedAt") == nil)
+        case .someday:
+            request = request
+                .filter(Column("completedAt") == nil)
+                .filter(Column("scheduleBucket") == TaskScheduleBucket.someday.rawValue)
+        case .area(let id):
+            request = request
+                .filter(Column("completedAt") == nil)
+                .filter(sql: "(areaId = ? OR projectId IN (SELECT p.id FROM projects AS p WHERE p.areaId = ?))",
+                        arguments: [id, id])
         }
 
         // Cancelled ("Won't do") tasks are hidden from every active list and
@@ -525,18 +754,10 @@ final class TaskStore {
         return try db.write { database in
             var changed = 0
             for id in ids {
-                guard var task = try TodoTask.fetchOne(database, key: id) else { continue }
+                guard let task = try TodoTask.fetchOne(database, key: id) else { continue }
                 try TaskCompletion(taskId: id, completedAt: date).insert(database)
-                if let ruleStr = task.recurrenceRule, let due = task.dueAt {
-                    let rule = try RecurrenceRule.parse(ruleStr)
-                    task.dueAt = RecurrenceEngine.nextDate(after: due, rule: rule, calendar: .current)
-                    task.completedAt = nil
-                } else {
-                    task.completedAt = date
-                    task.cancelledAt = nil
-                }
-                task.updatedAt = date
-                try task.update(database)
+                let completed = try Self.completing(task, at: date, calendar: .current)
+                try completed.update(database)
                 changed += 1
             }
             return changed
@@ -595,8 +816,19 @@ final class TaskStore {
     /// Applies a remote upsert: writes the task verbatim — preserving its
     /// remote `updatedAt` (does NOT bump it, unlike `updateTask`) — and clears
     /// any local tombstone for the id.
+    ///
+    /// Areas and headings are local-only (not synced), so an area / heading id
+    /// written on another device may not exist here; those links are dropped
+    /// rather than letting the foreign key abort the whole sync write.
     func upsertFromSync(_ task: TodoTask) throws {
         try db.write { database in
+            var task = task
+            if let areaId = task.areaId, try TaskArea.fetchOne(database, key: areaId) == nil {
+                task.areaId = nil
+            }
+            if let headingId = task.headingId, try ProjectHeading.fetchOne(database, key: headingId) == nil {
+                task.headingId = nil
+            }
             try task.save(database)
             try database.execute(sql: "DELETE FROM task_tombstones WHERE id = ?", arguments: [task.id])
         }
@@ -621,7 +853,7 @@ final class TaskStore {
                 arguments: [projectId])) ?? 0
             for id in ids {
                 guard var task = try TodoTask.fetchOne(database, key: id) else { continue }
-                task.projectId = projectId
+                Self.applyProjectMove(&task, to: projectId)
                 task.sortOrder = nextOrder
                 task.updatedAt = Date()
                 try task.update(database)

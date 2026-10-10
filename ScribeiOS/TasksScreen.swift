@@ -196,7 +196,11 @@ final class TasksViewModel: ObservableObject {
             title: title,
             priority: parsed.priority,
             dueAt: parsed.dueAt,
-            tags: parsed.tags
+            recurrenceRule: parsed.recurrenceRule,
+            tags: parsed.tags,
+            startAt: parsed.startAt,
+            scheduleBucket: parsed.scheduleBucket ?? .anytime,
+            estimatedMinutes: parsed.estimatedMinutes
         )
         draft = ""
     }

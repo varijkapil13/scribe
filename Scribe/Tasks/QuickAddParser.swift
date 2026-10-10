@@ -25,6 +25,16 @@ enum QuickAddParser {
         /// the parser to touch the database.
         var projectName: String?
         var dueAt: Date?
+        /// RRULE string from an "every …" phrase (see `QuickAddPlanningParser`).
+        /// When set, `dueAt` is always non-nil (first occurrence on or after
+        /// today / the start date) because recurring tasks need a due date.
+        var recurrenceRule: String? = nil
+        /// Start / defer date from "starting …" (start of that day).
+        var startAt: Date? = nil
+        /// "someday" / "this evening" / "tonight".
+        var scheduleBucket: TaskScheduleBucket? = nil
+        /// "~30m" / "for 1h" style estimate, in minutes.
+        var estimatedMinutes: Int? = nil
     }
 
     // MARK: - Token ranges (for live highlighting)
@@ -68,6 +78,14 @@ enum QuickAddParser {
                 if let range = Range(match.range, in: input) {
                     result.append(TokenRange(kind: .date, range: range))
                 }
+            }
+        }
+
+        // Planning phrases (recurrence, starting …, someday, durations).
+        for range in QuickAddPlanningParser.ranges(in: input) {
+            let alreadyCovered = result.contains { $0.range.overlaps(range) }
+            if !alreadyCovered {
+                result.append(TokenRange(kind: .date, range: range))
             }
         }
 
@@ -140,7 +158,9 @@ enum QuickAddParser {
     // MARK: - Full parse
 
     static func parse(_ input: String,
-                      detector: NSDataDetector? = .scribeDateDetector) -> ParsedQuickAdd {
+                      detector: NSDataDetector? = .scribeDateDetector,
+                      now: Date = Date(),
+                      calendar: Calendar = .current) -> ParsedQuickAdd {
         var working = input
 
         // 1) Pull off `#tag`, `+project`, and `!priority` tokens.
@@ -177,6 +197,11 @@ enum QuickAddParser {
             }
         }
 
+        // 1b) Lift planning phrases ("every 2 weeks after completion",
+        //     "starting friday", "someday", "~30m", …) before date detection,
+        //     so e.g. the "monday" in "every monday" isn't read as a due date.
+        let planning = QuickAddPlanningParser.extract(from: &working, now: now, calendar: calendar)
+
         // 2) Expand short-form abbreviations so NSDataDetector can parse them,
         //    then look for a date phrase. Strip it from the working title.
         let expanded = Self.expandShortForms(working)
@@ -199,12 +224,23 @@ enum QuickAddParser {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
 
+        // A recurring task needs a due date: default to the rule's first
+        // occurrence on or after the start date (or today).
+        if let rule = planning.recurrence, dueAt == nil {
+            let from = planning.startAt ?? calendar.startOfDay(for: now)
+            dueAt = RecurrenceEngine.firstOccurrence(onOrAfter: from, rule: rule, calendar: calendar)
+        }
+
         return ParsedQuickAdd(
             title: title,
             tags: tags,
             priority: priority,
             projectName: projectName,
-            dueAt: dueAt
+            dueAt: dueAt,
+            recurrenceRule: planning.recurrence?.rruleString,
+            startAt: planning.startAt,
+            scheduleBucket: planning.scheduleBucket,
+            estimatedMinutes: planning.estimatedMinutes
         )
     }
 

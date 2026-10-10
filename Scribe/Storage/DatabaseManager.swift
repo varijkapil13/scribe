@@ -658,6 +658,47 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Task planning (Things-style): Areas grouping projects, project
+        // headings, and per-task start date / when-bucket / duration / area /
+        // heading. Additive: two new tables + nullable (or defaulted) columns,
+        // so existing rows read as "no area, no heading, available now,
+        // date-driven, no estimate".
+        migrator.registerMigration("v20_task_planning") { db in
+            try db.create(table: "areas") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("name", .text).notNull()
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+                t.column("symbol", .text)
+            }
+            try db.create(table: "project_headings") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("projectId", .text).notNull()
+                    .references("projects", onDelete: .cascade)
+                t.column("title", .text).notNull().defaults(to: "")
+                t.column("sortOrder", .integer).notNull().defaults(to: 0)
+            }
+            try db.create(index: "project_headings_projectId_idx",
+                          on: "project_headings",
+                          columns: ["projectId"])
+            try db.alter(table: "projects") { t in
+                t.add(column: "areaId", .text)
+                    .references("areas", onDelete: .setNull)
+            }
+            try db.alter(table: "tasks") { t in
+                t.add(column: "startAt", .datetime)
+                t.add(column: "scheduleBucket", .text).notNull().defaults(to: "none")
+                t.add(column: "estimatedMinutes", .integer)
+                t.add(column: "areaId", .text)
+                    .references("areas", onDelete: .setNull)
+                t.add(column: "headingId", .text)
+                    .references("project_headings", onDelete: .setNull)
+            }
+            try db.create(index: "tasks_startAt_idx", on: "tasks", columns: ["startAt"])
+            try db.create(index: "tasks_areaId_idx", on: "tasks", columns: ["areaId"])
+            try db.create(index: "tasks_headingId_idx", on: "tasks", columns: ["headingId"])
+            try db.create(index: "projects_areaId_idx", on: "projects", columns: ["areaId"])
+        }
+
         return migrator
     }
 

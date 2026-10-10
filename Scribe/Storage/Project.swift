@@ -13,6 +13,8 @@ struct Project: Codable, Identifiable, Equatable, Hashable {
     var createdAt: Date
     /// Manual ordering for the sidebar list.
     var sortOrder: Int
+    /// Area this project is grouped under (v20). Nil = no area.
+    var areaId: String?
 
     init(
         id: String = UUID().uuidString,
@@ -20,7 +22,8 @@ struct Project: Codable, Identifiable, Equatable, Hashable {
         color: String? = nil,
         icon: String? = nil,
         createdAt: Date = Date(),
-        sortOrder: Int = 0
+        sortOrder: Int = 0,
+        areaId: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -28,6 +31,7 @@ struct Project: Codable, Identifiable, Equatable, Hashable {
         self.icon = icon
         self.createdAt = createdAt
         self.sortOrder = sortOrder
+        self.areaId = areaId
     }
 }
 
