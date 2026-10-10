@@ -18,6 +18,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
     case templates
     case mcp
     case about
+    case privacy
+    case backup
 
     var id: String { rawValue }
 
@@ -34,6 +36,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .templates:    return "Templates"
         case .mcp:          return "MCP Server"
         case .about:        return "About"
+        case .privacy:      return "Privacy"
+        case .backup:       return "Backup"
         }
     }
 
@@ -50,6 +54,8 @@ enum SettingsPane: String, CaseIterable, Hashable, Identifiable {
         case .templates:    return "doc.text.magnifyingglass"
         case .mcp:          return "server.rack"
         case .about:        return "info.circle"
+        case .privacy:      return "hand.raised"
+        case .backup:       return "externaldrive.badge.timemachine"
         }
     }
 }
@@ -99,6 +105,8 @@ struct SettingsPaneView: View {
         case .templates:    TemplatesSettingsPane()
         case .mcp:          MCPSettingsPane()
         case .about:        AboutSettingsPane()
+        case .privacy:      PrivacySettingsPane()
+        case .backup:       BackupSettingsPane()
         }
     }
 }
@@ -136,11 +144,11 @@ enum SettingsPaneGroup: String, CaseIterable, Identifiable {
     /// Vocabulary.
     var panes: [SettingsPane] {
         switch self {
-        case .general:      return [.general]
+        case .general:      return [.general, .privacy]
         case .recording:    return [.calendar]
         case .intelligence: return [.intelligence, .templates, .vocabulary, .hooks]
         case .dictation:    return [.dictation]
-        case .storageSync:  return [.storage]
+        case .storageSync:  return [.storage, .backup]
         case .shortcuts:    return [.shortcuts]
         case .mcp:          return [.mcp]
         case .about:        return [.about]

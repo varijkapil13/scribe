@@ -37,6 +37,13 @@ final class SettingsPaneGroupTests: XCTestCase {
         XCTAssertNotNil(SettingsPaneGroup.recording.header)
     }
 
+    func testPrivacyAndBackupPanesAreReachable() {
+        XCTAssertEqual(SettingsPane.privacy.group, .general)
+        XCTAssertEqual(SettingsPane.backup.group, .storageSync)
+        XCTAssertEqual(SettingsPane.privacy.title, "Privacy")
+        XCTAssertEqual(SettingsPane.backup.title, "Backup")
+    }
+
     func testPaneGroupRoundTrips() {
         for pane in SettingsPane.allCases {
             XCTAssertTrue(pane.group.panes.contains(pane))
