@@ -4,11 +4,16 @@ import Combine
 
 enum TaskStoreError: LocalizedError {
     case recurringTaskRequiresDueDate
+    /// A synced task is filed under a project this device doesn't have
+    /// (projects aren't synced yet); the upsert was skipped.
+    case syncedTaskProjectMissing(String)
 
     var errorDescription: String? {
         switch self {
         case .recurringTaskRequiresDueDate:
             return "A recurring task must have a due date."
+        case .syncedTaskProjectMissing:
+            return "A synced task belongs to a project that isn't on this device."
         }
     }
 }
@@ -835,9 +840,17 @@ final class TaskStore {
     /// local link is kept when it's still consistent with the incoming
     /// `projectId` (an area only for project-less tasks; a heading only inside
     /// its own project).
+    ///
+    /// Projects are local too: a task filed under a project missing here
+    /// throws `TaskStoreError.syncedTaskProjectMissing` without writing, so
+    /// the coordinator can skip it instead of the foreign key aborting the
+    /// round (and without un-filing the task for the devices that have it).
     func upsertFromSync(_ task: TodoTask) throws {
         try db.write { database in
             var task = task
+            if let projectId = task.projectId, try Project.fetchOne(database, key: projectId) == nil {
+                throw TaskStoreError.syncedTaskProjectMissing(projectId)
+            }
             let existing = try TodoTask.fetchOne(database, key: task.id)
 
             if let areaId = task.areaId, try TaskArea.fetchOne(database, key: areaId) == nil {

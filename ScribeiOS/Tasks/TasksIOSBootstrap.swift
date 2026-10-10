@@ -234,6 +234,9 @@ final class TasksCloudSyncStatus: ObservableObject {
     @Published private(set) var lastSyncAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var isEnabled = false
+    /// Tasks the last round skipped: their project isn't on this device
+    /// (projects don't sync yet).
+    @Published private(set) var skippedTasks = 0
 
     init() {
         refresh()
@@ -249,7 +252,7 @@ final class TasksCloudSyncStatus: ObservableObject {
         guard CloudKitAvailability.canSyncTasks, !isSyncing else { return }
         isSyncing = true
         do {
-            try await TaskSyncCoordinator.live.sync()
+            skippedTasks = try await TaskSyncCoordinator.live.syncReportingSkipped()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -269,6 +272,8 @@ final class TasksCloudSyncStatus: ObservableObject {
         if isSyncing { return "Syncing…" }
         if let lastError { return "Sync failed: \(lastError)" }
         guard let lastSyncAt else { return "Not synced yet — pull to sync" }
-        return "Synced \(lastSyncAt.formatted(.relative(presentation: .named)))"
+        let synced = "Synced \(lastSyncAt.formatted(.relative(presentation: .named)))"
+        guard skippedTasks > 0 else { return synced }
+        return synced + " · \(skippedTasks) in projects not on this device"
     }
 }
