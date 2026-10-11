@@ -462,6 +462,11 @@ struct MeetingSyncLocalStore: Sendable {
                 sql: "INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt) VALUES (?, ?)",
                 arguments: [sessionId, snapshot.updatedAt]
             )
+            // Audio in iCloud only ever grows (it goes away with the
+            // session), so keep what we already knew about: a version saved
+            // without the list (pushed by a device that hadn't seen it yet)
+            // mustn't hide audio that is there.
+            let knownAudio = try Self.storedRemoteAudio(db, sessionId: sessionId)
             try db.execute(
                 sql: """
                     UPDATE meeting_sync_state
@@ -478,10 +483,37 @@ struct MeetingSyncLocalStore: Sendable {
                     originDevice,
                     originDeviceId,
                     appliedHash,
-                    Self.audioJSON(Self.allowedAudio(snapshot.audioFiles)),
+                    Self.audioJSON(Self.mergedAudio(knownAudio, snapshot.audioFiles)),
                     sessionId
                 ]
             )
+        }
+    }
+
+    /// Adds the audio files a remote version lists to the ones this device
+    /// knows are in iCloud, without importing anything else. For versions
+    /// that don't win last-writer-wins: an audio backfill ("Sync recording
+    /// audio" turned on after the meeting synced) re-saves the record with
+    /// its old clock, so devices that already hold that version see a tie.
+    /// Returns whether anything changed. No-op for sessions not known here.
+    @discardableResult
+    func mergeRemoteAudio(sessionId: String, files: [MeetingAudioFileInfo]) throws -> Bool {
+        let incoming = Self.allowedAudio(files)
+        guard !incoming.isEmpty else { return false }
+        return try db.write { db in
+            guard try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = ?)",
+                arguments: [sessionId]
+            ) == true else { return false }
+            let known = try Self.storedRemoteAudio(db, sessionId: sessionId)
+            let merged = Self.mergedAudio(known, incoming)
+            guard merged != known.sorted(by: { $0.fileName < $1.fileName }) else { return false }
+            try db.execute(
+                sql: "UPDATE meeting_sync_state SET remoteAudio = ? WHERE sessionId = ?",
+                arguments: [Self.audioJSON(merged), sessionId]
+            )
+            return true
         }
     }
 
@@ -588,6 +620,27 @@ struct MeetingSyncLocalStore: Sendable {
 
     nonisolated static func allowedAudio(_ files: [MeetingAudioFileInfo]) -> [MeetingAudioFileInfo] {
         files.filter { MeetingAudioSyncPolicy.isAllowed(fileName: $0.fileName) && $0.byteCount > 0 }
+    }
+
+    private static func storedRemoteAudio(_ db: Database, sessionId: String) throws -> [MeetingAudioFileInfo] {
+        let json = try String.fetchOne(
+            db,
+            sql: "SELECT remoteAudio FROM meeting_sync_state WHERE sessionId = ?",
+            arguments: [sessionId]
+        )
+        return allowedAudio(MeetingSyncJSON.decode([MeetingAudioFileInfo].self, from: json) ?? [])
+    }
+
+    /// `known` plus `incoming` (incoming wins per file name), allowed names
+    /// only, sorted by name.
+    nonisolated static func mergedAudio(
+        _ known: [MeetingAudioFileInfo],
+        _ incoming: [MeetingAudioFileInfo]
+    ) -> [MeetingAudioFileInfo] {
+        let added = allowedAudio(incoming)
+        var result = allowedAudio(known).filter { file in !added.contains(where: { $0.fileName == file.fileName }) }
+        result.append(contentsOf: added)
+        return result.sorted { $0.fileName < $1.fileName }
     }
 
     private static func audioJSON(_ files: [MeetingAudioFileInfo]) -> String? {

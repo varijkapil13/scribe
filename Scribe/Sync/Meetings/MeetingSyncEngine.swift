@@ -28,13 +28,15 @@ struct MeetingSyncRoundOptions: Sendable, Equatable {
 struct MeetingSyncRoundReport: Sendable, Equatable {
     var importedSessionIds: [String] = []
     var deletedSessionIds: [String] = []
+    /// Sessions whose audio became available in iCloud (nothing else changed).
+    var audioAvailableSessionIds: [String] = []
     var pushedSessions = 0
     var pushedDeletions = 0
     var uploadedAudioFiles = 0
     var failures = 0
 
     /// Local sessions this round created, changed or removed.
-    var changedSessionIds: [String] { importedSessionIds + deletedSessionIds }
+    var changedSessionIds: [String] { importedSessionIds + deletedSessionIds + audioAvailableSessionIds }
 }
 
 enum MeetingSyncEngineError: Error, Equatable {
@@ -156,10 +158,20 @@ actor MeetingSyncEngine {
         deviceId: String,
         report: inout MeetingSyncRoundReport
     ) async throws {
+        // Only finished recordings are ever pushed; a live version without
+        // an end would import as a recording "in progress" here, which then
+        // never syncs again (and blocks later versions). Ignore it.
+        guard snapshot.isDeleted || snapshot.endedAt != nil else { return }
         let localState = try local.localState(sessionId: snapshot.id)
         let remoteSide = MeetingSyncMergePolicy.Side(updatedAt: snapshot.updatedAt, isDeleted: snapshot.isDeleted)
         switch MeetingSyncMergePolicy.resolve(local: localState?.side, remote: remoteSide) {
         case .keepLocal:
+            // Audio uploaded later (backfill) re-saves the record with its
+            // old clock, so it ties here; still learn that it's in iCloud.
+            if let localState, !localState.side.isDeleted, !snapshot.isDeleted, !snapshot.audioFiles.isEmpty,
+               try local.mergeRemoteAudio(sessionId: snapshot.id, files: snapshot.audioFiles) {
+                report.audioAvailableSessionIds.append(snapshot.id)
+            }
             return
         case .rememberTombstone:
             try local.rememberRemoteTombstone(sessionId: snapshot.id, deletedAt: snapshot.updatedAt)

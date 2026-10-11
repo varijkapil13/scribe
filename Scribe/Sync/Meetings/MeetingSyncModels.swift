@@ -1,5 +1,5 @@
 import Foundation
-#if canImport(UIKit)
+#if os(iOS)
 import UIKit
 #endif
 
@@ -43,7 +43,7 @@ enum MeetingDeviceKind: String, Codable, Sendable, CaseIterable, Equatable {
     @MainActor static func current() -> MeetingDeviceKind {
         #if os(macOS)
         return .mac
-        #elseif canImport(UIKit)
+        #elseif os(iOS)
         return UIDevice.current.userInterfaceIdiom == .pad ? .iPad : .iPhone
         #else
         return .iPhone

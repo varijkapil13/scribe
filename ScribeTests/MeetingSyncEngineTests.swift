@@ -515,6 +515,73 @@ final class MeetingSyncEngineTests: XCTestCase {
         XCTAssertFalse(try phone.local.hasPendingWork(), "a downloaded audio path isn't a syncable edit")
     }
 
+    func testAudioBackfillReachesADeviceThatAlreadyHasTheMeeting() async throws {
+        let cloud = FakeMeetingCloud()
+        let mac = try SimulatedDevice(kind: .mac, cloud: cloud)
+        let phone = try SimulatedDevice(kind: .iPhone, cloud: cloud)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingSyncAudio-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = try mac.recordMeeting()
+        let macAudio = root.appendingPathComponent(session.id, isDirectory: true)
+        try FileManager.default.createDirectory(at: macAudio, withIntermediateDirectories: true)
+        try Data("fake-aac".utf8).write(to: macAudio.appendingPathComponent("mic.m4a"))
+        try mac.local.setAudioDirectory(macAudio.path, sessionId: session.id)
+
+        // The phone imports the meeting before any audio is in iCloud.
+        try await mac.sync(syncAudio: false)
+        try await phone.sync()
+        XCTAssertTrue(try phone.local.remoteAudioFiles(sessionId: session.id).isEmpty)
+
+        // The backfill re-saves the record with its old clock (a tie on the
+        // phone), but the phone still learns the audio is there.
+        try await mac.sync(syncAudio: true)
+        let report = try await phone.sync()
+        XCTAssertTrue(report.importedSessionIds.isEmpty)
+        XCTAssertEqual(report.audioAvailableSessionIds, [session.id])
+        XCTAssertEqual(try phone.local.remoteAudioFiles(sessionId: session.id).map(\.fileName), ["mic.m4a"])
+        XCTAssertFalse(try phone.local.hasPendingWork())
+
+        // A later phone edit pushed with the list keeps it; a version
+        // without the list never hides audio already known.
+        var row = try XCTUnwrap(phone.transcripts.fetchSession(id: session.id))
+        row.title = "Renamed on the phone"
+        try phone.transcripts.updateSession(row)
+        try await phone.sync()
+        let pushed = await cloud.snapshot(session.id)
+        XCTAssertEqual(pushed?.audioFiles.map(\.fileName), ["mic.m4a"])
+
+        var stripped = try XCTUnwrap(pushed)
+        stripped.audioFiles = []
+        stripped.updatedAt = stripped.updatedAt.addingTimeInterval(60)
+        await cloud.inject(stripped, transcript: nil)
+        try await mac.sync()
+        XCTAssertEqual(try mac.local.remoteAudioFiles(sessionId: session.id).map(\.fileName), ["mic.m4a"])
+    }
+
+    func testEditRightAfterImportBeatsItsBaseEvenWithASlowClock() async throws {
+        let cloud = FakeMeetingCloud()
+        let mac = try SimulatedDevice(kind: .mac, cloud: cloud)
+        let phone = try SimulatedDevice(kind: .iPhone, cloud: cloud)
+        let session = try mac.recordMeeting()
+        // The Mac's clock runs an hour ahead of the phone's.
+        try mac.setSyncClock(session.id, Date(timeIntervalSinceNow: 3_600))
+        try await mac.sync()
+        try await phone.sync()
+
+        try phone.transcripts.setSpeakerName("Priya", forKey: "remote", sessionId: session.id)
+        try await phone.sync()
+        let base = try XCTUnwrap(mac.local.localState(sessionId: session.id)).side.updatedAt
+        let remote = await cloud.snapshot(session.id)
+        let pushed = try XCTUnwrap(remote)
+        XCTAssertGreaterThan(pushed.updatedAt.timeIntervalSince(base), MeetingSyncMergePolicy.clockTolerance)
+
+        let report = try await mac.sync()
+        XCTAssertEqual(report.importedSessionIds, [session.id])
+        XCTAssertEqual(try mac.transcripts.fetchSpeakerNames(sessionId: session.id), ["remote": "Priya"])
+    }
+
     func testDownloadWithoutRemoteAudioFails() async throws {
         let cloud = FakeMeetingCloud()
         let phone = try SimulatedDevice(kind: .iPhone, cloud: cloud)
