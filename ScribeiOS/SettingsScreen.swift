@@ -51,6 +51,7 @@ struct SettingsScreen: View {
 
                 // MARK: - Slot: recording (ios-recording)
                 RecordingSettingsSection()
+                SpeakerSeparationSettingsRow()   // ios-diarization: Settings › Speakers
 
                 // MARK: - Slot: system integrations (ios-system: Siri, widgets, Share)
                 ScribeiOSSystemSettingsSection()

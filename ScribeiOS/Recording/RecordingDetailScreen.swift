@@ -18,6 +18,7 @@ struct RecordingDetailScreen: View {
     @State private var summary: MeetingSummary?
     @State private var bookmarks: [SessionBookmark] = []
     @State private var resolver = SpeakerNameResolver()
+    @State private var speakerKeys: [String] = []
     @State private var convertedActionItemIds: Set<String> = []
     @State private var noteTitle: String?
     @State private var renamingSpeakerKey: String?
@@ -38,6 +39,11 @@ struct RecordingDetailScreen: View {
             }
             if let summary { summarySections(summary) }
             if !bookmarks.isEmpty { highlightsSection }
+            // ios-diarization: speaker chips (rename) + separation status.
+            if !segments.isEmpty {
+                RecordingSpeakersSection(sessionId: sessionId, speakerKeys: speakerKeys, resolver: resolver,
+                                         onRename: { beginRename(key: $0) })
+            }
             transcriptSection
         }
         .listStyle(.insetGrouped)
@@ -45,6 +51,9 @@ struct RecordingDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .task(id: controller.recordingsVersion) { load() }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeSpeakersDidChange)) { note in
+            if note.object as? String == sessionId { load() }
+        }
         .onDisappear { player.stop() }
         .alert("Rename Speaker", isPresented: renamePresented) {
             TextField("Name", text: $speakerNameDraft)
@@ -263,6 +272,13 @@ struct RecordingDetailScreen: View {
                     controller.runPostProcessing(sessionId: sessionId, summarize: false)
                 }
                 .disabled(segments.isEmpty || controller.processingSessionIds.contains(sessionId))
+                Button("Separate Speakers", systemImage: "person.2.wave.2") {
+                    if !IOSDiarizationScheduler.shared.separateSpeakersNow(sessionId: sessionId) {
+                        message = "Speaker separation needs the recording's audio. Turn on Keep audio for playback in Settings › Recording for new recordings."
+                    }
+                }
+                .disabled(segments.isEmpty || !IOSDiarizationSettings.isEnabled
+                          || IOSDiarizationScheduler.shared.status(for: sessionId) != nil)
                 ShareLink(item: shareText) {
                     Label("Share Transcript", systemImage: "square.and.arrow.up")
                 }
@@ -282,6 +298,7 @@ struct RecordingDetailScreen: View {
         summary = try? store.fetchSummary(sessionId: sessionId)
         bookmarks = SessionBookmarkFormatter.sorted((try? SessionBookmarkStore.shared.fetch(sessionId: sessionId)) ?? [])
         resolver = store.speakerResolver(sessionId: sessionId)
+        speakerKeys = (try? store.speakerKeysInOrder(sessionId: sessionId)) ?? []
         noteTitle = session?.noteId.flatMap { try? NoteStore.shared.fetchNote(id: $0) }?.title
         if let summary {
             convertedActionItemIds = Set(summary.actionItems.compactMap { item -> String? in
@@ -340,6 +357,7 @@ struct RecordingDetailScreen: View {
         do {
             try TranscriptStore.shared.setSpeakerName(name, forKey: key, sessionId: sessionId)
             resolver = TranscriptStore.shared.speakerResolver(sessionId: sessionId)
+            NotificationCenter.default.post(name: .scribeSpeakersDidChange, object: sessionId)
             // Rewrite the transcript / highlights in the note with the name.
             controller.runPostProcessing(sessionId: sessionId, summarize: false)
         } catch {

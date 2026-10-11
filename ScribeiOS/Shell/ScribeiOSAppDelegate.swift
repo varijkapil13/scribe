@@ -71,6 +71,10 @@ enum ScribeiOSBootstrap {
         //    Share-extension import (ios-system). Also started by each
         //    scene's `.scribeSystemIntegration()`; idempotent.
         IOSSystemIntegration.shared.start()
+
+        // 8. Speaker separation: registers its BGProcessingTask (must happen
+        //    before launch finishes) and resumes queued diarization jobs.
+        IOSDiarizationScheduler.shared.start()
     }
 
     static func installNotifications() {

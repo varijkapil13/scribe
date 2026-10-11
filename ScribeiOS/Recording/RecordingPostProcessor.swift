@@ -6,10 +6,9 @@
 // meeting note (`MeetingNoteRecap`) so the results sync to the Mac through
 // the iCloud vault.
 //
-// Speaker diarization (FluidAudio, Scribe/Diarization) is NOT part of the iOS
-// target: its coordinator, settings and bundled-model plumbing are macOS-only,
-// and nothing in CI proves the package builds for iOS. iOS recordings keep a
-// single "In person" speaker the user can rename.
+// Speaker separation runs separately, after this (ScribeiOS/Diarization —
+// FluidAudio with a downloaded model, deferred to the charger when needed);
+// it rewrites the note's transcript once speakers are split.
 
 import Foundation
 import FoundationModels
