@@ -13,10 +13,11 @@ import Foundation
 /// then be assigned in the transcript, or suggested from calendar attendees
 /// (`SpeakerNameSuggester`).
 ///
-/// Models (~22 MB) ship inside the app (`DiarizerModels/`, fetched at build
-/// time by `scripts/fetch-diarizer-models.sh`). Builds without them fall back
-/// to a one-time download from Hugging Face if the user allows it. Only model
-/// files are downloaded; no audio or text ever leaves the Mac.
+/// Models (~22 MB) are not bundled, which keeps the app small: Scribe
+/// downloads them once from Hugging Face shortly after installation (and
+/// before the first diarization if that didn't happen), into Application
+/// Support (``ScribeDiarizerModelManager``). Only model files are downloaded;
+/// no audio or text ever leaves the Mac.
 enum SpeakerDiarizationSettings {
     static let enabledKey = "speakerDiarizationEnabled"
     static let allowModelDownloadKey = "speakerDiarizationAllowModelDownload"
@@ -35,50 +36,81 @@ enum SpeakerDiarizationSettings {
 enum SpeakerDiarizationModels {
 
     enum Source: Equatable {
-        /// Shipped inside the app bundle.
-        case bundled(URL)
-        /// Downloaded on first use into FluidAudio's cache.
+        /// Downloaded and complete at `root` (the folder FluidAudio loads).
+        case installed(URL)
+        /// Not downloaded yet; fetched before the first run.
         case download
-        /// Not bundled and downloading is turned off.
+        /// Not downloaded and downloading is turned off.
         case unavailable
     }
 
     /// FluidAudio's folder name for the diarizer repository.
     static let repoFolderName = ScribeDiarizerModelRepository.folderName
 
-    /// `<App>/Contents/Resources/DiarizerModels`, when it holds the models.
-    static var bundledRoot: URL? {
-        guard let root = Bundle.main.resourceURL?.appendingPathComponent("DiarizerModels", isDirectory: true)
-        else { return nil }
-        let repo = root.appendingPathComponent(repoFolderName, isDirectory: true)
-        return FileManager.default.fileExists(atPath: repo.path) ? root : nil
+    /// `~/Library/Application Support/Scribe/DiarizerModels` — the same layout
+    /// the iPhone / iPad app uses.
+    nonisolated static var layout: ScribeDiarizerModelLayout {
+        ScribeDiarizerModelLayout.downloaded(applicationSupport: URL.applicationSupportDirectory)
     }
 
-    static var source: Source {
-        if let root = bundledRoot { return .bundled(root) }
+    nonisolated static var source: Source {
+        let layout = layout
+        if layout.isInstalledOnDisk() { return .installed(layout.root) }
         return SpeakerDiarizationSettings.allowModelDownload ? .download : .unavailable
+    }
+
+    /// Downloads the models if needed (joining a download already running).
+    @MainActor
+    static func ensureInstalled() async -> Bool {
+        await ScribeDiarizerModelManager.shared.ensureInstalled()
+    }
+
+    /// After installation (and on later launches until it succeeds): fetch
+    /// the models in the background a little after launch, so the first
+    /// meeting's speakers are separated without waiting for a download.
+    @MainActor
+    static func prefetchIfNeeded(delay: Duration = .seconds(20)) {
+        guard SpeakerDiarizationSettings.isEnabled,
+              SpeakerDiarizationSettings.allowModelDownload,
+              !layout.isInstalledOnDisk() else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard SpeakerDiarizationSettings.isEnabled,
+                  SpeakerDiarizationSettings.allowModelDownload else { return }
+            ScribeDiarizerModelManager.shared.download()
+        }
     }
 }
 
 enum DiarizationModelError: LocalizedError {
     case modelsUnavailable
+    case downloadFailed
 
     var errorDescription: String? {
-        "Speaker separation needs its model, which isn't bundled with this build. Allow the one-time model download in Settings → Vocabulary → Speakers."
+        switch self {
+        case .modelsUnavailable:
+            return "Speaker separation needs its model, which hasn't been downloaded. Download it in Settings → Vocabulary → Speakers."
+        case .downloadFailed:
+            return "The speaker model couldn't be downloaded. Scribe will try again; you can also download it in Settings → Vocabulary → Speakers."
+        }
     }
 }
 
 /// Runs FluidAudio over one audio file (``FluidDiarizationEngine``, shared
-/// with the iPhone / iPad app) with the Mac's model source.
+/// with the iPhone / iPad app) with the Mac's downloaded models.
 enum SpeakerDiarizationRunner {
 
     static func turns(forAudioAt url: URL) async throws -> [DiarizedSegmentRebuilder.Turn] {
         switch SpeakerDiarizationModels.source {
-        case .bundled(let root):
-            // Never reach for the network when the models ship with the app.
+        case .installed(let root):
             return try await FluidDiarizationEngine.turns(forAudioAt: url, modelsRoot: root, allowNetwork: false)
         case .download:
-            return try await FluidDiarizationEngine.turns(forAudioAt: url, modelsRoot: nil, allowNetwork: true)
+            guard await SpeakerDiarizationModels.ensureInstalled() else {
+                throw DiarizationModelError.downloadFailed
+            }
+            return try await FluidDiarizationEngine.turns(
+                forAudioAt: url, modelsRoot: SpeakerDiarizationModels.layout.root, allowNetwork: false
+            )
         case .unavailable:
             throw DiarizationModelError.modelsUnavailable
         }

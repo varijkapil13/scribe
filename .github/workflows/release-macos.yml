@@ -87,8 +87,6 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST"
           echo "Stamped $PLIST -> ${VERSION} (build ${GITHUB_RUN_NUMBER})"
 
-      - name: Fetch speaker-diarization models
-        run: scripts/fetch-diarizer-models.sh
 
       - name: Build app (Release, ad-hoc signed)
         # Manual ad-hoc signing ("-") with no team/profile: xcodebuild signs the

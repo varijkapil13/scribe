@@ -4,12 +4,11 @@ import Foundation
 //
 // The Core ML models FluidAudio's offline diarizer loads, where they live on
 // disk and how to fetch them. Foundation only: compiled into the macOS app
-// (and its `swift test` target) and into the iPhone / iPad app, which does
-// NOT bundle the models but downloads them on first use (ScribeiOS/Diarization).
+// (and its `swift test` target) and into the iPhone / iPad app. Neither app
+// bundles the models; both download them (ScribeDiarizerModelManager).
 //
-// The pinned repository / revision and the file filter mirror
-// scripts/fetch-diarizer-models.sh (which the Mac build uses to bundle the
-// same files). Bump them together with the FluidAudio version.
+// The pinned repository / revision must match what the FluidAudio version in
+// Package.swift / project.yml expects. Bump them together.
 
 /// The pinned Hugging Face repository the diarizer models come from.
 enum ScribeDiarizerModelRepository {
@@ -33,8 +32,7 @@ enum ScribeDiarizerModelRepository {
     /// listing / the disk afterwards).
     nonisolated static let approximateDownloadBytes: Int64 = 22_000_000
 
-    /// Whether a repository file is one the offline diarizer needs (same
-    /// filter as the fetch script's `WANTED`).
+    /// Whether a repository file is one the offline diarizer needs.
     nonisolated static func isWanted(path: String) -> Bool {
         if path == parametersFileName { return true }
         guard let first = path.split(separator: "/", omittingEmptySubsequences: false).first,
@@ -121,8 +119,8 @@ struct ScribeDiarizerModelLayout: Equatable, Sendable {
         self.root = root
     }
 
-    /// `<Application Support>/Scribe/DiarizerModels` — the iPhone / iPad
-    /// download location.
+    /// `<Application Support>/Scribe/DiarizerModels` — the download location
+    /// on the Mac, iPhone and iPad.
     nonisolated static func downloaded(applicationSupport: URL) -> ScribeDiarizerModelLayout {
         ScribeDiarizerModelLayout(root: applicationSupport
             .appendingPathComponent("Scribe", isDirectory: true)

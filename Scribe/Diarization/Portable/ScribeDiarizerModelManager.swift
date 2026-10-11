@@ -1,33 +1,17 @@
-// ScribeiOS/Diarization/IOSDiarizationModelManager.swift
+// Scribe/Diarization/Portable/ScribeDiarizerModelManager.swift
 //
-// The speaker-diarization models on iPhone / iPad. Unlike the Mac they are not
-// bundled (the app stays small); they download on first use — or from
-// Settings › Speakers — into Application Support, excluded from iCloud /
-// device backups, Wi‑Fi only unless the user allows cellular. The download
-// logic and file layout are the Mac's portable ones
-// (Scribe/Diarization/Portable/ScribeDiarizerModelFiles.swift).
+// The speaker-diarization models on the Mac, iPhone and iPad. They are never
+// bundled (the apps stay small): the Mac fetches them in the background
+// shortly after installation, iPhone / iPad on first use; both can manage
+// them from Settings. They live in Application Support (excluded from
+// backups). Download logic and file layout: ScribeDiarizerModelFiles.swift.
 
 import Foundation
 import Observation
 
-/// UserDefaults keys and readers for speaker separation on iPhone / iPad.
-enum IOSDiarizationSettings {
-    nonisolated static let enabledKey = "ios.diarization.enabled"
-    nonisolated static let wifiOnlyKey = "ios.diarization.wifiOnly"
-    nonisolated static let suggestNamesKey = "ios.diarization.suggestNames"
-
-    static var isEnabled: Bool { bool(enabledKey, default: true) }
-    static var wifiOnly: Bool { bool(wifiOnlyKey, default: true) }
-    static var suggestNames: Bool { bool(suggestNamesKey, default: true) }
-
-    private static func bool(_ key: String, default fallback: Bool) -> Bool {
-        UserDefaults.standard.object(forKey: key) as? Bool ?? fallback
-    }
-}
-
 @MainActor
 @Observable
-final class IOSDiarizationModelManager {
+final class ScribeDiarizerModelManager {
 
     enum State: Equatable {
         case notInstalled
@@ -38,9 +22,19 @@ final class IOSDiarizationModelManager {
         case failed(String)
     }
 
-    static let shared = IOSDiarizationModelManager(
+    static let shared = ScribeDiarizerModelManager(
         layout: ScribeDiarizerModelLayout.downloaded(applicationSupport: URL.applicationSupportDirectory)
     )
+
+    /// Whether downloads may use cellular / expensive networks: the iPhone /
+    /// iPad Wi‑Fi-only setting; always on the Mac.
+    static var allowsCellular: Bool {
+        #if os(iOS)
+        !IOSDiarizationSettings.wifiOnly
+        #else
+        true
+        #endif
+    }
 
     let layout: ScribeDiarizerModelLayout
     private(set) var state: State = .notInstalled
@@ -119,7 +113,7 @@ final class IOSDiarizationModelManager {
 
     private func startDownload() -> Task<Bool, Never> {
         let layout = self.layout
-        let allowsCellular = !IOSDiarizationSettings.wifiOnly
+        let allowsCellular = Self.allowsCellular
         prepareRoot()
         state = .downloading(0)
         lastFailureWasConnectivity = false
@@ -176,7 +170,7 @@ final class IOSDiarizationModelManager {
     nonisolated private static func makeProgressHandler() -> @Sendable (Double) -> Void {
         { value in
             Task { @MainActor in
-                IOSDiarizationModelManager.shared.updateProgress(value)
+                ScribeDiarizerModelManager.shared.updateProgress(value)
             }
         }
     }

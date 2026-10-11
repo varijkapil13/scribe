@@ -114,8 +114,6 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      - name: Fetch speaker-diarization models
-        run: scripts/fetch-diarizer-models.sh
 
       - name: Build
         # DISABLE_SWIFTLINT: see the note on the `swift test` step. The

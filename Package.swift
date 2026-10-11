@@ -12,8 +12,8 @@ let package = Package(
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
         // On-device speaker diarization (Scribe/Diarization). Pinned exactly:
-        // scripts/fetch-diarizer-models.sh pins the model revision this
-        // version expects.
+        // ScribeDiarizerModelRepository.revision pins the model revision this
+        // version expects (the app downloads the models after installation).
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
         // Auto-updates (Scribe/App/Updater.swift, guarded by canImport).
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
