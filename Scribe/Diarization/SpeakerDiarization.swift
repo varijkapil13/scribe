@@ -44,7 +44,7 @@ enum SpeakerDiarizationModels {
     }
 
     /// FluidAudio's folder name for the diarizer repository.
-    static let repoFolderName = "speaker-diarization-coreml"
+    static let repoFolderName = ScribeDiarizerModelRepository.folderName
 
     /// `<App>/Contents/Resources/DiarizerModels`, when it holds the models.
     static var bundledRoot: URL? {
@@ -68,33 +68,19 @@ enum DiarizationModelError: LocalizedError {
     }
 }
 
-/// Runs FluidAudio over one audio file. Everything is local to the call, so
-/// the non-Sendable diarizer never crosses an isolation boundary.
+/// Runs FluidAudio over one audio file (``FluidDiarizationEngine``, shared
+/// with the iPhone / iPad app) with the Mac's model source.
 enum SpeakerDiarizationRunner {
 
     static func turns(forAudioAt url: URL) async throws -> [DiarizedSegmentRebuilder.Turn] {
-        let directory: URL?
         switch SpeakerDiarizationModels.source {
         case .bundled(let root):
             // Never reach for the network when the models ship with the app.
-            ModelHub.offlineMode = true
-            directory = root
+            return try await FluidDiarizationEngine.turns(forAudioAt: url, modelsRoot: root, allowNetwork: false)
         case .download:
-            ModelHub.offlineMode = false
-            directory = nil
+            return try await FluidDiarizationEngine.turns(forAudioAt: url, modelsRoot: nil, allowNetwork: true)
         case .unavailable:
             throw DiarizationModelError.modelsUnavailable
-        }
-
-        let manager = OfflineDiarizerManager(config: .default)
-        try await manager.prepareModels(directory: directory)
-        let result = try await manager.process(url)
-        return result.segments.map { segment in
-            DiarizedSegmentRebuilder.Turn(
-                speakerId: segment.speakerId,
-                start: Double(segment.startTimeSeconds),
-                end: Double(segment.endTimeSeconds)
-            )
         }
     }
 }
@@ -313,10 +299,4 @@ enum SpeakerDiarizationCoordinator {
             }
         }
     }
-}
-
-extension Notification.Name {
-    /// Posted (object: session id) when diarization or name suggestions
-    /// changed a session's speakers, so open transcript views reload names.
-    static let scribeSpeakersDidChange = Notification.Name("scribe.speakersDidChange")
 }

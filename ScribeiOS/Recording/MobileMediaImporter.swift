@@ -188,6 +188,12 @@ final class MobileMediaImporter {
                 session.language = locale.identifier
                 try transcriptStore.updateSession(session)
             }
+            // Speaker separation (ScribeiOS/Diarization) over the imported audio.
+            IOSDiarizationScheduler.shared.importDidFinish(
+                sessionId: sessionId,
+                audioDirectory: directory,
+                pieces: job.segments.map { MobileDiarizationJob.Piece(startMs: $0.startMs, endMs: $0.endMs, text: $0.text) }
+            )
         } catch {
             await job.pipeline.stop()
             await Self.finishRecorder(job.recorder)

@@ -257,7 +257,8 @@ targets:
       # shared with the Mac (Speech, AVFoundation, FoundationModels, EventKit
       # are all available on iOS 27). The Mac-only capture stack
       # (ScreenCaptureKit, process taps, CoreAudio devices, KeyboardShortcuts)
-      # and FluidAudio diarization stay out.
+      # and the Mac's diarization coordinator stay out (ios-diarization below
+      # brings the portable diarization core).
       - path: Scribe/Intelligence/TranscriptionPipeline.swift
       - path: Scribe/Intelligence/TranscriptionPipeline+Vocabulary.swift
       - path: Scribe/Intelligence/SpeechRecognizerEngine.swift   # TranscriptionSegment, resolveLocale, auth
@@ -280,6 +281,12 @@ targets:
       - path: Scribe/MediaImport/MediaImportTranscriptionJob.swift
       # (Scribe/Calendar/CalendarEventMatcher.swift is listed under ios-tasks.)
       - path: Scribe/Calendar/CalendarStore.swift
+      # ios-diarization: FluidAudio engine, model download / layout, the
+      # run-or-defer policy and the job queue (Scribe/Diarization/Portable),
+      # plus the Foundation Models speaker-name suggester. The models are
+      # downloaded on first use, not bundled (ScribeiOS/Diarization).
+      - path: Scribe/Diarization/Portable
+      - path: Scribe/Diarization/SpeakerNameSuggester.swift
       # --- ios-system: App Intents / Siri / Spotlight, widgets, Share import ---
       # Portable intents + entities + data layer (the AppKit bridge
       # ScribeIntentsBridge.swift, the Mac App Shortcuts and the Mac settings
@@ -312,6 +319,8 @@ targets:
     dependencies:
       - package: GRDB.swift
         product: GRDB
+      # ios-diarization: on-device speaker separation (FluidAudio supports iOS 17+).
+      - package: FluidAudio
       # ios-recording: the recording Live Activity (Lock Screen + Dynamic Island).
       - target: ScribeRecordingActivity
       # ios-system: Home / Lock Screen widgets + controls, and the Share
@@ -339,6 +348,11 @@ targets:
         # or the app in the background (the active `.playAndRecord` session).
         UIBackgroundModes:
           - audio
+          # ios-diarization: deferred speaker separation (BGProcessingTask).
+          - processing
+        # ios-diarization: IOSDiarizationScheduler.backgroundTaskIdentifier.
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.varij.scribe.diarization
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
