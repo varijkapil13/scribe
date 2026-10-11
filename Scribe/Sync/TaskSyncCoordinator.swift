@@ -246,7 +246,8 @@ final class TaskSyncCoordinator {
             let tags = result.taskTags[task.id]
             let localSide = taskSides[task.id]
             if Self.remoteWins(localSide, task.updatedAt) {
-                try store.applyRemoteTask(task, tags: tags)
+                try store.applyRemoteTask(task, tags: tags,
+                                          linksAuthoritative: result.taskLinksAuthoritative.contains(task.id))
                 appliedFromRemote[Self.key("task", task.id)] = task.updatedAt
             } else if let tags, let localSide, !localSide.isDeleted,
                       Self.sameStamp(localSide.updatedAt, task.updatedAt) {

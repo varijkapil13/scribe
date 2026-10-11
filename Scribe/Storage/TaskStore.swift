@@ -890,9 +890,10 @@ final class TaskStore {
     /// intended reference is kept until taxonomy sync delivers it (see
     /// `TaskTaxonomySync.swift`). Tags are left untouched, and so are local
     /// area / heading links the record can't speak for; the coordinator's
-    /// taxonomy-aware path (`applyRemoteTask(_:tags:)`) carries both.
+    /// taxonomy-aware path (`applyRemoteTask(_:tags:linksAuthoritative:)`)
+    /// carries both.
     func upsertFromSync(_ task: TodoTask) throws {
-        try applyRemoteTask(task, tags: nil)
+        try applyRemoteTask(task, tags: nil, linksAuthoritative: false)
     }
 
     /// Applies a remote delete: removes the local row. No tombstone is written

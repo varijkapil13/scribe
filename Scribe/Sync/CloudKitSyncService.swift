@@ -120,6 +120,10 @@ final class CloudKitSyncService {
         var deletedHeadingIDs: [String] = []
         /// The server has more changes after `token`; fetch again.
         var moreComing: Bool = false
+        /// Changed tasks whose latest save came from a taxonomy-aware writer,
+        /// so their area / heading links are authoritative (an older client's
+        /// save can't speak for links it never knew).
+        var taskLinksAuthoritative: Set<String> = []
     }
 
     func pullChanges(since token: CKServerChangeToken?) async throws -> PullResult {

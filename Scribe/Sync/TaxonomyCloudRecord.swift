@@ -156,14 +156,34 @@ extension TaskCloudRecord {
     /// doesn't sync tags" — CloudKit may hand an empty list back as absent.
     static let taxonomySchemaKey = "taxonomySchema"
     static let taxonomySchemaVersion = 1
+    /// The task `updatedAt` a taxonomy-aware writer saved the record with.
+    /// Pushes use `.changedKeys`, so `tags` / `taxonomySchema` survive a
+    /// later save by an older client; only when this still equals the
+    /// record's `updatedAt` was the latest version written by a client that
+    /// knows areas and headings (see `linksAreAuthoritative(in:)`).
+    static let taxonomyWrittenAtKey = "taxonomyWrittenAt"
 
     /// Writes the task's tags (normalized like `TaskStore`, sorted) and the
-    /// schema marker.
+    /// schema marker. Call after the task fields are applied.
     static func applyTags(_ tags: [String], to record: CKRecord) {
         let list = TaskStore.normalisedTagList(tags).sorted()
         // `[String]` is a CloudKit list value (`CKRecordValueProtocol`).
         record[tagsKey] = list as any CKRecordValueProtocol
         record[taxonomySchemaKey] = taxonomySchemaVersion
+        if let updatedAt = record["updatedAt"] as? Date {
+            record[taxonomyWrittenAtKey] = updatedAt
+        }
+    }
+
+    /// Whether the record's area / heading links speak for this version: the
+    /// latest save came from a taxonomy-aware writer. An older client's save
+    /// keeps the marker (`.changedKeys`) but not a matching stamp, and it never
+    /// knew the areas / headings, so its empty links must not wipe local ones.
+    static func linksAreAuthoritative(in record: CKRecord) -> Bool {
+        guard let written = record[taxonomyWrittenAtKey] as? Date,
+              let updatedAt = record["updatedAt"] as? Date
+        else { return false }
+        return abs(written.timeIntervalSince(updatedAt)) < 0.002
     }
 
     /// The task's tags, or nil when the record says nothing about tags (an
@@ -192,6 +212,9 @@ enum TaskZoneChangeDecoder {
                 guard let task = TaskCloudRecord.task(from: record) else { continue }
                 result.changed.append(task)
                 if let tags = TaskCloudRecord.tags(from: record) { result.taskTags[task.id] = tags }
+                if TaskCloudRecord.linksAreAuthoritative(in: record) {
+                    result.taskLinksAuthoritative.insert(task.id)
+                }
             case TaxonomyCloudRecord.areaRecordType:
                 if let area = TaxonomyCloudRecord.area(from: record) { result.areas.append(area) }
             case TaxonomyCloudRecord.projectRecordType:

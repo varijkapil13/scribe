@@ -130,6 +130,29 @@ final class TaxonomyCloudRecordTests: XCTestCase {
         XCTAssertEqual(TaskCloudRecord.tags(from: record), [])
     }
 
+    func testLinksAreAuthoritativeOnlyForTheTaxonomyAwareWritersOwnVersion() {
+        let task = TodoTask(id: "t-4", title: "Filed", createdAt: stamp, updatedAt: stamp, areaId: "a-1")
+        let record = TaskCloudRecord.makeRecord(from: task, in: zoneID)
+        XCTAssertFalse(TaskCloudRecord.linksAreAuthoritative(in: record), "No marker: an older writer")
+        TaskCloudRecord.applyTags(["x"], to: record)
+        XCTAssertTrue(TaskCloudRecord.linksAreAuthoritative(in: record))
+
+        // An older client re-saves with `.changedKeys`: its task fields land,
+        // the tag fields from the earlier save stay on the server.
+        var edited = task
+        edited.title = "Edited on an older client"
+        edited.areaId = nil
+        edited.updatedAt = stamp.addingTimeInterval(60)
+        TaskCloudRecord.apply(edited, to: record)
+        XCTAssertEqual(TaskCloudRecord.tags(from: record), ["x"], "Tags are still the last known ones")
+        XCTAssertFalse(TaskCloudRecord.linksAreAuthoritative(in: record),
+                       "The older writer's empty area can't speak for links it never knew")
+        let decoded = TaskZoneChangeDecoder.decode(records: [record], deletedRecordNames: [],
+                                                   token: nil, moreComing: false)
+        XCTAssertEqual(decoded.taskTags, ["t-4": ["x"]])
+        XCTAssertTrue(decoded.taskLinksAuthoritative.isEmpty)
+    }
+
     // MARK: - Decoder / encoder
 
     func testDecoderSortsRecordsAndDeletionsByKind() {
@@ -181,6 +204,7 @@ final class TaxonomyCloudRecordTests: XCTestCase {
                                                    deletedRecordNames: changes.delete.map(\.recordName),
                                                    token: nil, moreComing: false)
         XCTAssertEqual(decoded.taskTags, ["t-1": ["x"], "t-2": []], "Every pushed task carries the tag marker")
+        XCTAssertEqual(decoded.taskLinksAuthoritative, ["t-1", "t-2"])
         XCTAssertEqual(decoded.deletedIDs, ["t-9"])
         XCTAssertEqual(decoded.deletedProjectIDs, ["p-9"])
         XCTAssertTrue(TaskSyncPushBatch().isEmpty)

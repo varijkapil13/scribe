@@ -195,8 +195,10 @@ protocol LocalTaxonomySyncing {
     func applyRemoteProject(_ entry: TaxonomySyncEntry<Project>) throws
     func applyRemoteHeading(_ entry: TaxonomySyncEntry<ProjectHeading>) throws
     /// Writes a pulled task. `tags` nil = the record predates tag sync: keep
-    /// local tags, and keep local area / heading links it can't speak for.
-    func applyRemoteTask(_ task: TodoTask, tags: [String]?) throws
+    /// local tags. `linksAuthoritative` false = the latest save came from a
+    /// writer that doesn't sync areas / headings: keep the local links it
+    /// can't speak for.
+    func applyRemoteTask(_ task: TodoTask, tags: [String]?, linksAuthoritative: Bool) throws
     /// Same task version on both sides (equal `updatedAt`): union the tags.
     func mergeRemoteTagsOnTie(taskID: String, tags: [String]) throws
     func applyRemoteTaxonomyDelete(_ kind: TaxonomySyncKind, id: String) throws
@@ -205,6 +207,14 @@ protocol LocalTaxonomySyncing {
     @discardableResult
     func resolvePendingTaxonomyReferences() throws -> Int
     func taxonomySyncCounts() throws -> TaxonomySyncCounts
+}
+
+extension LocalTaxonomySyncing {
+    /// A record that carries tags is treated as written by a taxonomy-aware
+    /// client (links authoritative); one without tags as an older writer's.
+    func applyRemoteTask(_ task: TodoTask, tags: [String]?) throws {
+        try applyRemoteTask(task, tags: tags, linksAuthoritative: tags != nil)
+    }
 }
 
 extension TaskStore: LocalTaxonomySyncing {
@@ -237,8 +247,13 @@ extension TaskStore: LocalTaxonomySyncing {
             let updatedAt: Date = row["updatedAt"]
             sides[id] = SyncMergePolicy.Side(updatedAt: updatedAt, isDeleted: false)
         }
-        // A tombstone overrides a live row for the same id.
-        for row in try Row.fetchAll(database, sql: "SELECT id, deletedAt FROM \(kind.tombstoneTableName)") {
+        // A tombstone overrides a live row for the same id. Remote-delete
+        // markers (see `applyRemoteTaxonomyDelete`) aren't local deletions:
+        // nothing to push, and no side to compare.
+        for row in try Row.fetchAll(database, sql: """
+            SELECT id, deletedAt FROM \(kind.tombstoneTableName)
+            WHERE deletedAt > '\(DatabaseManager.taxonomyUnsetTimestamp)'
+            """) {
             let id: String = row["id"]
             let deletedAt: Date = row["deletedAt"]
             sides[id] = SyncMergePolicy.Side(updatedAt: deletedAt, isDeleted: true)
@@ -416,9 +431,9 @@ extension TaskStore: LocalTaxonomySyncing {
         try clearTombstone(database, kind: .heading, id: heading.id)
     }
 
-    func applyRemoteTask(_ task: TodoTask, tags: [String]?) throws {
+    func applyRemoteTask(_ task: TodoTask, tags: [String]?, linksAuthoritative: Bool) throws {
         try db.write { database in
-            try Self.writeSyncedTask(database, task, tags: tags)
+            try Self.writeSyncedTask(database, task, tags: tags, linksAuthoritative: linksAuthoritative)
         }
     }
 
@@ -427,12 +442,13 @@ extension TaskStore: LocalTaxonomySyncing {
     ///
     /// A reference to a row this device doesn't have falls back (project →
     /// Inbox, area / heading → none) and is remembered as pending, unless the
-    /// target was deleted here (then the fallback is final). A record from a
-    /// writer that predates taxonomy sync (`tags` nil) can't speak for area /
-    /// heading links it never knew, so it doesn't wipe the local ones.
-    fileprivate static func writeSyncedTask(_ database: Database, _ incoming: TodoTask, tags: [String]?) throws {
+    /// target was deleted here (then the fallback is final). A version saved
+    /// by a writer that predates taxonomy sync (`linksAuthoritative` false)
+    /// can't speak for area / heading links it never knew, so it doesn't wipe
+    /// the local ones.
+    fileprivate static func writeSyncedTask(_ database: Database, _ incoming: TodoTask, tags: [String]?,
+                                            linksAuthoritative: Bool) throws {
         var task = incoming
-        let linksAuthoritative = tags != nil
         let existing = try TodoTask.fetchOne(database, key: task.id)
         var waitingProject: String?
         var waitingArea: String?
@@ -508,10 +524,16 @@ extension TaskStore: LocalTaxonomySyncing {
 
     // MARK: Apply pulled deletions
 
-    /// Applies a remote delete. No tombstone is written (nothing to re-push);
-    /// references waiting for the deleted row give up (their fallback stays).
-    /// Foreign keys un-file this device's tasks / projects (no `updatedAt`
-    /// bump: the deleting device pushes its own re-filed rows).
+    /// Applies a remote delete. No pushable tombstone is written (nothing to
+    /// re-push); references waiting for the deleted row give up (their
+    /// fallback stays). Foreign keys un-file this device's tasks / projects
+    /// (no `updatedAt` bump: the deleting device pushes its own re-filed rows).
+    ///
+    /// A marker tombstone (stamped `taxonomyUnsetTimestamp`, which
+    /// `localTaxonomySides` ignores) remembers the deletion, so a stale record
+    /// that still points at the row — e.g. a task saved later by a device that
+    /// hadn't seen the delete yet — falls back for good instead of waiting
+    /// forever. A later remote upsert of the same id clears it.
     func applyRemoteTaxonomyDelete(_ kind: TaxonomySyncKind, id: String) throws {
         try db.write { database in
             switch kind {
@@ -524,7 +546,9 @@ extension TaskStore: LocalTaxonomySyncing {
                 try database.execute(sql: "DELETE FROM taxonomy_sync_parked_headings WHERE id = ?", arguments: [id])
                 try database.execute(sql: "DELETE FROM project_headings WHERE id = ?", arguments: [id])
             }
-            try Self.clearTombstone(database, kind: kind, id: id)
+            try database.execute(
+                sql: "INSERT OR REPLACE INTO \(kind.tombstoneTableName) (id, deletedAt) VALUES (?, '\(DatabaseManager.taxonomyUnsetTimestamp)')",
+                arguments: [id])
             try database.execute(
                 sql: "DELETE FROM taxonomy_sync_pending_refs WHERE field = ? AND targetId = ?",
                 arguments: [kind.referenceField, id])

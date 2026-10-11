@@ -367,6 +367,33 @@ final class TaxonomySyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(try device.store.tags(for: task.id), ["keep"])
     }
 
+    func testAnOlderClientsSaveDoesNotWipeAreaLinks() async throws {
+        let zone = FakeCloudZone()
+        let mac = try Device(zone: zone)
+        let phone = try Device(zone: zone)
+        let area = try mac.store.createArea(name: "Home")
+        let task = try mac.store.createTask(title: "Loose", tags: ["x"], areaId: area.id)
+        try await mac.sync()
+        try await phone.sync()
+        XCTAssertEqual(try XCTUnwrap(phone.store.fetchTask(id: task.id)).areaId, area.id)
+
+        // An older client (no areas, no tags) edits the task: `.changedKeys`
+        // writes its task fields and leaves the tag fields on the server.
+        let record = try XCTUnwrap(zone.records[task.id])
+        var legacy = try XCTUnwrap(TaskCloudRecord.task(from: record))
+        legacy.title = "Edited on an older client"
+        legacy.areaId = nil
+        legacy.updatedAt = Date().addingTimeInterval(60)
+        TaskCloudRecord.apply(legacy, to: record)
+        zone.log.append(.saved(task.id))
+
+        try await phone.sync()
+        let synced = try XCTUnwrap(phone.store.fetchTask(id: task.id))
+        XCTAssertEqual(synced.title, "Edited on an older client")
+        XCTAssertEqual(synced.areaId, area.id, "The older writer couldn't speak for the area")
+        XCTAssertEqual(try phone.store.tags(for: task.id), ["x"])
+    }
+
     func testTagEditsSyncAndClearing() async throws {
         let zone = FakeCloudZone()
         let mac = try Device(zone: zone)

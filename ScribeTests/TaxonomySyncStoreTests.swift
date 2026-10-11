@@ -260,6 +260,52 @@ final class TaxonomySyncStoreTests: XCTestCase {
         XCTAssertNil(try store.tasksForSyncPush(ids: ["t-1"]).first?.projectId)
     }
 
+    func testStaleReferenceToARemotelyDeletedProjectDoesNotWaitForever() throws {
+        try store.applyRemoteProject(.init(item: Project(id: "p-1", name: "Shared", createdAt: t1), updatedAt: t1))
+        try store.applyRemoteHeading(.init(item: ProjectHeading(id: "h-1", projectId: "p-1", title: "H"), updatedAt: t1))
+        try store.applyRemoteTaxonomyDelete(.project, id: "p-1")
+        XCTAssertFalse(try isTombstoned(.project, "p-1"), "Still nothing to push back")
+
+        // A device that hadn't seen the delete saves a task (and a heading)
+        // still pointing at the project.
+        try store.applyRemoteTask(remoteTask("t-1", projectId: "p-1", headingId: "h-1", at: t2), tags: [])
+        try store.applyRemoteHeading(.init(item: ProjectHeading(id: "h-1", projectId: "p-1", title: "H"), updatedAt: t2))
+        XCTAssertNil(try XCTUnwrap(store.fetchTask(id: "t-1")).projectId, "Inbox, for good")
+        XCTAssertEqual(try store.taxonomySyncCounts().waitingReferences, 0, "Nothing waits for a deleted project")
+
+        // The project coming back (a newer remote edit) works as before.
+        try store.applyRemoteProject(.init(item: Project(id: "p-1", name: "Back", createdAt: t1), updatedAt: t2))
+        XCTAssertEqual(try store.fetchProjects().map(\.name), ["Back"])
+    }
+
+    func testAnOlderWritersVersionKeepsLocalAreaAndHeadingLinks() throws {
+        let area = try store.createArea(name: "A")
+        let loose = try store.createTask(title: "Loose", areaId: area.id)
+        let project = try store.createProject(name: "P")
+        let heading = try store.createHeading(in: project.id, title: "H")
+        let filed = try store.createTask(title: "Filed", projectId: project.id, headingId: heading.id)
+
+        // Saved by an older client (no area / heading), but still carrying
+        // the tag fields of an earlier taxonomy-aware save.
+        var looseEdit = loose
+        looseEdit.areaId = nil
+        looseEdit.updatedAt = loose.updatedAt.addingTimeInterval(60)
+        try store.applyRemoteTask(looseEdit, tags: ["t"], linksAuthoritative: false)
+        var filedEdit = filed
+        filedEdit.headingId = nil
+        filedEdit.updatedAt = filed.updatedAt.addingTimeInterval(60)
+        try store.applyRemoteTask(filedEdit, tags: [], linksAuthoritative: false)
+
+        XCTAssertEqual(try XCTUnwrap(store.fetchTask(id: loose.id)).areaId, area.id)
+        XCTAssertEqual(try store.tags(for: loose.id), ["t"])
+        XCTAssertEqual(try XCTUnwrap(store.fetchTask(id: filed.id)).headingId, heading.id)
+
+        // The same change from a taxonomy-aware writer clears the links.
+        looseEdit.updatedAt = looseEdit.updatedAt.addingTimeInterval(60)
+        try store.applyRemoteTask(looseEdit, tags: ["t"], linksAuthoritative: true)
+        XCTAssertNil(try XCTUnwrap(store.fetchTask(id: loose.id)).areaId)
+    }
+
     // MARK: - Applying pulled deletions
 
     func testRemoteProjectDeleteInboxesTasksWithoutLosingThem() throws {
