@@ -643,6 +643,8 @@ private struct StorageSettingsPane: View {
                 }
             }
 
+            MeetingSyncSettingsSection()  // Scribe/Sync/Meetings
+
             Section("Data") {
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
@@ -660,7 +662,10 @@ private struct StorageSettingsPane: View {
                     Button("Delete All Data", role: .destructive, action: deleteAllData)
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This permanently removes every session, segment, summary, action item, and retained audio recording. Your notes are kept. This action cannot be undone.")
+                    // Deleting synced meetings propagates (tombstones), so say so.
+                    Text(MeetingSyncSettings.isMeetingSyncOn()
+                         ? LocalizedStringKey("This permanently removes every session, segment, summary, action item, and retained audio recording. Meetings synced through iCloud are also removed from your other devices. Your notes are kept. This action cannot be undone.")
+                         : LocalizedStringKey("This permanently removes every session, segment, summary, action item, and retained audio recording. Your notes are kept. This action cannot be undone."))
                 }
 
                 Text("Scribe stores data at ~/Library/Application Support/Scribe/.")

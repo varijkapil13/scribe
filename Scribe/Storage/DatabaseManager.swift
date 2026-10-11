@@ -723,6 +723,8 @@ final class DatabaseManager: @unchecked Sendable {
         registerAttachmentTextMigration(in: &migrator)
         registerTaskCalendarBlocksMigration(in: &migrator)
         registerTaxonomySyncMigration(in: &migrator)   // v27_taxonomy_sync (TaskTaxonomySync.swift)
+        // CloudKit meeting sync bookkeeping (Scribe/Sync/Meetings).
+        MeetingSyncSchema.register(in: &migrator)
 
         return migrator
     }

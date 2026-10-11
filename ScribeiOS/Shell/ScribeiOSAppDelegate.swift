@@ -59,6 +59,7 @@ enum ScribeiOSBootstrap {
         //    observation. A no-op until the user enables iCloud sync, and
         //    safe when the build has no iCloud entitlement.
         TaskSyncScheduler.shared.start()
+        MeetingSyncScheduler.shared.start()  // meetings (opt-in sub-toggle)
 
         // 6. Recording: create the recorder now so it registers with
         //    ScribeRecordingControlRegistry (Siri / Shortcuts / Control
@@ -88,6 +89,7 @@ enum ScribeiOSBootstrap {
     /// Scene became active: opportunistic, throttled sync + re-index.
     static func sceneDidBecomeActive() {
         TaskSyncScheduler.shared.appDidBecomeActive()
+        MeetingSyncScheduler.shared.appDidBecomeActive()
         IOSVaultSyncController.shared.refresh()
     }
 }

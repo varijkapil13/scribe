@@ -35,6 +35,7 @@ struct SettingsScreen: View {
             Form {
                 // MARK: - iCloud (shell; notes vault rows: ios-notes)
                 iCloudSection
+                MeetingSyncSettingsSection()  // meeting sync (Scribe/Sync/Meetings)
 
                 // MARK: - Slot: notes (ios-notes)
                 Section {

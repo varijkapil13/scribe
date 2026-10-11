@@ -138,6 +138,7 @@ private struct SessionArchiveRow: View {
                         Text("·")
                         Text(duration)
                     }
+                    MeetingOriginBadge(sessionId: session.id)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
