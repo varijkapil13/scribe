@@ -4,16 +4,11 @@ import Combine
 
 enum TaskStoreError: LocalizedError {
     case recurringTaskRequiresDueDate
-    /// A synced task is filed under a project this device doesn't have
-    /// (projects aren't synced yet); the upsert was skipped.
-    case syncedTaskProjectMissing(String)
 
     var errorDescription: String? {
         switch self {
         case .recurringTaskRequiresDueDate:
             return "A recurring task must have a due date."
-        case .syncedTaskProjectMissing:
-            return "A synced task belongs to a project that isn't on this device."
         }
     }
 }
@@ -64,7 +59,9 @@ final class TaskStore {
 
     private let dbManager: DatabaseManager
 
-    private var db: DatabaseQueue { dbManager.database }
+    /// Internal (not private) so the taxonomy-sync extension
+    /// (`TaskTaxonomySync.swift`) shares the queue.
+    var db: DatabaseQueue { dbManager.database }
 
     // MARK: - Initializer
 
@@ -86,11 +83,31 @@ final class TaskStore {
     }
 
     func updateProject(_ project: Project) throws {
-        try db.write { try project.update($0) }
+        try db.write { database in
+            try project.update(database)
+            try database.execute(sql: "UPDATE projects SET updatedAt = ? WHERE id = ?",
+                                 arguments: [Date(), project.id])
+        }
     }
 
+    /// Deletes a project. Its tasks move to Inbox (stamped, so the move
+    /// syncs) and its headings go with it; tombstones let iCloud sync
+    /// propagate the deletion.
     func deleteProject(id: String) throws {
-        try db.write { _ = try Project.deleteOne($0, key: id) }
+        try db.write { database in
+            let now = Date()
+            guard try Project.fetchOne(database, key: id) != nil else { return }
+            let headingIDs = try String.fetchAll(database,
+                sql: "SELECT id FROM project_headings WHERE projectId = ?", arguments: [id])
+            try database.execute(
+                sql: "UPDATE tasks SET projectId = NULL, headingId = NULL, updatedAt = ? WHERE projectId = ?",
+                arguments: [now, id])
+            _ = try Project.deleteOne(database, key: id)
+            try Self.recordTaxonomyTombstone(database, kind: .project, id: id, at: now)
+            for headingID in headingIDs {
+                try Self.recordTaxonomyTombstone(database, kind: .heading, id: headingID, at: now)
+            }
+        }
     }
 
     func fetchProjects() throws -> [Project] {
@@ -107,10 +124,11 @@ final class TaskStore {
     /// not present in the projects table are silently skipped.
     func reorderProjects(_ orderedIds: [String]) throws {
         try db.write { database in
+            let now = Date()
             for (index, id) in orderedIds.enumerated() {
                 try database.execute(
-                    sql: "UPDATE projects SET sortOrder = ? WHERE id = ?",
-                    arguments: [index, id]
+                    sql: "UPDATE projects SET sortOrder = ?, updatedAt = ? WHERE id = ? AND sortOrder <> ?",
+                    arguments: [index, now, id, index]
                 )
             }
         }
@@ -141,7 +159,11 @@ final class TaskStore {
     }
 
     func updateArea(_ area: TaskArea) throws {
-        try db.write { try area.update($0) }
+        try db.write { database in
+            try area.update(database)
+            try database.execute(sql: "UPDATE areas SET updatedAt = ? WHERE id = ?",
+                                 arguments: [Date(), area.id])
+        }
     }
 
     /// Deletes an area. Its projects and loose tasks stay, un-grouped (the
@@ -149,11 +171,15 @@ final class TaskStore {
     /// get a fresh `updatedAt` for sync).
     func deleteArea(id: String) throws {
         try db.write { database in
+            let now = Date()
             try database.execute(
                 sql: "UPDATE tasks SET areaId = NULL, updatedAt = ? WHERE areaId = ?",
-                arguments: [Date(), id])
-            try database.execute(sql: "UPDATE projects SET areaId = NULL WHERE areaId = ?", arguments: [id])
-            _ = try TaskArea.deleteOne(database, key: id)
+                arguments: [now, id])
+            try database.execute(sql: "UPDATE projects SET areaId = NULL, updatedAt = ? WHERE areaId = ?",
+                                 arguments: [now, id])
+            if try TaskArea.deleteOne(database, key: id) {
+                try Self.recordTaxonomyTombstone(database, kind: .area, id: id, at: now)
+            }
         }
     }
 
@@ -170,9 +196,11 @@ final class TaskStore {
     /// Persists a new manual ordering for the sidebar's Areas list.
     func reorderAreas(_ orderedIds: [String]) throws {
         try db.write { database in
+            let now = Date()
             for (index, id) in orderedIds.enumerated() {
-                try database.execute(sql: "UPDATE areas SET sortOrder = ? WHERE id = ?",
-                                     arguments: [index, id])
+                try database.execute(
+                    sql: "UPDATE areas SET sortOrder = ?, updatedAt = ? WHERE id = ? AND sortOrder <> ?",
+                    arguments: [index, now, id, index])
             }
         }
     }
@@ -180,8 +208,8 @@ final class TaskStore {
     /// Files a project under an area (or removes it from any area when nil).
     func setArea(_ areaId: String?, forProject projectId: String) throws {
         try db.write { database in
-            try database.execute(sql: "UPDATE projects SET areaId = ? WHERE id = ?",
-                                 arguments: [areaId, projectId])
+            try database.execute(sql: "UPDATE projects SET areaId = ?, updatedAt = ? WHERE id = ? AND areaId IS NOT ?",
+                                 arguments: [areaId, Date(), projectId, areaId])
         }
     }
 
@@ -210,18 +238,21 @@ final class TaskStore {
     func renameHeading(id: String, title: String) throws {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         try db.write { database in
-            try database.execute(sql: "UPDATE project_headings SET title = ? WHERE id = ?",
-                                 arguments: [trimmed, id])
+            try database.execute(sql: "UPDATE project_headings SET title = ?, updatedAt = ? WHERE id = ?",
+                                 arguments: [trimmed, Date(), id])
         }
     }
 
     /// Deletes a heading; its tasks stay in the project, un-headed.
     func deleteHeading(id: String) throws {
         try db.write { database in
+            let now = Date()
             try database.execute(
                 sql: "UPDATE tasks SET headingId = NULL, updatedAt = ? WHERE headingId = ?",
-                arguments: [Date(), id])
-            _ = try ProjectHeading.deleteOne(database, key: id)
+                arguments: [now, id])
+            if try ProjectHeading.deleteOne(database, key: id) {
+                try Self.recordTaxonomyTombstone(database, kind: .heading, id: id, at: now)
+            }
         }
     }
 
@@ -240,10 +271,11 @@ final class TaskStore {
     /// different project are skipped.
     func reorderHeadings(_ orderedIds: [String], in projectId: String) throws {
         try db.write { database in
+            let now = Date()
             for (index, id) in orderedIds.enumerated() {
                 try database.execute(
-                    sql: "UPDATE project_headings SET sortOrder = ? WHERE id = ? AND projectId = ?",
-                    arguments: [index, id, projectId])
+                    sql: "UPDATE project_headings SET sortOrder = ?, updatedAt = ? WHERE id = ? AND projectId = ? AND sortOrder <> ?",
+                    arguments: [index, now, id, projectId, index])
             }
         }
     }
@@ -367,6 +399,7 @@ final class TaskStore {
             task.sortOrder = nextOrder
             task.updatedAt = Date()
             try task.update(database)
+            try Self.clearPendingSyncRefs(database, taskID: id)
         }
     }
 
@@ -476,9 +509,16 @@ final class TaskStore {
     func setTags(_ tags: [String], for taskId: String) throws {
         let cleaned = normalisedTags(tags)
         try db.write { database in
+            let before = Set(try String.fetchAll(database,
+                sql: "SELECT tag FROM task_tags WHERE taskId = ?", arguments: [taskId]))
             try database.execute(sql: "DELETE FROM task_tags WHERE taskId = ?", arguments: [taskId])
             for tag in cleaned {
                 try TaskTagRow(taskId: taskId, tag: tag).insert(database)
+            }
+            // Tags sync on the task record: a real change stamps the task.
+            if before != Set(cleaned) {
+                try database.execute(sql: "UPDATE tasks SET updatedAt = ? WHERE id = ?",
+                                     arguments: [Date(), taskId])
             }
         }
     }
@@ -716,6 +756,12 @@ final class TaskStore {
     // MARK: - Helpers
 
     private func normalisedTags(_ tags: [String]) -> [String] {
+        Self.normalisedTagList(tags)
+    }
+
+    /// Trimmed, lowercased, de-duplicated tags (input order kept). Shared by
+    /// the store and iCloud sync so both apply one rule.
+    static func normalisedTagList(_ tags: [String]) -> [String] {
         var seen = Set<String>()
         var out: [String] = []
         for raw in tags {
@@ -839,53 +885,14 @@ final class TaskStore {
     /// remote `updatedAt` (does NOT bump it, unlike `updateTask`) — and clears
     /// any local tombstone for the id.
     ///
-    /// Areas and headings are local-only (not synced), so an area / heading id
-    /// written on another device may not exist here; those links are dropped
-    /// rather than letting the foreign key abort the whole sync write.
-    ///
-    /// Because those ids only resolve on the device that created them, a
-    /// remote record without a usable link (written by a device that never
-    /// knew the area / heading) must not wipe the local one: the existing
-    /// local link is kept when it's still consistent with the incoming
-    /// `projectId` (an area only for project-less tasks; a heading only inside
-    /// its own project).
-    ///
-    /// Projects are local too: a task filed under a project missing here
-    /// throws `TaskStoreError.syncedTaskProjectMissing` without writing, so
-    /// the coordinator can skip it instead of the foreign key aborting the
-    /// round (and without un-filing the task for the devices that have it).
+    /// A project / area / heading this device doesn't have yet never aborts
+    /// the write: the task falls back (Inbox / no area / no heading) and the
+    /// intended reference is kept until taxonomy sync delivers it (see
+    /// `TaskTaxonomySync.swift`). Tags are left untouched, and so are local
+    /// area / heading links the record can't speak for; the coordinator's
+    /// taxonomy-aware path (`applyRemoteTask(_:tags:)`) carries both.
     func upsertFromSync(_ task: TodoTask) throws {
-        try db.write { database in
-            var task = task
-            if let projectId = task.projectId, try Project.fetchOne(database, key: projectId) == nil {
-                throw TaskStoreError.syncedTaskProjectMissing(projectId)
-            }
-            let existing = try TodoTask.fetchOne(database, key: task.id)
-
-            if let areaId = task.areaId, try TaskArea.fetchOne(database, key: areaId) == nil {
-                task.areaId = nil
-            }
-            if task.projectId != nil { task.areaId = nil }
-            if task.areaId == nil, task.projectId == nil,
-               let localArea = existing?.areaId,
-               try TaskArea.fetchOne(database, key: localArea) != nil {
-                task.areaId = localArea
-            }
-
-            if let headingId = task.headingId {
-                let heading = try ProjectHeading.fetchOne(database, key: headingId)
-                if heading == nil || heading?.projectId != task.projectId { task.headingId = nil }
-            }
-            if task.headingId == nil, let projectId = task.projectId,
-               let localHeading = existing?.headingId,
-               let heading = try ProjectHeading.fetchOne(database, key: localHeading),
-               heading.projectId == projectId {
-                task.headingId = localHeading
-            }
-
-            try task.save(database)
-            try database.execute(sql: "DELETE FROM task_tombstones WHERE id = ?", arguments: [task.id])
-        }
+        try applyRemoteTask(task, tags: nil)
     }
 
     /// Applies a remote delete: removes the local row. No tombstone is written
@@ -911,6 +918,7 @@ final class TaskStore {
                 task.sortOrder = nextOrder
                 task.updatedAt = Date()
                 try task.update(database)
+                try Self.clearPendingSyncRefs(database, taskID: id)
                 nextOrder += 1
             }
         }

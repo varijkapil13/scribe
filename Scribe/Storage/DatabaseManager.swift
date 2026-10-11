@@ -722,6 +722,7 @@ final class DatabaseManager: @unchecked Sendable {
         SemanticEmbeddingSchema.register(in: &migrator)
         registerAttachmentTextMigration(in: &migrator)
         registerTaskCalendarBlocksMigration(in: &migrator)
+        registerTaxonomySyncMigration(in: &migrator)   // v27_taxonomy_sync (TaskTaxonomySync.swift)
 
         return migrator
     }

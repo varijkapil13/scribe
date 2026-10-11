@@ -228,9 +228,11 @@ final class TasksCloudSyncStatus: ObservableObject {
     @Published private(set) var lastSyncAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var isEnabled = false
-    /// Tasks the last round skipped: their project isn't on this device
-    /// (projects don't sync yet).
+    /// Tasks the last round left in Inbox because their project hasn't
+    /// reached this device yet (they move into it once it syncs).
     @Published private(set) var skippedTasks = 0
+    /// What sync covers on this device (tasks / projects / areas / headings).
+    @Published private(set) var counts: TaxonomySyncCounts?
 
     init() {
         refresh()
@@ -239,6 +241,7 @@ final class TasksCloudSyncStatus: ObservableObject {
     func refresh() {
         isEnabled = CloudKitSyncService.isEnabled
         lastSyncAt = UserDefaultsSyncCursorStore().lastPushDate
+        counts = try? TaskStore.shared.taxonomySyncCounts()
     }
 
     func syncNow() async {
@@ -268,6 +271,6 @@ final class TasksCloudSyncStatus: ObservableObject {
         guard let lastSyncAt else { return "Not synced yet — pull to sync" }
         let synced = "Synced \(lastSyncAt.formatted(.relative(presentation: .named)))"
         guard skippedTasks > 0 else { return synced }
-        return synced + " · \(skippedTasks) in projects not on this device"
+        return synced + " · \(skippedTasks) waiting for their project"
     }
 }
