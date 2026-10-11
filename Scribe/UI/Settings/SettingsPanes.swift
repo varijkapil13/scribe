@@ -642,6 +642,8 @@ private struct StorageSettingsPane: View {
                 }
             }
 
+            MeetingSyncSettingsSection()  // Scribe/Sync/Meetings
+
             Section("Data") {
                 Button(role: .destructive) {
                     showDeleteConfirmation = true

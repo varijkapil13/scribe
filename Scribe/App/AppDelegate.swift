@@ -177,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.start()
             RemindersSyncScheduler.shared.start(database: DatabaseManager.shared.database)
+            MeetingSyncMacBridge.start()  // CloudKit meeting sync (opt-in)
         }
 
         // Automatic daily backups (off unless enabled in Settings → Backup).
@@ -231,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.appDidBecomeActive()
             RemindersSyncScheduler.shared.appDidBecomeActive()
+            MeetingSyncMacBridge.appDidBecomeActive()
         }
         ScribeExtensionsBridge.shared.appDidBecomeActive()
         Task {

@@ -68,6 +68,14 @@ struct TranscriptDetailView: View {
                     .environment(\.playbackBookmarkOffsets, highlights.bookmarks.map(\.offsetMs))
                     .padding(.horizontal, DesignTokens.Spacing.xl)
                     .padding(.bottom, DesignTokens.Spacing.md)
+            } else if MeetingSyncScheduler.shared.canDownloadAudio(sessionId: session.id) {
+                // Meeting synced from another device: its audio is in iCloud.
+                MeetingAudioDownloadButton(sessionId: session.id) { _ in
+                    viewModel.reloadSession()
+                    audioPlayer.load(session: viewModel.session)
+                }
+                .padding(.horizontal, DesignTokens.Spacing.xl)
+                .padding(.bottom, DesignTokens.Spacing.md)
             }
 
             ScrollView {
@@ -128,6 +136,14 @@ struct TranscriptDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: .scribeSpeakersDidChange)) { note in
             if (note.object as? String) == viewModel.session.id {
                 viewModel.loadSegments()
+            }
+        }
+        // Meeting sync imported a newer version of this meeting.
+        .onReceive(NotificationCenter.default.publisher(for: .scribeMeetingSyncDidChangeSessions)) { note in
+            if let ids = note.object as? [String], ids.contains(viewModel.session.id) {
+                viewModel.reloadSession()
+                viewModel.loadSegments()
+                viewModel.loadSummary()
             }
         }
     }
@@ -221,6 +237,7 @@ struct TranscriptDetailView: View {
                         Label("\(viewModel.segments.count) segments", systemImage: "text.alignleft")
                             .monospacedDigit()
                     }
+                    MeetingOriginBadge(sessionId: session.id)
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)

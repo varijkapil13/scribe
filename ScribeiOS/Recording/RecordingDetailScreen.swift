@@ -29,7 +29,15 @@ struct RecordingDetailScreen: View {
     var body: some View {
         List {
             headerSection
-            if player.isAvailable { playerSection }
+            if player.isAvailable {
+                playerSection
+            } else if controller.sessionId != sessionId,
+                      MeetingSyncScheduler.shared.canDownloadAudio(sessionId: sessionId) {
+                // Synced from another device: the audio is in iCloud.
+                Section {
+                    MeetingAudioDownloadButton(sessionId: sessionId) { _ in load() }
+                }
+            }
             if controller.processingSessionIds.contains(sessionId) {
                 Section {
                     Label("Summarizing on this device…", systemImage: "sparkles")
@@ -45,6 +53,9 @@ struct RecordingDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .task(id: controller.recordingsVersion) { load() }
+        .onReceive(NotificationCenter.default.publisher(for: .scribeMeetingSyncDidChangeSessions)) { note in
+            if let ids = note.object as? [String], ids.contains(sessionId) { load() }
+        }
         .onDisappear { player.stop() }
         .alert("Rename Speaker", isPresented: renamePresented) {
             TextField("Name", text: $speakerNameDraft)
@@ -73,6 +84,9 @@ struct RecordingDetailScreen: View {
                 }
                 if let event = session.calendarEventTitle, !event.isEmpty {
                     LabeledContent("Calendar event", value: event)
+                }
+                if let origin = try? MeetingSyncLocalStore.shared.originDevice(sessionId: session.id) {
+                    LabeledContent("Recorded on", value: origin.deviceName)
                 }
                 if !session.attendees.isEmpty {
                     LabeledContent("Attendees", value: session.attendees.map(\.displayName).joined(separator: ", "))

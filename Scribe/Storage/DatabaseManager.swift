@@ -722,6 +722,8 @@ final class DatabaseManager: @unchecked Sendable {
         SemanticEmbeddingSchema.register(in: &migrator)
         registerAttachmentTextMigration(in: &migrator)
         registerTaskCalendarBlocksMigration(in: &migrator)
+        // CloudKit meeting sync bookkeeping (Scribe/Sync/Meetings).
+        MeetingSyncSchema.register(in: &migrator)
 
         return migrator
     }
