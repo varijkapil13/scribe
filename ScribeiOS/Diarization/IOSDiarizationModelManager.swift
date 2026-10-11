@@ -126,9 +126,10 @@ final class IOSDiarizationModelManager {
         downloadGeneration += 1
         let generation = downloadGeneration
         let task = Task { @MainActor () -> Bool in
-            let downloader = ScribeDiarizerModelDownloader(
-                session: ScribeDiarizerModelDownloader.makeSession(allowsCellular: allowsCellular)
-            )
+            let session = ScribeDiarizerModelDownloader.makeSession(allowsCellular: allowsCellular)
+            // One session per download: release it when done.
+            defer { session.finishTasksAndInvalidate() }
+            let downloader = ScribeDiarizerModelDownloader(session: session)
             do {
                 let bytes = try await downloader.install(into: layout, progress: Self.makeProgressHandler())
                 Log.speech.info("Speaker models downloaded (\(bytes) bytes).")

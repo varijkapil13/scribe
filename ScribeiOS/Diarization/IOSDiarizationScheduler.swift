@@ -128,6 +128,8 @@ final class IOSDiarizationScheduler {
         pieces: [MobileDiarizationJob.Piece],
         kept: Bool
     ) {
+        // Jobs queued earlier wait while a recording runs (see `drain`).
+        defer { drainIfPossible() }
         guard let audioDirectory else { return }
         guard kept, IOSDiarizationSettings.isEnabled else {
             if isScratch { try? FileManager.default.removeItem(at: audioDirectory) }
@@ -244,13 +246,16 @@ final class IOSDiarizationScheduler {
     private func drain() async {
         var skipped = Set<String>()
         while !Task.isCancelled {
-            guard let job = queue.pending().first(where: { !skipped.contains($0.sessionId) }) else { break }
+            // Never compete with a live recording (or one still being
+            // finalized) for the CPU / Neural Engine; `recordingDidFinish`
+            // drains again once it's done.
+            if MobileRecordingController.shared.isActive { break }
 
-            // A recording still being written (stop in progress) waits.
-            if MobileRecordingController.shared.sessionId == job.sessionId {
-                skipped.insert(job.sessionId)
-                continue
-            }
+            let candidates = queue.pending().filter { !skipped.contains($0.sessionId) }
+            // "Separate Speakers" jobs first, so they aren't stuck behind a
+            // job the battery rules defer.
+            guard let job = candidates.first(where: { userRequested.contains($0.sessionId) }) ?? candidates.first
+            else { break }
 
             if case .deferred(let deferral) = MobileDiarizationPolicy.decide(IOSDiarizationDeviceConditions.current()),
                !(userRequested.contains(job.sessionId) && deferral != .thermal) {
@@ -264,6 +269,9 @@ final class IOSDiarizationScheduler {
                 break
             }
 
+            // Re-read the disk: FluidAudio deletes the models folder when a
+            // load fails, which would otherwise leave a stale "installed".
+            models.refresh()
             if !models.isInstalled {
                 waitingReasons[job.sessionId] = "Downloading the speaker model…"
                 let installed = await models.ensureInstalled()
@@ -294,6 +302,7 @@ final class IOSDiarizationScheduler {
                 scheduleBackgroundTask(requiresExternalPower: true, requiresNetwork: false, earliest: nil)
                 return
             case .failed(let message):
+                models.refresh()
                 var failed = job
                 failed.failureCount += 1
                 if failed.failureCount >= MobileDiarizationJob.maximumFailures {
@@ -337,7 +346,10 @@ final class IOSDiarizationScheduler {
             } onCancel: {
                 work.cancel()
             }
-            if Task.isCancelled { return .interrupted }
+            // FluidAudio may finish despite a cancellation (background time
+            // expired): keep the result rather than redoing the work, unless
+            // speaker separation was turned off meanwhile.
+            if !IOSDiarizationSettings.isEnabled { return .interrupted }
             let turns = job.turnsOnSessionClock(fileTurns, timing: SessionAudioTiming.load(from: job.audioDirectory))
             // Re-read: the user may have reassigned lines while this ran.
             let current = try transcriptStore.fetchDiarizableSegments(
