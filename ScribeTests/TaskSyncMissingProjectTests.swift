@@ -2,23 +2,26 @@ import CloudKit
 import XCTest
 @testable import Scribe
 
-/// Projects don't sync yet, so a pulled task can be filed under a project
-/// this device doesn't have. That task is skipped instead of the foreign key
-/// aborting the whole round.
+/// A pulled task can be filed under a project this device hasn't received
+/// yet (out-of-order pulls, or a writer whose projects never synced). The
+/// task lands in Inbox instead of the foreign key aborting the round, and the
+/// intended project is kept until it arrives.
 final class TaskSyncMissingProjectTests: XCTestCase {
 
-    func testStoreRefusesTaskInUnknownProjectWithoutWriting() throws {
+    func testStoreFallsBackToInboxAndRemembersTheProject() throws {
         let store = TaskStore(databaseManager: try DatabaseManager(path: ":memory:"))
         let remote = TodoTask(id: "r1", title: "From the Mac", projectId: "missing-project",
                               createdAt: Date(timeIntervalSince1970: 1),
                               updatedAt: Date(timeIntervalSince1970: 2))
-        XCTAssertThrowsError(try store.upsertFromSync(remote)) { error in
-            guard case TaskStoreError.syncedTaskProjectMissing(let id)? = error as? TaskStoreError else {
-                return XCTFail("unexpected error \(error)")
-            }
-            XCTAssertEqual(id, "missing-project")
-        }
-        XCTAssertNil(try store.fetchTask(id: "r1"))
+        try store.upsertFromSync(remote)
+
+        let local = try XCTUnwrap(store.fetchTask(id: "r1"))
+        XCTAssertNil(local.projectId, "Shown in Inbox until the project syncs")
+        XCTAssertEqual(local.title, "From the Mac")
+        XCTAssertEqual(local.updatedAt, Date(timeIntervalSince1970: 2))
+        // The intended project still travels on the next push.
+        XCTAssertEqual(try store.tasksForSyncPush(ids: ["r1"]).first?.projectId, "missing-project")
+        XCTAssertEqual(try store.taxonomySyncCounts().tasksAwaitingProject, 1)
     }
 
     func testStoreAppliesTaskInKnownProject() throws {
@@ -29,9 +32,10 @@ final class TaskSyncMissingProjectTests: XCTestCase {
                               updatedAt: Date(timeIntervalSince1970: 2))
         try store.upsertFromSync(remote)
         XCTAssertEqual(try XCTUnwrap(store.fetchTask(id: "r2")).projectId, project.id)
+        XCTAssertEqual(try store.taxonomySyncCounts().tasksAwaitingProject, 0)
     }
 
-    func testCoordinatorSkipsMissingProjectTasksAndKeepsGoing() async throws {
+    func testCoordinatorKeepsMissingProjectTasksAndKeepsGoing() async throws {
         let store = TaskStore(databaseManager: try DatabaseManager(path: ":memory:"))
         let stamp = Date(timeIntervalSince1970: 5)
         let orphan = TodoTask(id: "orphan", title: "Orphan", projectId: "nowhere", createdAt: stamp, updatedAt: stamp)
@@ -39,12 +43,14 @@ final class TaskSyncMissingProjectTests: XCTestCase {
         let remote = MissingProjectFakeRemote(
             pull: .init(changed: [orphan, loose], deletedIDs: [], token: nil)
         )
-        let coordinator = TaskSyncCoordinator(local: store, remote: remote, cursor: MissingProjectFakeCursor())
+        let cursor = MissingProjectFakeCursor()
+        let coordinator = TaskSyncCoordinator(local: store, remote: remote, cursor: cursor,
+                                              taxonomy: TaxonomySyncSetup(store: store, cursor: cursor))
 
         try await coordinator.pullRemoteChanges()
 
         XCTAssertEqual(coordinator.skippedForMissingProject, 1)
-        XCTAssertNil(try store.fetchTask(id: "orphan"))
+        XCTAssertNil(try XCTUnwrap(store.fetchTask(id: "orphan")).projectId)
         XCTAssertNotNil(try store.fetchTask(id: "loose"))
     }
 }
@@ -57,7 +63,8 @@ private final class MissingProjectFakeRemote: RemoteTaskSyncing {
     func push(upserts: [TodoTask], deletions: [String]) async throws -> Int { upserts.count }
 }
 
-private final class MissingProjectFakeCursor: SyncCursorStoring {
+private final class MissingProjectFakeCursor: SyncCursorStoring, TaxonomySyncCursorStoring {
     var changeToken: CKServerChangeToken?
     var lastPushDate: Date?
+    var taxonomyLastPushDate: Date?
 }

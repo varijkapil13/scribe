@@ -78,8 +78,11 @@ enum TaskUndo {
         do {
             // Inserts the row verbatim and clears the delete tombstone…
             try store.upsertFromSync(snapshot.task)
-            // …then bumps updatedAt past the tombstone's deletedAt.
-            try store.updateTask(snapshot.task)
+            // …then bumps updatedAt past the tombstone's deletedAt. Stamps the
+            // row as stored, not the snapshot: a project / heading deleted in
+            // the meantime was dropped by the upsert (task → Inbox) and must
+            // not be written back (its foreign key would fail the restore).
+            try store.updateTask(store.fetchTask(id: snapshot.task.id) ?? snapshot.task)
             try store.setTags(snapshot.tags, for: snapshot.task.id)
             for subtask in snapshot.subtasks.sorted(by: { $0.sortOrder < $1.sortOrder }) {
                 let added = try store.addSubtask(to: snapshot.task.id, title: subtask.title)

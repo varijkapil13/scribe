@@ -606,13 +606,14 @@ private struct StorageSettingsPane: View {
                 toggleWithCaption(
                     "Sync tasks with iCloud",
                     isOn: $iCloudSyncEnabled,
-                    caption: "Keep tasks in sync across your devices. Requires iCloud."
+                    caption: "Keep tasks, projects, areas, headings and tags in sync across your devices. Requires iCloud."
                 )
                 if iCloudSyncEnabled && !CloudKitAvailability.isCloudKitEntitled {
                     Label("This build of Scribe isn't set up for iCloud, so tasks stay on this Mac for now.", systemImage: "icloud.slash")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if iCloudSyncEnabled { TaskSyncCountsRow() }
                 toggleWithCaption(
                     "Store notes in iCloud Drive",
                     isOn: Binding(

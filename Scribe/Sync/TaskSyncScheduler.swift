@@ -174,7 +174,7 @@ final class TaskSyncScheduler {
         }
     }
 
-    /// A local task (or tombstone) row changed: (re)arm the debounce.
+    /// A local task / taxonomy (or tombstone) row changed: (re)arm the debounce.
     func localTasksDidChange() {
         guard isSyncAllowed() else { return }
         guard !policy.isSyncing else {
@@ -231,17 +231,26 @@ final class TaskSyncScheduler {
 
     // MARK: - Database observation
 
-    /// Observes the tables task sync reads (`tasks` + `task_tombstones`).
+    /// Every table a sync round reads: tasks, their tags, the taxonomy
+    /// (areas, projects, headings) and all deletion tombstones.
+    nonisolated static let observedTables = [
+        "tasks", "task_tombstones", "task_tags",
+        "areas", "area_tombstones",
+        "projects", "project_tombstones",
+        "project_headings", "project_heading_tombstones"
+    ]
+
+    /// Observes the tables task sync reads (`observedTables`).
     /// `nonisolated` so GRDB's change callback (invoked on the database
     /// queue) is not a main-actor closure; it only forwards a Sendable ping.
     nonisolated private static func observeLocalTaskChanges(
         in database: DatabaseQueue,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
-        let observation = DatabaseRegionObservation(
-            tracking: TodoTask.all(),
-            SQLRequest<Row>(sql: "SELECT * FROM task_tombstones")
-        )
+        let regions: [any DatabaseRegionConvertible] = observedTables.map {
+            SQLRequest<Row>(sql: "SELECT * FROM \($0)")
+        }
+        let observation = DatabaseRegionObservation(tracking: regions)
         return observation.start(
             in: database,
             onError: { error in
