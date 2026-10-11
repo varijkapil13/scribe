@@ -215,6 +215,31 @@ final class MeetingSyncLocalStoreTests: XCTestCase {
         XCTAssertEqual(again.snapshot.speakerNames, ["remote": "Priya"])
     }
 
+    /// Speaker names are saved with an upsert; SQLite applies the outer
+    /// statement's conflict policy to trigger bodies, so the sync triggers must
+    /// never rely on OR IGNORE (regression: the second speaker failed with a
+    /// UNIQUE error on meeting_sync_state).
+    func testSeveralSpeakerUpsertsKeepSyncBookkeeping() throws {
+        let device = try SimulatedDevice(kind: .mac, cloud: FakeMeetingCloud())
+        let session = try device.recordMeeting()
+        let push = try XCTUnwrap(device.local.pendingPush(sessionId: session.id, localDevice: .mac, localDeviceId: "d"))
+        try device.local.markPushed(
+            sessionId: session.id,
+            changeSeq: push.changeSeq,
+            transcriptHash: push.snapshot.transcriptHash,
+            audioFiles: [],
+            audioDone: nil
+        )
+
+        try device.transcripts.setSpeakerName("Priya", forKey: "remote", sessionId: session.id)
+        try device.transcripts.setSpeakerName("Tom", forKey: "you", sessionId: session.id)
+        try device.transcripts.setSpeakerName("Priya P.", forKey: "remote", sessionId: session.id)
+
+        let again = try XCTUnwrap(device.local.pendingPush(sessionId: session.id, localDevice: .mac, localDeviceId: "d"))
+        XCTAssertGreaterThan(again.changeSeq, push.changeSeq)
+        XCTAssertEqual(again.snapshot.speakerNames, ["remote": "Priya P.", "you": "Tom"])
+    }
+
     func testDeletingASyncedSessionLeavesATombstoneButANeverSyncedOneDoesNot() throws {
         let device = try SimulatedDevice(kind: .mac, cloud: FakeMeetingCloud())
         let local = try device.recordMeeting(title: "Never synced")

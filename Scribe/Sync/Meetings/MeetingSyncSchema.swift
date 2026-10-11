@@ -95,11 +95,16 @@ enum MeetingSyncSchema {
     /// follow a session delete don't leave orphan state behind. Deleting a
     /// session that was ever synced (pushed, or imported from another device)
     /// records a tombstone; a never-synced one just disappears.
+    // Trigger inserts into meeting_sync_state guard with NOT EXISTS rather
+    // than OR IGNORE: SQLite applies the OUTER statement's conflict policy to
+    // a trigger body (an upsert or INSERT OR REPLACE on session_speakers would
+    // turn OR IGNORE into an error or a REPLACE that resets the sync counters).
     nonisolated static let triggerStatements: [String] = [
         """
         CREATE TRIGGER meeting_sync_sessions_ai AFTER INSERT ON sessions BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.id;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.id
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.id);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.id;
         END
@@ -118,8 +123,9 @@ enum MeetingSyncSchema {
             OR OLD.calendarEventTitle IS NOT NEW.calendarEventTitle
             OR OLD.attendees IS NOT NEW.attendees
         BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.id;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.id
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.id);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.id;
         END
@@ -134,112 +140,128 @@ enum MeetingSyncSchema {
         """,
         """
         CREATE TRIGGER meeting_sync_segments_ai AFTER INSERT ON segments BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_segments_au AFTER UPDATE ON segments BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.sessionId;
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_segments_ad AFTER DELETE ON segments BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_session_speakers_ai AFTER INSERT ON session_speakers BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_session_speakers_au AFTER UPDATE ON session_speakers BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.sessionId;
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_session_speakers_ad AFTER DELETE ON session_speakers BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_session_bookmarks_ai AFTER INSERT ON session_bookmarks BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_session_bookmarks_au AFTER UPDATE ON session_bookmarks BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.sessionId;
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_session_bookmarks_ad AFTER DELETE ON session_bookmarks BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.sessionId
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.sessionId);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.sessionId;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_meeting_summaries_ai AFTER INSERT ON meeting_summaries BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.session_id;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.session_id
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.session_id);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.session_id;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_meeting_summaries_au AFTER UPDATE ON meeting_summaries BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.session_id;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = NEW.session_id
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = NEW.session_id);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = NEW.session_id;
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.session_id;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.session_id
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.session_id);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.session_id;
         END
         """,
         """
         CREATE TRIGGER meeting_sync_meeting_summaries_ad AFTER DELETE ON meeting_summaries BEGIN
-            INSERT OR IGNORE INTO meeting_sync_state (sessionId, updatedAt)
-                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.session_id;
+            INSERT INTO meeting_sync_state (sessionId, updatedAt)
+                SELECT id, strftime('%Y-%m-%d %H:%M:%f', 'now') FROM sessions WHERE id = OLD.session_id
+                AND NOT EXISTS (SELECT 1 FROM meeting_sync_state WHERE sessionId = OLD.session_id);
             UPDATE meeting_sync_state SET changeSeq = changeSeq + 1, updatedAt = \(MeetingSyncSchema.bumpedClock)
                 WHERE sessionId = OLD.session_id;
         END
