@@ -606,13 +606,14 @@ private struct StorageSettingsPane: View {
                 toggleWithCaption(
                     "Sync tasks with iCloud",
                     isOn: $iCloudSyncEnabled,
-                    caption: "Keep tasks in sync across your devices. Requires iCloud."
+                    caption: "Keep tasks, projects, areas, headings and tags in sync across your devices. Requires iCloud."
                 )
                 if iCloudSyncEnabled && !CloudKitAvailability.isCloudKitEntitled {
                     Label("This build of Scribe isn't set up for iCloud, so tasks stay on this Mac for now.", systemImage: "icloud.slash")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if iCloudSyncEnabled { TaskSyncCountsRow() }
                 toggleWithCaption(
                     "Store notes in iCloud Drive",
                     isOn: Binding(
@@ -642,6 +643,8 @@ private struct StorageSettingsPane: View {
                 }
             }
 
+            MeetingSyncSettingsSection()  // Scribe/Sync/Meetings
+
             Section("Data") {
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
@@ -659,7 +662,10 @@ private struct StorageSettingsPane: View {
                     Button("Delete All Data", role: .destructive, action: deleteAllData)
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This permanently removes every session, segment, summary, action item, and retained audio recording. Your notes are kept. This action cannot be undone.")
+                    // Deleting synced meetings propagates (tombstones), so say so.
+                    Text(MeetingSyncSettings.isMeetingSyncOn()
+                         ? LocalizedStringKey("This permanently removes every session, segment, summary, action item, and retained audio recording. Meetings synced through iCloud are also removed from your other devices. Your notes are kept. This action cannot be undone.")
+                         : LocalizedStringKey("This permanently removes every session, segment, summary, action item, and retained audio recording. Your notes are kept. This action cannot be undone."))
                 }
 
                 Text("Scribe stores data at ~/Library/Application Support/Scribe/.")

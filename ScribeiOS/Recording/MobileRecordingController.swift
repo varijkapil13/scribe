@@ -117,6 +117,10 @@ final class MobileRecordingController {
     @ObservationIgnored private var stopRequested = false
     @ObservationIgnored private var activityTimerStart = Date()
     @ObservationIgnored private var lastActivityPush = Date.distantPast
+    /// Speaker separation (ScribeiOS/Diarization): raw recognizer results
+    /// and the audio folder, scratch when Keep audio is off.
+    @ObservationIgnored private var diarizationPieces: [MobileDiarizationJob.Piece] = []
+    @ObservationIgnored private var diarizationAudio: (directory: URL, isScratch: Bool)?
 
     @ObservationIgnored private var deliveryContinuation: AsyncStream<MobileCapturedBuffer>.Continuation?
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
@@ -289,7 +293,15 @@ final class MobileRecordingController {
         try audioSession.activateForRecording()
         wireAudioSession()
         audioSession.startObserving(engine: capture.engine)
-        recorder = audioDirectory.map { SessionAudioRecorder(directory: $0) }
+        // With Keep audio off, speaker separation still needs the audio:
+        // it goes to a scratch folder deleted once diarization ran.
+        if let audioDirectory {
+            diarizationAudio = (audioDirectory, false)
+        } else if let scratch = IOSDiarizationScheduler.shared.scratchAudioDirectory(forSessionId: newSessionId) {
+            diarizationAudio = (scratch, true)
+        }
+        diarizationPieces = []
+        recorder = diarizationAudio.map { SessionAudioRecorder(directory: $0.directory) }
         startDelivery()
         gate.set(open: true)
         try startCapture()
@@ -333,6 +345,9 @@ final class MobileRecordingController {
         recorder = nil
         audioSession.deactivate()
         liveActivity.end(nil)
+        if let scratch = diarizationAudio, scratch.isScratch {
+            try? FileManager.default.removeItem(at: scratch.directory)
+        }
         if let sessionId {
             try? transcriptStore.deleteSession(id: sessionId)
         }
@@ -441,8 +456,19 @@ final class MobileRecordingController {
         if let finishedSessionId {
             keep = finalizeSession(id: finishedSessionId)
         }
+        let finishedAudio = diarizationAudio
+        let finishedPieces = diarizationPieces
         resetLiveState()
         recordingsVersion += 1
+        if let finishedSessionId {
+            IOSDiarizationScheduler.shared.recordingDidFinish(
+                sessionId: finishedSessionId,
+                audioDirectory: finishedAudio?.directory,
+                isScratch: finishedAudio?.isScratch ?? false,
+                pieces: finishedPieces,
+                kept: keep
+            )
+        }
         if keep, let finishedSessionId {
             lastFinishedSessionId = finishedSessionId
             runPostProcessing(sessionId: finishedSessionId, summarize: MobileRecordingSettings.summarize)
@@ -506,6 +532,8 @@ final class MobileRecordingController {
         localeIdentifier = nil
         stopRequested = false
         recordingStartedAt = nil
+        diarizationPieces = []
+        diarizationAudio = nil
         // Back to idle (stopped, or a start that failed / was cancelled):
         // refresh the widgets' recording state.
         ScribeRecordingControlRegistry.recordingStateDidChange()
@@ -658,6 +686,9 @@ final class MobileRecordingController {
             text: segment.text
         )
         if let closed = coalescer.ingest(piece) { persist(closed) }
+        if diarizationAudio != nil {
+            diarizationPieces.append(.init(startMs: segment.startMs, endMs: segment.endMs, text: segment.text))
+        }
         refreshPendingLine()
     }
 

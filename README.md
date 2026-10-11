@@ -252,7 +252,7 @@ Scribe.app (Swift 6 / SwiftUI / macOS 27)
 |---------|---------|
 | [GRDB.swift](https://github.com/groue/GRDB.swift) | SQLite database with FTS5 full-text search |
 | [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) | Global keyboard shortcut for start/stop recording |
-| [FluidAudio](https://github.com/FluidInference/FluidAudio) | On-device speaker diarization (pyannote community-1 models, CC BY 4.0). Fetch the models into release builds with `scripts/fetch-diarizer-models.sh` |
+| [FluidAudio](https://github.com/FluidInference/FluidAudio) | On-device speaker diarization (pyannote community-1 models, CC BY 4.0). The models (~22 MB) aren't bundled; the app downloads them once after installation |
 
 ### Project Structure
 

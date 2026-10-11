@@ -82,6 +82,8 @@ struct RecordingsRootView: View {
             if let id { path = [id] }
         }
         .onChange(of: importer.isImporting) { _, _ in reload() }
+        // Meetings synced from (or deleted on) another device.
+        .onReceive(NotificationCenter.default.publisher(for: .scribeMeetingSyncDidChangeSessions)) { _ in reload() }
         .onChange(of: controller.phase) { old, new in
             if old == .idle, new != .idle { isLivePresented = true }
             if new == .idle, old != .idle { isLivePresented = false }
@@ -268,6 +270,7 @@ struct MobileRecordingRow: View {
                     Label("Summarizing", systemImage: "sparkles")
                         .labelStyle(.titleAndIcon)
                 }
+                MeetingOriginBadge(sessionId: session.id)
             }
             .font(.caption)
             .foregroundStyle(.secondary)

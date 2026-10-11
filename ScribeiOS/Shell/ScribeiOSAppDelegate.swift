@@ -59,6 +59,7 @@ enum ScribeiOSBootstrap {
         //    observation. A no-op until the user enables iCloud sync, and
         //    safe when the build has no iCloud entitlement.
         TaskSyncScheduler.shared.start()
+        MeetingSyncScheduler.shared.start()  // meetings (opt-in sub-toggle)
 
         // 6. Recording: create the recorder now so it registers with
         //    ScribeRecordingControlRegistry (Siri / Shortcuts / Control
@@ -71,6 +72,10 @@ enum ScribeiOSBootstrap {
         //    Share-extension import (ios-system). Also started by each
         //    scene's `.scribeSystemIntegration()`; idempotent.
         IOSSystemIntegration.shared.start()
+
+        // 8. Speaker separation: registers its BGProcessingTask (must happen
+        //    before launch finishes) and resumes queued diarization jobs.
+        IOSDiarizationScheduler.shared.start()
     }
 
     static func installNotifications() {
@@ -88,6 +93,7 @@ enum ScribeiOSBootstrap {
     /// Scene became active: opportunistic, throttled sync + re-index.
     static func sceneDidBecomeActive() {
         TaskSyncScheduler.shared.appDidBecomeActive()
+        MeetingSyncScheduler.shared.appDidBecomeActive()
         IOSVaultSyncController.shared.refresh()
     }
 }

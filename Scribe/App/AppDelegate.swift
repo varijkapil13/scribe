@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
             // On-device semantic index (follows Settings → Intelligence).
             SemanticIndexScheduler.shared.start()
+            // Speaker-separation models aren't bundled: fetch them once in
+            // the background after installation.
+            SpeakerDiarizationModels.prefetchIfNeeded()
         }
 
         // Co-located attachments migration (Phase 5 — Slice 7). Moves
@@ -177,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.start()
             RemindersSyncScheduler.shared.start(database: DatabaseManager.shared.database)
+            MeetingSyncMacBridge.start()  // CloudKit meeting sync (opt-in)
         }
 
         // Automatic daily backups (off unless enabled in Settings → Backup).
@@ -231,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !AppLaunchEnvironment.isUITesting {
             TaskSyncScheduler.shared.appDidBecomeActive()
             RemindersSyncScheduler.shared.appDidBecomeActive()
+            MeetingSyncMacBridge.appDidBecomeActive()
         }
         ScribeExtensionsBridge.shared.appDidBecomeActive()
         Task {

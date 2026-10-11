@@ -163,13 +163,19 @@ struct TasksSettingsScreen: View {
                 if cloud.isSyncing { ProgressView() }
             }
             if cloud.isEnabled {
+                if let counts = cloud.counts {
+                    LabeledContent("Syncing", value: counts.summaryText)
+                    if let waiting = counts.waitingText {
+                        Text(waiting).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Button("Sync Tasks Now") { Task { await cloud.syncNow() } }
                     .disabled(cloud.isSyncing)
             }
         } header: {
             Text("iCloud")
         } footer: {
-            Text("Turn iCloud task sync on or off in Settings → iCloud. Dates, start dates, Today / Evening / Someday plans, durations and repeats sync across your devices.")
+            Text("Turn iCloud task sync on or off in Settings → iCloud. Projects, areas, headings, tags, dates, start dates, Today / Evening / Someday plans, durations and repeats sync across your devices.")
         }
     }
 

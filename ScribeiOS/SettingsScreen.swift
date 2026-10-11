@@ -35,6 +35,7 @@ struct SettingsScreen: View {
             Form {
                 // MARK: - iCloud (shell; notes vault rows: ios-notes)
                 iCloudSection
+                MeetingSyncSettingsSection()  // meeting sync (Scribe/Sync/Meetings)
 
                 // MARK: - Slot: notes (ios-notes)
                 Section {
@@ -51,6 +52,7 @@ struct SettingsScreen: View {
 
                 // MARK: - Slot: recording (ios-recording)
                 RecordingSettingsSection()
+                SpeakerSeparationSettingsRow()   // ios-diarization: Settings › Speakers
 
                 // MARK: - Slot: system integrations (ios-system: Siri, widgets, Share)
                 ScribeiOSSystemSettingsSection()

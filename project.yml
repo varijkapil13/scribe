@@ -81,8 +81,9 @@ targets:
         # Disable JIT / executable memory pages by default; nothing in Scribe
         # needs them, and removing them shrinks the attack surface.
         OTHER_CODE_SIGN_FLAGS: "--options=runtime"
-        # The diarizer-model copy script below reads build-resources/, which
-        # Xcode's user-script sandbox would block.
+        # Kept off so local build scripts may read the repo freely. (The
+        # speaker-diarization models are no longer bundled: the app downloads
+        # them after installation — ScribeDiarizerModelManager.)
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         # Brand accent from Assets.xcassets/AccentColor (used when the user's
         # system accent is Multicolor; a user-chosen accent always wins).
@@ -95,23 +96,6 @@ targets:
         # Empty (the default) disables the updater gracefully; the release
         # workflow passes the real key on the xcodebuild command line.
         SPARKLE_PUBLIC_ED_KEY: ""
-    postBuildScripts:
-      # Bundle the speaker-diarization models when they've been fetched
-      # (scripts/fetch-diarizer-models.sh; release builds always do). Without
-      # them the app downloads the model on first use if the user allows it.
-      - name: Bundle speaker-diarization models
-        basedOnDependencyAnalysis: false
-        script: |
-          SRC="$SRCROOT/build-resources/DiarizerModels"
-          if [ -d "$SRC/speaker-diarization-coreml" ]; then
-            DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/DiarizerModels"
-            rm -rf "$DEST"
-            mkdir -p "$DEST"
-            cp -R "$SRC/speaker-diarization-coreml" "$DEST/"
-            echo "Bundled diarizer models into $DEST"
-          else
-            echo "Diarizer models not fetched; app will download on first use."
-          fi
   # App extensions. They live OUTSIDE Scribe/ because `swift test` compiles
   # every file under Scribe/ into the app's SwiftPM executable target, and
   # extension code (WidgetKit bundle @main, QLPreviewingController, share
@@ -216,7 +200,7 @@ targets:
           - NoteVaultWatcher.swift   # CoreServices / FSEvents — macOS only
           - VaultCoordinator.swift   # owns the watcher; imports SwiftUI chrome
       - path: Scribe/Tasks            # RecurrenceRule/Engine, QuickAddParser, reminders — all portable
-      - path: Scribe/Sync             # CloudKit task sync (merge policy, record mapping, service)
+      - path: Scribe/Sync             # CloudKit task sync (merge policy, record mapping, service) + Sync/Meetings (meeting sync; included recursively)
       - path: Scribe/UI/Tasks/ActionItemConverter.swift   # pure logic: ActionItem→Task + NSDataDetector.scribeDateDetector (QuickAddParser needs it)
       - path: Scribe/Utilities/Log.swift
       - path: Scribe/Intelligence/MeetingModels.swift
@@ -257,7 +241,8 @@ targets:
       # shared with the Mac (Speech, AVFoundation, FoundationModels, EventKit
       # are all available on iOS 27). The Mac-only capture stack
       # (ScreenCaptureKit, process taps, CoreAudio devices, KeyboardShortcuts)
-      # and FluidAudio diarization stay out.
+      # and the Mac's diarization coordinator stay out (ios-diarization below
+      # brings the portable diarization core).
       - path: Scribe/Intelligence/TranscriptionPipeline.swift
       - path: Scribe/Intelligence/TranscriptionPipeline+Vocabulary.swift
       - path: Scribe/Intelligence/SpeechRecognizerEngine.swift   # TranscriptionSegment, resolveLocale, auth
@@ -280,6 +265,12 @@ targets:
       - path: Scribe/MediaImport/MediaImportTranscriptionJob.swift
       # (Scribe/Calendar/CalendarEventMatcher.swift is listed under ios-tasks.)
       - path: Scribe/Calendar/CalendarStore.swift
+      # ios-diarization: FluidAudio engine, model download / layout, the
+      # run-or-defer policy and the job queue (Scribe/Diarization/Portable),
+      # plus the Foundation Models speaker-name suggester. The models are
+      # downloaded on first use, not bundled (ScribeiOS/Diarization).
+      - path: Scribe/Diarization/Portable
+      - path: Scribe/Diarization/SpeakerNameSuggester.swift
       # --- ios-system: App Intents / Siri / Spotlight, widgets, Share import ---
       # Portable intents + entities + data layer (the AppKit bridge
       # ScribeIntentsBridge.swift, the Mac App Shortcuts and the Mac settings
@@ -312,6 +303,8 @@ targets:
     dependencies:
       - package: GRDB.swift
         product: GRDB
+      # ios-diarization: on-device speaker separation (FluidAudio supports iOS 17+).
+      - package: FluidAudio
       # ios-recording: the recording Live Activity (Lock Screen + Dynamic Island).
       - target: ScribeRecordingActivity
       # ios-system: Home / Lock Screen widgets + controls, and the Share
@@ -339,6 +332,11 @@ targets:
         # or the app in the background (the active `.playAndRecord` session).
         UIBackgroundModes:
           - audio
+          # ios-diarization: deferred speaker separation (BGProcessingTask).
+          - processing
+        # ios-diarization: IOSDiarizationScheduler.backgroundTaskIdentifier.
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.varij.scribe.diarization
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.varij.scribe
