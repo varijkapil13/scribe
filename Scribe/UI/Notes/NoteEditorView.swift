@@ -93,6 +93,7 @@ struct NoteEditorView: View {
                 )
             }
         }
+        .scrollEdgeEffectHidden(true, for: .top)
         .focusedSceneValue(\.scribeEditorCommands, commandBridge)
         .scribeFocusMenuToolbar(
             isEnabled: optionsInToolbar,

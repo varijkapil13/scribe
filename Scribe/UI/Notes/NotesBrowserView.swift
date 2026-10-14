@@ -51,6 +51,8 @@ struct NotesBrowserView: View {
 
             detailColumn
         }
+        .navigationTitle(currentNote.map { $0.title.isEmpty ? "Untitled" : $0.title } ?? "Notes")
+        .toolbar(removing: .title)
         .task(id: navPath.last) {
             guard let id = navPath.last else { currentNote = nil; return }
             let note = try? NoteStore.shared.fetchNote(id: id)

@@ -116,6 +116,9 @@ struct WebMarkdownEditor: NSViewRepresentable {
         // Transparent so the page background (set from CSS/theme) shows through
         // and there's no white flash on dark mode before the bundle loads.
         webView.setValue(false, forKey: "drawsBackground")
+        // Colours the scroll pocket under the toolbar; WebKit otherwise picks a
+        // default that doesn't match the pane behind a transparent page.
+        webView.underPageBackgroundColor = NSColor(DesignTokens.Palette.ground)
         webView.allowsMagnification = false
         webView.translatesAutoresizingMaskIntoConstraints = true
         webView.autoresizingMask = [.width, .height]
