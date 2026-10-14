@@ -19,22 +19,20 @@ enum MenuBarIcon {
 /// The menu shown from Scribe's menu-bar item: recording transport, the
 /// detected meeting, dictation, and getting back to the main window.
 struct MenuBarContent: View {
-    @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var appDelegate: AppDelegate
-    @ObservedObject var audioManager: AudioSessionManager
+    @ObservedObject var status: RecordingStatus
+    let clock: RecordingClock
     @ObservedObject private var detector = MeetingDetector.shared
     @ObservedObject private var dictation = DictationController.shared
     @ObservedObject private var calendar = CalendarService.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        if appState.isTranscribing {
-            Text(audioManager.isPaused
-                 ? "Paused · \(Self.format(audioManager.recordingDuration))"
-                 : "Recording · \(Self.format(audioManager.recordingDuration))")
+        if status.isRecording {
+            MenuBarRecordingLine(isPaused: status.isPaused, clock: clock)
             Button("Stop Recording") { Task { await appDelegate.stopRecording() } }
-            Button(audioManager.isPaused ? "Resume" : "Pause") {
-                if audioManager.isPaused {
+            Button(status.isPaused ? "Resume" : "Pause") {
+                if status.isPaused {
                     Task { await appDelegate.resumeRecording() }
                 } else {
                     appDelegate.pauseRecording()
@@ -96,17 +94,27 @@ struct MenuBarContent: View {
     }
 }
 
+private struct MenuBarRecordingLine: View {
+    let isPaused: Bool
+    @ObservedObject var clock: RecordingClock
+
+    var body: some View {
+        Text(isPaused
+             ? "Paused · \(MenuBarContent.format(clock.elapsed))"
+             : "Recording · \(MenuBarContent.format(clock.elapsed))")
+    }
+}
+
 /// The icon itself. Separate view so it observes the same state as the menu.
 struct MenuBarLabel: View {
-    @ObservedObject var appState: AppState
-    @ObservedObject var audioManager: AudioSessionManager
+    @ObservedObject var status: RecordingStatus
     @ObservedObject private var dictation = DictationController.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Image(systemName: MenuBarIcon.symbol(
-            isRecording: appState.isTranscribing,
-            isPaused: audioManager.isPaused,
+            isRecording: status.isRecording,
+            isPaused: status.isPaused,
             isDictating: dictation.isActive
         ))
         // Template rendering so the menu bar tints it (light/dark, tinted and

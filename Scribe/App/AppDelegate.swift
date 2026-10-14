@@ -198,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // maintenance (each self-gates on UI-test / fixture launches).
         ScribeUpdater.shared.start()
         if !AppLaunchEnvironment.isUITesting { ScribeMetricKitCollector.shared.start() }
+        MainThreadStallMonitor.shared.start()
         ScribeBackgroundMaintenance.shared.start(transcriptStore: appState.transcriptStore)
 
         // Proactively request microphone and speech-recognition authorization
@@ -283,10 +284,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Nothing blocking here: an active session was already stopped in
-        // `applicationShouldTerminate`. Never wait on the main actor in this
-        // callback — it runs on the main thread, so a Task awaiting it could
-        // never run.
+        // An active session was already stopped in `applicationShouldTerminate`.
+        // Never wait on the main actor in this callback — it runs on the main
+        // thread, so a Task awaiting it could never run.
+        NotificationCenter.default.post(name: .scribeNoteWillChangeInApp, object: nil)
+        NoteWriteQueue.drain()
     }
 
     // MARK: - Window Close → Quit

@@ -136,7 +136,7 @@ final class TaskSyncScheduler {
 
     /// Starts observing the toggle and local task changes, and runs the launch
     /// round. Idempotent.
-    func start(database: DatabaseQueue = DatabaseManager.shared.database) {
+    func start(database: any DatabaseWriter = DatabaseManager.shared.database) {
         guard !started else { return }
         started = true
         lastKnownToggle = isToggleOn()
@@ -244,7 +244,7 @@ final class TaskSyncScheduler {
     /// `nonisolated` so GRDB's change callback (invoked on the database
     /// queue) is not a main-actor closure; it only forwards a Sendable ping.
     nonisolated private static func observeLocalTaskChanges(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let regions: [any DatabaseRegionConvertible] = observedTables.map {

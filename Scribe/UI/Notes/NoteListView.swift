@@ -38,7 +38,9 @@ struct NoteListView: View {
 
             Divider()
 
-            if vm.filteredNotes.isEmpty {
+            if !vm.hasLoaded {
+                Spacer()
+            } else if vm.filteredNotes.isEmpty {
                 // Shared EmptyStateView (one component, one tone across the app)
                 // rather than a bespoke stack.
                 EmptyStateView(

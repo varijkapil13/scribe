@@ -53,6 +53,9 @@ final class NoteDetailViewModel: ObservableObject {
     /// exemption must not apply: our next save keeps both versions instead of
     /// silently overwriting the other window's edits.
     private var peerSavedSinceLoad = false
+    /// Bumped whenever a peer save arrives while edits are unsaved, so a save
+    /// already in flight doesn't clear `peerSavedSinceLoad` for a later peer write.
+    private var peerSaveCount = 0
     private struct PeerSave: Sendable {
         let sender: ObjectIdentifier?
         let noteId: String
@@ -65,6 +68,11 @@ final class NoteDetailViewModel: ObservableObject {
     /// and NaturalLanguage analysis doesn't re-run on every chip click.
     /// Capped at 5 entries (LRU); the most-recently-used sessions stay warm.
     private var transcriptVMCache: [String: TranscriptDetailViewModel] = [:]
+
+    let writerId = UUID()
+    private var saveGeneration = 0
+    private var lastAppliedSaveGeneration = 0
+    private var inFlightSave: (generation: Int, note: Note, tags: [String])?
 
     init(
         note: Note,
@@ -127,7 +135,7 @@ final class NoteDetailViewModel: ObservableObject {
         autosaveCancellable = $isDirty
             .filter { $0 }
             .debounce(for: .seconds(1.5), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in self?.save() }
+            .sink { [weak self] _ in self?.saveInBackground() }
         sessionsCancellable = transcriptStore
             .observeSessions(forNoteId: note.id)
             .receive(on: DispatchQueue.main)
@@ -142,9 +150,8 @@ final class NoteDetailViewModel: ObservableObject {
     private func reload() {
         do {
             tags = try store.tags(for: note.id)
-            backlinks = try store.backlinks(for: note.id)
             loadProperties()
-            recomputeUnresolvedLinks()
+            refreshLinkState()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -175,6 +182,10 @@ final class NoteDetailViewModel: ObservableObject {
     /// `NoteStore.mirrorToDisk` already re-reads and preserves on-disk extras
     /// on a body/tag save, so the two write paths don't clobber each other.
     func updateProperties(_ updated: [NoteProperty]) {
+        store.modifyNote(id: note.id, by: .editor(writerId)) { writeProperties(updated) }
+    }
+
+    private func writeProperties(_ updated: [NoteProperty]) {
         guard let fileStore = store.fileStore,
               let entry = try? fileStore.locate(id: note.id) else {
             // No disk backing — keep the edit live in-memory so the UI still
@@ -234,60 +245,181 @@ final class NoteDetailViewModel: ObservableObject {
         store.diskEntry(forNoteId: note.id)?.file.frontmatter
     }
 
+    /// Saves synchronously, after any background save already queued.
     func save() {
-        var keptConflictCopy = false
+        let request = makeSaveRequest()
+        let outcome = Perf.measure("note.write.drain") {
+            NoteWriteQueue.run { Self.performSave(request, store: store) }
+        }
+        applySave(outcome, for: request)
+    }
+
+    /// The autosave path: the external-edit check, DB write and file mirror
+    /// run on `NoteWriteQueue`; the editor keeps its newer content and stays dirty
+    /// if it changed while the write was in flight.
+    func saveInBackground() {
+        let request = makeSaveRequest()
+        inFlightSave = (request.generation, request.editorNote, request.tags)
+        let store = store
+        NoteWriteQueue.async { [weak self] in
+            let outcome = Self.performSave(request, store: store)
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    if case .saved = outcome {
+                        NotificationCenter.default.post(name: .scribeNoteEditorDidSave, object: nil,
+                                                        userInfo: ["noteId": request.noteId])
+                    }
+                    return
+                }
+                self.applySave(outcome, for: request)
+            }
+        }
+    }
+
+    private struct SaveRequest: Sendable {
+        let generation: Int
+        let editor: UUID
+        let noteId: String
+        let title: String
+        let editorNote: Note
+        let stored: Result<Note, SaveFailure>
+        let tags: [String]
+        let loaded: NoteFileFingerprint?
+        let peerSavedSinceLoad: Bool
+        let peerSaveCount: Int
+        let hasUnsavedChanges: Bool
+    }
+
+    private struct SaveFailure: Error, Sendable {
+        let message: String
+    }
+
+    private enum SaveOutcome: Sendable {
+        case reloadFromDisk
+        case failed(message: String)
+        case saved(fingerprint: NoteFileFingerprint?, conflictCopyName: String?, changedInApp: Bool,
+                   backlinks: [Note], titles: [String])
+    }
+
+    private func makeSaveRequest() -> SaveRequest {
+        saveGeneration += 1
+        var stored = note
+        let storedResult: Result<Note, SaveFailure>
+        do {
+            // A locked note is written sealed; its plaintext never hits disk.
+            stored.body = try bodyForStorage()
+            storedResult = .success(stored)
+        } catch {
+            storedResult = .failure(SaveFailure(message: error.localizedDescription))
+        }
+        return SaveRequest(
+            generation: saveGeneration,
+            editor: writerId,
+            noteId: note.id,
+            title: note.title,
+            editorNote: note,
+            stored: storedResult,
+            tags: tags,
+            loaded: loadedFingerprint,
+            peerSavedSinceLoad: peerSavedSinceLoad,
+            peerSaveCount: peerSaveCount,
+            hasUnsavedChanges: isDirty
+        )
+    }
+
+    private nonisolated static func performSave(_ request: SaveRequest, store: NoteStore) -> SaveOutcome {
+        store.modifyNote(id: request.noteId, by: .editor(request.editor)) {
+            Perf.measure("NoteDetailViewModel.save") { writeSave(request, store: store) }
+        }
+    }
+
+    private nonisolated static func writeSave(_ request: SaveRequest, store: NoteStore) -> SaveOutcome {
+        var conflictCopyName: String?
+        // A write by another editor or in-app writer that landed after
+        // this request was built is not one this content includes.
+        let changedInApp = request.peerSavedSinceLoad
+            || request.loaded.map {
+                NoteWriteQueue.hasForeignWrite(noteId: request.noteId, since: $0, editor: request.editor)
+            } ?? false
         // Never overwrite an external edit blindly: compare the file on disk
         // with the version this editor was loaded from.
-        if let loaded = loadedFingerprint {
-            let current = store.currentFileFingerprint(forNoteId: note.id, reusing: loaded)
+        if let loaded = request.loaded {
+            let current = store.currentFileFingerprint(forNoteId: request.noteId, reusing: loaded)
+            let lastOwn = changedInApp
+                ? nil
+                : store.ownWrittenFileFingerprint(forNoteId: request.noteId, descendingFrom: loaded)
             switch NoteExternalEditPolicy.decide(
                 loaded: loaded,
                 current: current,
-                lastWrittenByScribe: lastOwnWrite(),
-                hasUnsavedChanges: isDirty
+                lastWrittenByScribe: lastOwn,
+                hasUnsavedChanges: request.hasUnsavedChanges
             ) {
             case .write:
                 break
             case .reloadFromDisk:
-                snapshotBeforeAdoptingExternalChange()
-                reloadFromDisk()
-                return
+                return .reloadFromDisk
             case .keepBoth:
                 do {
-                    if let copy = try store.preserveDiskVersionAsConflictCopy(noteId: note.id) {
-                        let changedBy = peerSavedSinceLoad ? "elsewhere in Scribe" : "outside Scribe"
-                        errorMessage = "\u{201C}\(note.title)\u{201D} was changed \(changedBy) while you were editing. "
-                            + "Your version was saved; the other version was kept as "
-                            + "\u{201C}\(copy.deletingPathExtension().lastPathComponent)\u{201D}."
-                        keptConflictCopy = true
+                    if let copy = try store.preserveDiskVersionAsConflictCopy(noteId: request.noteId) {
+                        conflictCopyName = copy.deletingPathExtension().lastPathComponent
                     }
                 } catch {
                     // Couldn't preserve the external version — don't destroy it.
-                    errorMessage = "\u{201C}\(note.title)\u{201D} was changed outside Scribe and couldn't be saved without losing that change: \(error.localizedDescription)"
-                    return
+                    return .failed(message: "\u{201C}\(request.title)\u{201D} was changed outside Scribe and couldn't be saved without losing that change: \(error.localizedDescription)")
                 }
             }
         }
         do {
-            // A locked note is written sealed; its plaintext never hits disk.
             // Overwriting an external edit (kept as a conflict copy) always
             // snapshots the disk version first; ordinary saves are throttled.
-            var stored = note
-            stored.body = try bodyForStorage()
-            try store.updateNote(stored, tags: tags,
-                                 versionReason: keptConflictCopy ? .externalChange : .edit)
-            loadedFingerprint = store.lastWrittenFileFingerprint(forNoteId: note.id) ?? loadedFingerprint
-            peerSavedSinceLoad = false
-            backlinks = (try? store.backlinks(for: note.id)) ?? []
-            recomputeUnresolvedLinks()
-            isDirty = false
+            let stored = try request.stored.get()
+            try store.updateNote(stored, tags: request.tags,
+                                 versionReason: conflictCopyName != nil ? .externalChange : .edit)
+            return .saved(
+                fingerprint: store.lastWrittenFileFingerprint(forNoteId: request.noteId),
+                conflictCopyName: conflictCopyName,
+                changedInApp: changedInApp,
+                backlinks: (try? store.backlinks(for: request.noteId)) ?? [],
+                titles: (try? store.allNoteTitles()) ?? []
+            )
+        } catch let failure as SaveFailure {
+            return .failed(message: failure.message)
+        } catch {
+            return .failed(message: error.localizedDescription)
+        }
+    }
+
+    private func applySave(_ outcome: SaveOutcome, for request: SaveRequest) {
+        if inFlightSave?.generation == request.generation { inFlightSave = nil }
+        // A later save already applied (or a different note is loaded): its
+        // state supersedes this one.
+        guard request.generation > lastAppliedSaveGeneration, request.noteId == note.id else { return }
+        lastAppliedSaveGeneration = request.generation
+        switch outcome {
+        case .reloadFromDisk:
+            snapshotBeforeAdoptingExternalChange()
+            reloadFromDisk()
+        case .failed(let message):
+            errorMessage = message
+        case let .saved(fingerprint, conflictCopyName, changedInApp, savedBacklinks, titles):
+            if let conflictCopyName {
+                let changedBy = changedInApp ? "elsewhere in Scribe" : "outside Scribe"
+                errorMessage = "\u{201C}\(request.title)\u{201D} was changed \(changedBy) while you were editing. "
+                    + "Your version was saved; the other version was kept as "
+                    + "\u{201C}\(conflictCopyName)\u{201D}."
+            }
+            loadedFingerprint = fingerprint ?? loadedFingerprint
+            peerSavedSinceLoad = peerSaveCount != request.peerSaveCount
+            backlinks = savedBacklinks
+            unresolvedLinkCount = Self.unresolvedLinkCount(body: note.body, titles: titles)
+            if note == request.editorNote && tags == request.tags {
+                isDirty = false
+            }
             NotificationCenter.default.post(name: .scribeNoteEditorDidSave, object: self,
                                             userInfo: ["noteId": note.id])
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        if keptConflictCopy {
-            refreshConflicts(announce: false)
+            if conflictCopyName != nil {
+                refreshConflicts(announce: false)
+            }
         }
     }
 
@@ -323,6 +455,7 @@ final class NoteDetailViewModel: ObservableObject {
     private func handlePeerSave() {
         if isDirty {
             peerSavedSinceLoad = true
+            peerSaveCount += 1
         } else {
             reloadFromDisk()
         }
@@ -358,8 +491,7 @@ final class NoteDetailViewModel: ObservableObject {
         loadedFingerprint = entry.fingerprint
         peerSavedSinceLoad = false
         isDirty = false
-        backlinks = (try? store.backlinks(for: note.id)) ?? []
-        recomputeUnresolvedLinks()
+        refreshLinkState()
     }
 
     /// Looks up conflict copies of this note off the main actor (the
@@ -384,15 +516,25 @@ final class NoteDetailViewModel: ObservableObject {
         }
     }
 
-    /// Recomputes `unresolvedLinkCount` from the current body against all
-    /// existing note titles. Called on load and on save (cheap there, not on
-    /// every keystroke).
-    private func recomputeUnresolvedLinks() {
-        let titles = ((try? store.fetchAllNotes()) ?? []).map(\.title)
-        unresolvedLinkCount = WikiLinkResolver.unresolvedAnchors(
-            existingTitles: titles,
-            body: note.body
-        ).count
+    /// Refreshes `backlinks` and `unresolvedLinkCount` off the main actor.
+    /// Called on load and reload; a save computes both on `NoteWriteQueue`.
+    private func refreshLinkState() {
+        let store = store
+        let noteId = note.id
+        Task { [weak self] in
+            let (backlinks, titles) = await Task.detached(priority: .userInitiated) {
+                Perf.measure("NoteDetailViewModel.refreshLinkState") {
+                    (((try? store.backlinks(for: noteId)) ?? []), ((try? store.allNoteTitles()) ?? []))
+                }
+            }.value
+            guard let self, self.note.id == noteId else { return }
+            self.backlinks = backlinks
+            self.unresolvedLinkCount = Self.unresolvedLinkCount(body: self.note.body, titles: titles)
+        }
+    }
+
+    private static func unresolvedLinkCount(body: String, titles: [String]) -> Int {
+        WikiLinkResolver.unresolvedAnchors(existingTitles: titles, body: body).count
     }
 
     /// Follows a clicked `[[link]]`, including `[[Note#Heading]]`,
@@ -473,7 +615,14 @@ final class NoteDetailViewModel: ObservableObject {
     /// made inside that window would be lost. Call this on `.onDisappear` to
     /// commit them synchronously first.
     func flushPendingSave() {
-        if isDirty { save() }
+        guard isDirty else { return }
+        if let inFlightSave, inFlightSave.note == note, inFlightSave.tags == tags {
+            // The queued background save already holds this content; wait for
+            // it to land instead of writing it twice.
+            NoteWriteQueue.drain()
+            return
+        }
+        save()
     }
 
     private static let transcriptVMCacheCap = 5

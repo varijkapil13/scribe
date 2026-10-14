@@ -95,14 +95,19 @@ final class NoteInspectorModel {
 
     private func apply(to sourceId: String, _ transform: (String) -> String?) {
         do {
-            guard var source = try store.fetchNote(id: sourceId) else { return }
-            guard let newBody = transform(source.body) else {
+            let linked = try NoteWriteQueue.run { () throws -> Bool? in
+                guard var source = try store.fetchNote(id: sourceId) else { return nil }
+                guard let newBody = transform(source.body) else { return false }
+                source.body = newBody
+                try store.updateNote(source, tags: try store.tags(for: sourceId))
+                return true
+            }
+            guard let linked else { return }
+            guard linked else {
                 errorMessage = "That note changed since the mention was found. The list has been refreshed."
                 reload()
                 return
             }
-            source.body = newBody
-            try store.updateNote(source, tags: try store.tags(for: sourceId))
             // Editors showing that note reload (it is not the open one).
             NotificationCenter.default.post(name: .noteVaultFilesChanged, object: nil,
                                             userInfo: [NoteVaultChange.noteIdsKey: Set([sourceId])])

@@ -24,6 +24,12 @@ struct DeleteNoteRequest: Identifiable, Equatable {
 final class NoteListViewModel: ObservableObject {
     @Published var notes: [Note] = []
     @Published var searchText: String = ""
+    /// `notes`, or the search results for `searchText`; recomputed off the
+    /// main actor when either changes.
+    @Published private(set) var filteredNotes: [Note] = []
+    /// False until the first observation value arrives, so the view doesn't
+    /// flash its empty state.
+    @Published private(set) var hasLoaded = false
     @Published var errorMessage: String? = nil
     /// Set by `requestDelete(id:)`; the View observes it and shows a
     /// confirmation dialog. Cleared either by `confirmDelete(_:)` or by the
@@ -32,22 +38,69 @@ final class NoteListViewModel: ObservableObject {
 
     private let store: NoteStore
     private var cancellables = Set<AnyCancellable>()
-    var scope: NoteListScope = .all
+    private var allNotes: [Note] = []
+    private var searchTask: Task<Void, Never>?
+    var scope: NoteListScope = .all {
+        didSet { applyScope() }
+    }
 
     init(store: NoteStore = .shared, scope: NoteListScope = .all) {
         self.store = store
         self.scope = scope
         store.observeNotes()
-            .sink(receiveCompletion: { _ in },
-                  receiveValue: { [weak self] _ in self?.loadNotes() })
+            .sink(receiveCompletion: { [weak self] completion in
+                      if case .failure(let error) = completion {
+                          self?.errorMessage = error.localizedDescription
+                      }
+                  },
+                  receiveValue: { [weak self] all in
+                      self?.allNotes = all
+                      self?.hasLoaded = true
+                      self?.applyScope()
+                  })
             .store(in: &cancellables)
-        loadNotes()
+        // `$searchText` fires before the property changes, so the query is
+        // taken from the emitted value. Clearing the field shows all notes at
+        // once; typing is debounced.
+        let query = $searchText
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .removeDuplicates()
+        query.filter(\.isEmpty)
+            .sink { [weak self] q in self?.refreshFilter(query: q) }
+            .store(in: &cancellables)
+        query.filter { !$0.isEmpty }
+            .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
+            .sink { [weak self] q in self?.refreshFilter(query: q) }
+            .store(in: &cancellables)
     }
 
-    var filteredNotes: [Note] {
-        let q = searchText.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return notes }
-        return (try? store.searchNotes(query: q)) ?? notes
+    private func applyScope() {
+        notes = switch scope {
+        case .all:
+            allNotes
+        case .inbox:
+            allNotes.filter { $0.notebookId == nil && !$0.isDailyNote }
+        case .notebook(let id):
+            allNotes.filter { $0.notebookId == id }
+        }
+        refreshFilter(query: searchText.trimmingCharacters(in: .whitespaces))
+    }
+
+    private func refreshFilter(query: String) {
+        searchTask?.cancel()
+        guard !query.isEmpty else {
+            filteredNotes = notes
+            return
+        }
+        guard query == searchText.trimmingCharacters(in: .whitespaces) else { return }
+        let store = store
+        searchTask = Task { [weak self] in
+            let results = await Task.detached(priority: .userInitiated) {
+                try? store.searchNotes(query: query)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.filteredNotes = results ?? self.notes
+        }
     }
 
     func createNote() -> Note? {
@@ -93,17 +146,5 @@ final class NoteListViewModel: ObservableObject {
     func deleteNote(id: String) {
         do { try store.deleteNote(id: id) }
         catch { errorMessage = error.localizedDescription }
-    }
-
-    private func loadNotes() {
-        do {
-            notes = switch scope {
-            case .all:             try store.fetchAllNotes()
-            case .inbox:           try store.fetchInboxNotes()
-            case .notebook(let id): try store.fetchNotes(inNotebook: id)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 }

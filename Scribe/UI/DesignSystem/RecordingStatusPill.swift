@@ -9,10 +9,9 @@ import SwiftUI
 /// backgrounds or jittery micro-animations).
 struct RecordingStatusPill: View {
 
-    @ObservedObject var audioManager: AudioSessionManager
-    @ObservedObject var appState: AppState
+    @ObservedObject var status: RecordingStatus
+    @ObservedObject var clock: RecordingClock
 
-    @State private var pulsePhase: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
@@ -23,7 +22,7 @@ struct RecordingStatusPill: View {
                 .font(.system(.caption, weight: .semibold))
                 .foregroundStyle(textTint)
 
-            if appState.isTranscribing {
+            if status.isRecording {
                 Text("·")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -46,9 +45,8 @@ struct RecordingStatusPill: View {
         .accessibilityLabel(accessibilityLabel)
         // State changes ride the shared snappy spring, auto-gated to instant
         // under Reduce Motion via `.scribeAnimation`.
-        .scribeAnimation(.snappy, value: appState.isTranscribing)
-        .scribeAnimation(.snappy, value: audioManager.isPaused)
-        .onAppear { if !reduceMotion { startPulse() } }
+        .scribeAnimation(.snappy, value: status.isRecording)
+        .scribeAnimation(.snappy, value: status.isPaused)
     }
 
     // MARK: - Dot with live pulse
@@ -64,13 +62,9 @@ struct RecordingStatusPill: View {
                 .frame(width: 14, height: 14)
         } else {
             ZStack {
-                // Outer halo — only visible while recording + not paused + not reduced motion.
-                Circle()
-                    .fill(tint.opacity(0.35))
-                    .frame(width: 14, height: 14)
-                    .scaleEffect(showHalo ? (0.9 + pulsePhase * 0.5) : 0.6)
-                    .opacity(showHalo ? (0.6 - pulsePhase * 0.6) : 0)
-                    .animation(.easeOut(duration: 1.4), value: pulsePhase)
+                if showHalo {
+                    RecordingPulseHalo(tint: tint)
+                }
 
                 Circle()
                     .fill(tint)
@@ -81,51 +75,51 @@ struct RecordingStatusPill: View {
     }
 
     private var stateSymbol: String {
-        if audioManager.isPaused { return DesignTokens.Palette.pausedSymbol }
-        if appState.isTranscribing { return DesignTokens.Palette.recordingSymbol }
+        if status.isPaused { return DesignTokens.Palette.pausedSymbol }
+        if status.isRecording { return DesignTokens.Palette.recordingSymbol }
         return DesignTokens.Palette.idleSymbol
     }
 
     // MARK: - State derivations
 
     private var tint: Color {
-        if audioManager.isPaused { return DesignTokens.Palette.paused }
-        if appState.isTranscribing { return DesignTokens.Palette.recording }
+        if status.isPaused { return DesignTokens.Palette.paused }
+        if status.isRecording { return DesignTokens.Palette.recording }
         return .secondary
     }
 
     private var textTint: Color {
-        if audioManager.isPaused { return DesignTokens.Palette.paused }
-        if appState.isTranscribing { return DesignTokens.Palette.recording }
+        if status.isPaused { return DesignTokens.Palette.paused }
+        if status.isRecording { return DesignTokens.Palette.recording }
         return .secondary
     }
 
     private var background: Color {
-        if appState.isTranscribing {
+        if status.isRecording {
             return tint.opacity(0.12)
         }
         return DesignTokens.Palette.surfaceElevated.opacity(0.6)
     }
 
     private var border: Color {
-        if appState.isTranscribing {
+        if status.isRecording {
             return tint.opacity(0.25)
         }
         return DesignTokens.Palette.cardBorder
     }
 
     private var label: String {
-        if audioManager.isPaused { return "Paused" }
-        if appState.isTranscribing { return "Recording" }
+        if status.isPaused { return "Paused" }
+        if status.isRecording { return "Recording" }
         return "Idle"
     }
 
     private var showHalo: Bool {
-        appState.isTranscribing && !audioManager.isPaused && !reduceMotion
+        status.isRecording && !status.isPaused && !reduceMotion
     }
 
     private var formattedDuration: String {
-        let total = Int(audioManager.recordingDuration)
+        let total = Int(clock.elapsed)
         let hours = total / 3600
         let minutes = (total % 3600) / 60
         let seconds = total % 60
@@ -136,19 +130,8 @@ struct RecordingStatusPill: View {
     }
 
     private var accessibilityLabel: String {
-        if audioManager.isPaused { return "Recording paused, \(formattedDuration)" }
-        if appState.isTranscribing { return "Recording, \(formattedDuration)" }
+        if status.isPaused { return "Recording paused, \(formattedDuration)" }
+        if status.isRecording { return "Recording, \(formattedDuration)" }
         return "Idle"
-    }
-
-    // MARK: - Pulse driver
-
-    private func startPulse() {
-        // Drive a simple 0 → 1 → 0 cycle with SwiftUI animation. The effect is
-        // only rendered while `showHalo` is true, so when the user pauses or
-        // stops we stop paying for the layer work.
-        withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-            pulsePhase = 1
-        }
     }
 }

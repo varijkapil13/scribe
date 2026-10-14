@@ -111,17 +111,21 @@ final class VersionHistoryModel: ObservableObject {
                                         userInfo: [NoteVaultChange.noteIdsKey: ids])
         do {
             let body = try versionStore.loadBody(selected)
-            guard var note = try noteStore.fetchNote(id: noteId) else {
+            let restored = try noteStore.modifyNote(id: noteId, by: .other) { () throws -> Bool? in
+                guard var note = try noteStore.fetchNote(id: noteId) else { return nil }
+                guard note.body != body else { return false }
+                note.body = body
+                try noteStore.updateNote(note, tags: try noteStore.tags(for: noteId), versionReason: .restore)
+                return true
+            }
+            guard let restored else {
                 errorMessage = "This note no longer exists."
                 return
             }
-            guard note.body != body else {
+            guard restored else {
                 AppState.shared.notify("This version matches the current note")
                 return
             }
-            note.body = body
-            let tags = try noteStore.tags(for: noteId)
-            try noteStore.updateNote(note, tags: tags, versionReason: .restore)
             NotificationCenter.default.post(name: .scribeNoteChangedInApp, object: nil,
                                             userInfo: [NoteVaultChange.noteIdsKey: ids])
             AppState.shared.notify("Version restored")

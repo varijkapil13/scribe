@@ -8,6 +8,15 @@ struct NoteLiveRecordingPane: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
+        NoteLiveRecordingPaneContent(appState: appState, status: appState.recordingStatus)
+    }
+}
+
+private struct NoteLiveRecordingPaneContent: View {
+    let appState: AppState
+    @ObservedObject var status: RecordingStatus
+
+    var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             header
             transcriptScroll
@@ -22,21 +31,22 @@ struct NoteLiveRecordingPane: View {
     /// label, tint, glyph, and elapsed-time formatting, driven by the one
     /// `AudioSessionManager` clock.
     private var header: some View {
-        LiveFeedHeader(
-            status: .resolve(isTranscribing: appState.isTranscribing,
-                             isPaused: appState.audioManager.isPaused),
-            duration: appState.audioManager.recordingDuration
-        )
+        RecordingElapsed(clock: appState.recordingClock) { duration in
+            LiveFeedHeader(
+                status: .resolve(isTranscribing: status.isRecording,
+                                 isPaused: status.isPaused),
+                duration: duration
+            )
+        }
     }
 
     private var transcriptScroll: some View {
-        LiveTranscriptFeed(
-            segments: appState.overlaySegments,
-            partial: appState.speechEngine.partialResult,
+        LiveTranscriptFeedSource(
+            transcript: appState.liveTranscript,
+            speechEngine: appState.speechEngine,
             density: .compact,
-            isTranscribing: appState.isTranscribing,
-            isPaused: appState.audioManager.isPaused,
-            isDownloadingModel: appState.speechEngine.isDownloadingModel,
+            isTranscribing: status.isRecording,
+            isPaused: status.isPaused,
             // Show the listening/empty state so the pane matches the full live
             // view while we wait for the first words; the shared header above
             // already carries the session identity.

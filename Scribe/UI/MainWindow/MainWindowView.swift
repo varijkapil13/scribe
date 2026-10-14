@@ -9,7 +9,10 @@ import TipKit
 /// pane shows whichever is selected. Primary UI for the app.
 struct MainWindowView: View {
 
-    @EnvironmentObject var appState: AppState
+    // AppState is held without observing it, so error banners and session
+    // bookkeeping don't re-render the whole window.
+    let appState: AppState
+    @ObservedObject private var recording: RecordingStatus
     @EnvironmentObject var appDelegate: AppDelegate
     @StateObject private var projectsViewModel = ProjectsViewModel()
     @State private var searchText: String = ""
@@ -32,16 +35,26 @@ struct MainWindowView: View {
     /// Animatable, persisted expansion state for the notebook folder tree.
     @State private var notebookExpansion = NotebookExpansion()
     @State private var allNotes: [Note] = []
+    @State private var notebookTreeIndex = NotebookTreeIndex(notebooks: [], notes: [])
     @State private var taskCounts = SidebarTaskCounts()
     @State private var showUniversalSearch: Bool = false
     @State private var isCreatingTopNotebook: Bool = false
     @State private var topNotebookDraftName: String = ""
     @State private var detailNote: Note? = nil
+    /// The note id whose fetch has finished, so "not found" is shown only
+    /// after the lookup rather than while it is in flight.
+    @State private var detailNoteFetchedId: String? = nil
     @State private var detailSession: Session? = nil
+    @State private var detailSessionFetchedId: String? = nil
     @State private var tagReloadTask: Task<Void, Never>? = nil
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showOnboarding = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+
+    init(appState: AppState) {
+        self.appState = appState
+        _recording = ObservedObject(wrappedValue: appState.recordingStatus)
+    }
 
     /// Selection binding handed to the notebook-tree rows, which set it on tap.
     /// Drives the history coordinator; reads back `nav.current` so a tree note
@@ -64,9 +77,10 @@ struct MainWindowView: View {
                     // setting, so it's inert when not recording.
                     LiveControllerOverlay(
                         audioManager: appState.audioManager,
-                        appState: appState,
+                        status: recording,
+                        clock: appState.recordingClock,
                         onPauseToggle: {
-                            if appState.audioManager.isPaused {
+                            if recording.isPaused {
                                 Task { await appDelegate.resumeRecording() }
                             } else {
                                 appDelegate.pauseRecording()
@@ -84,13 +98,13 @@ struct MainWindowView: View {
                 appState: appState,
                 canGoBack: nav.canGoBack,
                 canGoForward: nav.canGoForward,
-                isRecording: appState.isTranscribing,
-                isPaused: appState.audioManager.isPaused,
+                isRecording: recording.isRecording,
+                isPaused: recording.isPaused,
                 onBack: { nav.goBack() },
                 onForward: { nav.goForward() },
                 onShowLive: { nav.navigate(to: .live) },
                 onTogglePause: {
-                    if appState.audioManager.isPaused {
+                    if recording.isPaused {
                         Task { await appDelegate.resumeRecording() }
                     } else {
                         appDelegate.pauseRecording()
@@ -107,14 +121,14 @@ struct MainWindowView: View {
         .modifier(MainWindowRestorationModifier(
             nav: nav,
             columnVisibility: $columnVisibility,
-            isRecording: appState.isTranscribing
+            isRecording: recording.isRecording
         ))
         .onAppear {
             projectsViewModel.start()
             reloadTags()
             // The coordinator defaults to .today; only the active-recording
             // case overrides the initial destination (no history entry).
-            if appState.isTranscribing {
+            if recording.isRecording {
                 nav.replaceCurrent(.live)
             }
             appState.currentSelection = nav.current
@@ -132,9 +146,13 @@ struct MainWindowView: View {
         }
         .onReceive(NoteStore.shared.observeNotes().replaceError(with: [])) { notes in
             allNotes = notes
+            rebuildNotebookTreeIndex()
             scheduleTagReload()
         }
-        .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) { notebooks = $0 }
+        .onReceive(NoteStore.shared.observeNotebooks().replaceError(with: [])) {
+            notebooks = $0
+            rebuildNotebookTreeIndex()
+        }
         .onReceive(TaskStore.shared.observeTasks(filter: .all).replaceError(with: [])) { tasks in
             taskCounts = SidebarTaskCounts(tasks: tasks)
         }
@@ -214,7 +232,7 @@ struct MainWindowView: View {
                 nav.replaceCurrent(RecordingNavigationPolicy.autoCreateDestination(noteId: id))
             }
         }
-        .onChange(of: appState.isTranscribing) { _, isRecording in
+        .onChange(of: recording.isRecording) { _, isRecording in
             // Session started → flip to the inline live view via the tested
             // RecordingNavigationPolicy: it returns .live unless the user is
             // already on a Note (whose inline pane handles streaming) or the
@@ -222,9 +240,7 @@ struct MainWindowView: View {
             if let dest = RecordingNavigationPolicy.destination(
                 currentSelection: nav.current, isRecording: isRecording
             ) {
-                withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
-                    nav.navigate(to: dest)
-                }
+                nav.navigate(to: dest)
             }
             // Session stopped → if the user was watching the live view (which
             // goes blank on stop), take them to the finished transcript.
@@ -233,13 +249,20 @@ struct MainWindowView: View {
                 currentSelection: nav.current,
                 finishedSessionId: appState.lastFinishedSessionId
                ) {
-                withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
-                    nav.navigate(to: dest)
-                }
+                nav.navigate(to: dest)
             }
         }
         .onChange(of: nav.current) { _, newValue in
+            Perf.event("navigation")
             appState.currentSelection = newValue
+            // A cached detail is only reused for a note-to-note (or
+            // recording-to-recording) switch; otherwise it would be stale.
+            if case .note(let id) = newValue {
+                loadDetailNote(id: id)
+            } else {
+                detailNote = nil; detailNoteFetchedId = nil
+            }
+            if case .session = newValue {} else { detailSession = nil; detailSessionFetchedId = nil }
         }
     }
 
@@ -252,13 +275,13 @@ struct MainWindowView: View {
 
                 // MARK: Capture surface
                 if surface == .capture {
-                if appState.isTranscribing {
+                if recording.isRecording {
                     Section {
                         SidebarRow(isSelected: nav.current == .live,
                                    action: { nav.navigate(to: .live) }) {
                             LiveSidebarRow(
-                                isPaused: appState.audioManager.isPaused,
-                                duration: appState.audioManager.recordingDuration
+                                isPaused: recording.isPaused,
+                                clock: appState.recordingClock
                             )
                         }
                     } header: {
@@ -547,6 +570,15 @@ struct MainWindowView: View {
         .help(help)
     }
 
+    // Synchronous, during the navigation update: an async fetch renders an
+    // empty pane for a frame first.
+    private func loadDetailNote(id: String) {
+        detailNote = Perf.measure("detail note fetch") {
+            try? NoteStore.shared.fetchNote(id: id)
+        }
+        detailNoteFetchedId = id
+    }
+
     private func reloadTags() {
         let noteTags = (try? NoteStore.shared.allNoteTags()) ?? []
         let taskTags = (try? TaskStore.shared.allTags()) ?? []
@@ -572,11 +604,12 @@ struct MainWindowView: View {
         }
     }
 
-    /// Precomputed notebook-tree lookups, rebuilt only when the notebooks/notes
-    /// arrays change. Lets the tree resolve children + notes per node in O(1)
-    /// instead of re-filtering the full arrays at every row.
-    private var notebookTreeIndex: NotebookTreeIndex {
-        NotebookTreeIndex(notebooks: notebooks, notes: allNotes)
+    /// Rebuilds the notebook-tree lookups; called only when the notebooks or
+    /// notes arrays change.
+    private func rebuildNotebookTreeIndex() {
+        notebookTreeIndex = Perf.measure("notebook tree index") {
+            NotebookTreeIndex(notebooks: notebooks, notes: allNotes)
+        }
     }
 
     /// A standard sidebar destination row (icon + title + optional count badge),
@@ -659,7 +692,7 @@ struct MainWindowView: View {
     private var detail: some View {
         switch nav.current {
         case .live:
-            LiveSessionView()
+            LiveSessionView(status: recording)
         case .today:
             TodayView(onNavigate: { nav.navigate(to: .note($0)) })
         case .recordings:
@@ -676,21 +709,25 @@ struct MainWindowView: View {
             })
         case .note(let id):
             Group {
-                if let note = detailNote, note.id == id {
+                // While the new note loads, keep the previous one on screen
+                // (same view identity) instead of flashing "not found".
+                if let note = detailNote, note.id == id || detailNoteFetchedId != id {
                     NoteDetailView(note: note, onNavigate: { noteId in
                         nav.navigate(to: .note(noteId))
                     })
-                    .id(id)
-                } else {
+                    .id(note.id)
+                } else if detailNoteFetchedId == id {
                     ContentUnavailableView(
                         "Note not found",
                         systemImage: "note.text",
                         description: Text("This note may have been deleted.")
                     )
+                } else {
+                    DesignTokens.Palette.surface
                 }
             }
-            .task(id: id) {
-                detailNote = try? NoteStore.shared.fetchNote(id: id)
+            .onAppear {
+                if detailNoteFetchedId != id { loadDetailNote(id: id) }
             }
         case .task(let id):
             // Command-bar deep-link to a single task: open the All list and
@@ -711,19 +748,24 @@ struct MainWindowView: View {
             PeopleView(onNavigate: { nav.navigate(to: $0) })
         case .session(let id):
             Group {
-                if let session = detailSession, session.id == id {
+                if let session = detailSession, session.id == id || detailSessionFetchedId != id {
                     TranscriptDetailView(session: session)
-                        .id(id)
-                } else {
+                        .id(session.id)
+                } else if detailSessionFetchedId == id {
                     ContentUnavailableView(
                         "Recording not found",
                         systemImage: "waveform",
                         description: Text("This recording may have been deleted.")
                     )
+                } else {
+                    DesignTokens.Palette.surface
                 }
             }
             .task(id: id) {
-                detailSession = try? TranscriptStore.shared.fetchSession(id: id)
+                detailSession = Perf.measure("detail session fetch") {
+                    try? TranscriptStore.shared.fetchSession(id: id)
+                }
+                detailSessionFetchedId = id
             }
         }
     }
@@ -737,19 +779,16 @@ struct MainWindowView: View {
 /// browsed off to.
 private struct LiveSidebarRow: View {
     let isPaused: Bool
-    let duration: TimeInterval
+    let clock: RecordingClock
 
-    @State private var pulse: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             ZStack {
-                Circle()
-                    .fill(tint.opacity(0.35))
-                    .frame(width: 14, height: 14)
-                    .scaleEffect(showHalo ? (0.9 + pulse * 0.5) : 0.6)
-                    .opacity(showHalo ? (0.6 - pulse * 0.6) : 0)
+                if showHalo {
+                    RecordingPulseHalo(tint: tint)
+                }
                 Circle()
                     .fill(tint)
                     .frame(width: 8, height: 8)
@@ -760,18 +799,14 @@ private struct LiveSidebarRow: View {
                 Text(isPaused ? "Paused" : "Recording")
                     .font(.system(.body, weight: .semibold))
                     .foregroundStyle(.primary)
-                Text(formatted(duration))
-                    .font(.system(.caption, design: .monospaced).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                RecordingElapsed(clock: clock) { duration in
+                    Text(formatted(duration))
+                        .font(.system(.caption, design: .monospaced).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-                pulse = 1
-            }
-        }
     }
 
     private var tint: Color {

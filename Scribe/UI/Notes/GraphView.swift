@@ -26,11 +26,11 @@ struct GraphView: View {
             ToolbarItem {
                 Button("Reset") {
                     panOffset = .zero; dragStart = .zero; zoomScale = 1; baseZoom = 1
-                    try? vm.load()
+                    Task { try? await vm.loadInBackground() }
                 }
             }
         }
-        .onAppear { try? vm.load() }
+        .task { try? await vm.loadInBackground() }
     }
 
     private var canvas: some View {
@@ -43,12 +43,14 @@ struct GraphView: View {
                     ).scaledBy(x: zoomScale, y: zoomScale)
 
                     // Draw edges
+                    let positions = Dictionary(vm.nodes.map { ($0.id, $0.position) },
+                                               uniquingKeysWith: { first, _ in first })
                     for edge in vm.edges {
-                        guard let src = vm.nodes.first(where: { $0.id == edge.sourceId }),
-                              let dst = vm.nodes.first(where: { $0.id == edge.targetId }) else { continue }
+                        guard let src = positions[edge.sourceId],
+                              let dst = positions[edge.targetId] else { continue }
                         var path = Path()
-                        path.move(to: src.position.applying(transform))
-                        path.addLine(to: dst.position.applying(transform))
+                        path.move(to: src.applying(transform))
+                        path.addLine(to: dst.applying(transform))
                         ctx.stroke(path, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
                     }
 

@@ -56,14 +56,18 @@ final class NoteVersionHistoryModel {
         do {
             guard let versionStore = store.versionStore else { return false }
             let restored = try versionStore.loadBody(version)
-            guard var note = try store.fetchNote(id: noteId) else {
+            let outcome = try NoteWriteQueue.run { () throws -> Bool? in
+                guard var note = try store.fetchNote(id: noteId) else { return nil }
+                guard note.body != restored else { return false }
+                note.body = restored
+                try store.updateNote(note, tags: try store.tags(for: noteId), versionReason: .restore)
+                return true
+            }
+            guard let outcome else {
                 errorMessage = "This note no longer exists."
                 return false
             }
-            guard note.body != restored else { return false }
-            note.body = restored
-            let tags = try store.tags(for: noteId)
-            try store.updateNote(note, tags: tags, versionReason: .restore)
+            guard outcome else { return false }
             reload()
             return true
         } catch {

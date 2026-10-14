@@ -354,4 +354,50 @@ final class NoteDetailViewModelTests: XCTestCase {
         XCTAssertTrue(bodies.contains { $0.contains("edited in the note window") },
                       "The other window's save is kept as a conflict copy, not overwritten")
     }
+
+    func testTwoEditorsSavingBeforeThePeerNoticeArrivesKeepBothVersions() async throws {
+        useDiskBackedStore()
+        let root = try XCTUnwrap(tempRoot)
+        let note = try notes.createNote(title: "Shared", body: "original")
+        let main = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+        let window = makeVM(try XCTUnwrap(notes.fetchNote(id: note.id)))
+
+        window.note.body = "edited in the note window"
+        window.markDirty()
+        main.note.body = "edited in the main window"
+        main.markDirty()
+        window.saveInBackground()
+        main.save()
+        try await drainMainQueue()
+
+        XCTAssertEqual(try XCTUnwrap(notes.fetchNote(id: note.id)).body, "edited in the main window")
+        let bodies = markdownFiles(under: root).compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertTrue(bodies.contains { $0.contains("edited in the note window") },
+                      "The other editor's queued save is kept as a conflict copy, not overwritten")
+    }
+
+    func testQuickCaptureRacingABackgroundSaveLosesNeitherEdit() async throws {
+        useDiskBackedStore()
+        let root = try XCTUnwrap(tempRoot)
+        let now = Date()
+        var daily = try notes.dailyNote(for: now)
+        daily.body = "plan"
+        try notes.updateNote(daily, tags: [])
+        let vm = makeVM(try XCTUnwrap(notes.fetchNote(id: daily.id)))
+
+        let release = DispatchSemaphore(value: 0)
+        NoteWriteQueue.async { release.wait() }
+        vm.note.body = "plan\n\ntyped in the editor"
+        vm.markDirty()
+        vm.saveInBackground()
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(50)) { release.signal() }
+        _ = try QuickCaptureSaver(noteStore: notes, taskStore: tasks)
+            .save(.appendToDaily(text: "captured thought"), now: now, timeZone: .current)
+        try await drainMainQueue()
+
+        let bodies = markdownFiles(under: root).compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertTrue(bodies.contains { $0.contains("typed in the editor") }, "The typed text survives")
+        XCTAssertTrue(bodies.contains { $0.contains("captured thought") }, "The capture survives")
+    }
 }

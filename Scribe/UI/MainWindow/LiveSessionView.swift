@@ -7,7 +7,7 @@ import SwiftUI
 /// Structure (top-to-bottom):
 /// 1. **Hero** — eyebrow + big monospaced timer + status, flanked by transport
 ///    and audio-source controls.
-/// 2. **Transcript feed** — streaming segments (`appState.overlaySegments`)
+/// 2. **Transcript feed** — streaming segments (`appState.liveTranscript`)
 ///    plus the in-progress partial, auto-scrolling to the newest line.
 ///
 /// Visual language matches `TranscriptDetailView`: eyebrow → big display,
@@ -16,6 +16,7 @@ struct LiveSessionView: View {
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var appDelegate: AppDelegate
+    @ObservedObject var status: RecordingStatus
 
     @AppStorage("captureSystemAudio") private var captureSystemAudio: Bool = true
     @AppStorage("selectedMicrophoneID") private var selectedMicrophoneID: String = ""
@@ -31,6 +32,8 @@ struct LiveSessionView: View {
     /// True while the copilot's "Ask now" field has focus: the bare-Space
     /// pause shortcut is lifted so typing a question can't pause recording.
     @FocusState private var copilotTextFocused: Bool
+
+    @State private var engineLanguage: String?
 
     private enum RecordingFeedback: Equatable {
         case none, started, stopped, paused, resumed
@@ -52,7 +55,9 @@ struct LiveSessionView: View {
 
             transcriptFeed
 
-            LiveCaptionTranslationBar(segments: appState.overlaySegments)
+            LiveTranscriptReader(transcript: appState.liveTranscript) { segments in
+                LiveCaptionTranslationBar(segments: segments)
+            }
         }
         .background(DesignTokens.Palette.surface)
         // Transport shortcuts (Space = pause/resume, ⌘. = stop) live on the
@@ -71,12 +76,13 @@ struct LiveSessionView: View {
             case .none:     return nil
             }
         }
-        .onChange(of: appState.isTranscribing) { _, now in
+        .onChange(of: status.isRecording) { _, now in
             feedbackTrigger = now ? .started : .stopped
         }
-        .onChange(of: appState.audioManager.isPaused) { _, paused in
+        .onChange(of: status.isPaused) { _, paused in
             feedbackTrigger = paused ? .paused : .resumed
         }
+        .onReceive(appState.speechEngine.$currentLanguage.removeDuplicates()) { engineLanguage = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Live recording")
     }
@@ -84,7 +90,7 @@ struct LiveSessionView: View {
     // MARK: - Transport actions
 
     private func togglePause() {
-        if appState.audioManager.isPaused {
+        if status.isPaused {
             guard !isResuming else { return }
             isResuming = true
             Task {
@@ -114,12 +120,15 @@ struct LiveSessionView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.lg) {
-                Text(formattedDuration)
-                    .font(.system(size: 52, weight: .semibold, design: .monospaced))
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-                    .contentTransition(.numericText())
-                    .accessibilityLabel("Elapsed time \(formattedDuration)")
+                RecordingElapsed(clock: appState.recordingClock) { duration in
+                    let formatted = LiveFeedStatus.formattedElapsed(duration)
+                    Text(formatted)
+                        .font(.system(size: 52, weight: .semibold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                        .contentTransition(.numericText())
+                        .accessibilityLabel("Elapsed time \(formatted)")
+                }
 
                 Spacer(minLength: DesignTokens.Spacing.md)
 
@@ -137,14 +146,15 @@ struct LiveSessionView: View {
     /// system audio is being captured.
     @ViewBuilder
     private var levelMeters: some View {
-        if appState.isTranscribing && !appState.audioManager.isPaused {
+        if status.isRecording && !status.isPaused {
             HStack(spacing: DesignTokens.Spacing.lg) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Image(systemName: "mic.fill")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(DesignTokens.Palette.speakerYou)
                         .accessibilityHidden(true)
-                    LevelMeterView(level: appState.audioManager.inputLevel,
+                    LiveLevelMeter(audioManager: appState.audioManager,
+                                   source: .input,
                                    tint: DesignTokens.Palette.speakerYou,
                                    sourceLabel: "Your microphone")
                 }
@@ -155,7 +165,8 @@ struct LiveSessionView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(DesignTokens.Palette.speakerRemote)
                             .accessibilityHidden(true)
-                        LevelMeterView(level: appState.audioManager.systemLevel,
+                        LiveLevelMeter(audioManager: appState.audioManager,
+                                       source: .system,
                                        tint: DesignTokens.Palette.speakerRemote,
                                        sourceLabel: "Remote audio")
                     }
@@ -169,14 +180,14 @@ struct LiveSessionView: View {
 
     /// Shared live-session state, so the hero's eyebrow + tint classify the
     /// session identically to the in-note pane and the floating controller.
-    private var status: LiveFeedStatus {
-        .resolve(isTranscribing: appState.isTranscribing,
-                 isPaused: appState.audioManager.isPaused)
+    private var feedStatus: LiveFeedStatus {
+        .resolve(isTranscribing: status.isRecording,
+                 isPaused: status.isPaused)
     }
 
-    private var eyebrow: String { status.eyebrow }
+    private var eyebrow: String { feedStatus.eyebrow }
 
-    private var eyebrowTint: Color { status.tint }
+    private var eyebrowTint: Color { feedStatus.tint }
 
     // MARK: - Transport
 
@@ -185,15 +196,15 @@ struct LiveSessionView: View {
             Button {
                 togglePause()
             } label: {
-                Label(appState.audioManager.isPaused ? "Resume" : "Pause",
-                      systemImage: appState.audioManager.isPaused ? "play.fill" : "pause.fill")
+                Label(status.isPaused ? "Resume" : "Pause",
+                      systemImage: status.isPaused ? "play.fill" : "pause.fill")
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
             .keyboardShortcut(copilotTextFocused ? nil : KeyboardShortcut(.space, modifiers: []))
-            .disabled(!appState.isTranscribing || isResuming)
-            .accessibilityLabel(appState.audioManager.isPaused ? "Resume recording" : "Pause recording")
+            .disabled(!status.isRecording || isResuming)
+            .accessibilityLabel(status.isPaused ? "Resume recording" : "Pause recording")
             .accessibilityHint("Space")
 
             Button {
@@ -206,7 +217,7 @@ struct LiveSessionView: View {
             .controlSize(.large)
             .tint(DesignTokens.Palette.recording)
             .keyboardShortcut(".", modifiers: .command)
-            .disabled(!appState.isTranscribing)
+            .disabled(!status.isRecording)
             .accessibilityLabel("Stop recording")
             .accessibilityHint("Command period")
         }
@@ -350,22 +361,17 @@ struct LiveSessionView: View {
     // MARK: - Transcript feed
 
     private var transcriptFeed: some View {
-        LiveTranscriptFeed(
-            segments: appState.overlaySegments,
-            partial: appState.speechEngine.partialResult,
+        LiveTranscriptFeedSource(
+            transcript: appState.liveTranscript,
+            speechEngine: appState.speechEngine,
             density: .comfortable,
-            isTranscribing: appState.isTranscribing,
-            isPaused: appState.audioManager.isPaused,
-            isDownloadingModel: appState.speechEngine.isDownloadingModel,
+            isTranscribing: status.isRecording,
+            isPaused: status.isPaused,
             showsListeningState: true
         )
     }
 
     // MARK: - Helpers
-
-    private var formattedDuration: String {
-        LiveFeedStatus.formattedElapsed(appState.audioManager.recordingDuration)
-    }
 
     private var currentMicDisplayName: String {
         if selectedMicrophoneID == "auto" { return "Automatic" }
@@ -376,7 +382,7 @@ struct LiveSessionView: View {
     }
 
     private var languageDisplay: String {
-        if let lang = appState.speechEngine.currentLanguage, !lang.isEmpty {
+        if let lang = engineLanguage, !lang.isEmpty {
             return LanguageOptions.shortLabel(for: lang)
         }
         return LanguageOptions.shortLabel(for: selectedLanguage)

@@ -153,13 +153,14 @@ final class TaskListViewModel: ObservableObject {
             headingsCancellable = nil
             headings = []
         }
-        cancellable = store.observeTasks(filter: filter)
+        cancellable = store.observeTaskList(filter: filter)
             .sink(
                 receiveCompletion: { _ in },
-                receiveValue: { [weak self] tasks in
+                receiveValue: { [weak self] snapshot in
                     guard let self else { return }
-                    self.latestTasks = tasks
-                    self.taskTags = (try? self.store.fetchTagsForTasks(tasks.map(\.id))) ?? [:]
+                    self.latestTasks = snapshot.tasks
+                    self.taskTags = snapshot.tags
+                    self.subtaskProgress = snapshot.subtaskProgress
                     self.regroup()
                 }
             )
@@ -186,7 +187,6 @@ final class TaskListViewModel: ObservableObject {
         }
         let bucketed = Self.bucket(tasks: effective, headings: headings, calendar: .current, now: Date())
         groups = bucketed.map { (bucket: $0.bucket, tasks: sorted($0.tasks)) }
-        reloadSubtaskProgress()
     }
 
     /// Re-sorts a bucket's tasks by the active `sortMode`, keeping pinned
@@ -226,13 +226,6 @@ final class TaskListViewModel: ObservableObject {
         case .low:    return 2
         case nil:     return 3
         }
-    }
-
-    /// Batch-loads the "n/m" chip progress for the fetched task set (covers
-    /// both grouped + search rows). Refreshes on each task change / filter
-    /// switch — the inspector shows live checklist state regardless.
-    private func reloadSubtaskProgress() {
-        subtaskProgress = (try? store.subtaskProgress(for: latestTasks.map(\.id))) ?? [:]
     }
 
     func stop() {

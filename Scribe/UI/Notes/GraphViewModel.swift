@@ -38,12 +38,29 @@ final class GraphViewModel: ObservableObject {
     }
 
     func load() throws {
-        let notes = try noteStore.fetchAllNotes()
-        guard !notes.isEmpty else {
+        apply(try Self.fetchGraph(noteStore))
+    }
+
+    /// `load()` with the fetch off the main actor.
+    func loadInBackground() async throws {
+        let store = noteStore
+        apply(try await Task.detached(priority: .userInitiated) { try Self.fetchGraph(store) }.value)
+    }
+
+    private nonisolated static func fetchGraph(_ store: NoteStore) throws -> (titles: [NoteTitle], links: [GraphEdge]) {
+        try Perf.measure("GraphViewModel.fetchGraph") {
+            let titles = try store.fetchNoteTitles()
+            let links = try store.fetchAllLinks().map { GraphEdge(sourceId: $0.sourceNoteId, targetId: $0.targetNoteId) }
+            return (titles, links)
+        }
+    }
+
+    private func apply(_ graph: (titles: [NoteTitle], links: [GraphEdge])) {
+        guard !graph.titles.isEmpty else {
             nodes = []; edges = []; isSettled = true; return
         }
 
-        nodes = notes.map { note in
+        nodes = graph.titles.map { note in
             GraphNode(
                 id: note.id,
                 label: note.title.isEmpty ? "(Untitled)" : String(note.title.prefix(20)),
@@ -54,9 +71,7 @@ final class GraphViewModel: ObservableObject {
                 )
             )
         }
-
-        edges = try noteStore.fetchAllLinks().map { GraphEdge(sourceId: $0.sourceNoteId,
-                                                              targetId: $0.targetNoteId) }
+        edges = graph.links
         isSettled = nodes.count <= 1
     }
 

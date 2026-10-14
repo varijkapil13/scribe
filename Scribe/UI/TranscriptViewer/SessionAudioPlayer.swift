@@ -14,12 +14,33 @@ import SwiftUI
 /// is before its first sample. Sessions without `timing.json` play both files
 /// from 0, as before.
 @MainActor
+final class PlaybackClock: ObservableObject {
+    @Published fileprivate(set) var time: TimeInterval = 0
+}
+
+@MainActor
 final class SessionAudioPlayer: ObservableObject {
 
     @Published private(set) var hasAudio = false
-    @Published private(set) var isPlaying = false
+    @Published private(set) var isPlaying = false {
+        didSet { refreshCurrentSegment() }
+    }
+    /// Segment under the playhead while playing. Changes only when the
+    /// segment does, so observers don't re-render on every tick.
+    @Published private(set) var currentSegmentId: Int64?
+    /// Ticking playhead; observe it from leaf views only.
+    let clock = PlaybackClock()
+    var segments: [Segment] = [] {
+        didSet { refreshCurrentSegment() }
+    }
     /// Current position in seconds.
-    @Published private(set) var currentTime: TimeInterval = 0
+    private(set) var currentTime: TimeInterval {
+        get { clock.time }
+        set {
+            clock.time = newValue
+            refreshCurrentSegment()
+        }
+    }
     /// Length of the session audio (end of the latest-ending track), in seconds.
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var rate: Float = 1.0
@@ -43,6 +64,11 @@ final class SessionAudioPlayer: ObservableObject {
 
     /// Current position in milliseconds (segment time base).
     var currentTimeMs: Int { Int(currentTime * 1000) }
+
+    private func refreshCurrentSegment() {
+        let id = isPlaying ? PlaybackTimeline.currentSegmentId(at: currentTimeMs, in: segments) : nil
+        if id != currentSegmentId { currentSegmentId = id }
+    }
 
     // MARK: - Loading
 
@@ -258,6 +284,7 @@ final class SessionAudioPlayer: ObservableObject {
 /// audio: play/pause, scrubber with elapsed / total time, and a speed button.
 struct SessionAudioPlayerBar: View {
     @ObservedObject var player: SessionAudioPlayer
+    @ObservedObject private var clock: PlaybackClock
 
     /// Scrubber position while the user drags (nil when not dragging), so the
     /// periodic progress updates don't fight the drag.
@@ -265,6 +292,11 @@ struct SessionAudioPlayerBar: View {
 
     /// Bookmarked moments drawn as ticks on the timeline (meeting copilot).
     @Environment(\.playbackBookmarkOffsets) private var bookmarkOffsets
+
+    init(player: SessionAudioPlayer) {
+        self.player = player
+        self.clock = player.clock
+    }
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.md) {
@@ -276,14 +308,14 @@ struct SessionAudioPlayerBar: View {
             .buttonStyle(.borderless)
             .accessibilityLabel(player.isPlaying ? "Pause recording" : "Play recording")
 
-            Text(PlaybackTimeline.format(scrubPosition ?? player.currentTime))
+            Text(PlaybackTimeline.format(scrubPosition ?? clock.time))
                 .font(DesignTokens.Typography.timestamp)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
 
             Slider(
                 value: Binding(
-                    get: { scrubPosition ?? player.currentTime },
+                    get: { scrubPosition ?? clock.time },
                     set: { scrubPosition = $0 }
                 ),
                 in: 0...max(player.duration, 0.1),

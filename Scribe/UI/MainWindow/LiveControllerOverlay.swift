@@ -5,7 +5,7 @@ import SwiftUI
 /// chevron, and a non-color state glyph.
 ///
 /// It is fully self-contained — the spine places it as a `MainWindowView`
-/// `.overlay`, passing the shared `audioManager`/`appState` plus closures for
+/// `.overlay`, passing the shared `audioManager` and recording status/clock plus closures for
 /// pause/stop/expand. (See `integrationHooksForSpine`.)
 ///
 /// Auto-hide behavior (the IINA discipline):
@@ -18,8 +18,11 @@ import SwiftUI
 ///   (floating bottom-trailing / docked bottom-center).
 struct LiveControllerOverlay: View {
 
-    @ObservedObject var audioManager: AudioSessionManager
-    @ObservedObject var appState: AppState
+    /// Not observed: its levels publish at ~13 Hz. Only `LiveLevelMeter` and
+    /// the throttled activity subscription below read them.
+    let audioManager: AudioSessionManager
+    @ObservedObject var status: RecordingStatus
+    let clock: RecordingClock
 
     /// Toggle pause / resume.
     var onPauseToggle: () -> Void
@@ -61,7 +64,7 @@ struct LiveControllerOverlay: View {
     private var placement: Placement { Placement(rawValue: placementRaw) ?? .floating }
 
     /// The controller is only meaningful during a live session.
-    private var isActive: Bool { appState.isTranscribing }
+    private var isActive: Bool { status.isRecording }
 
     /// Whether motion/AT requirements force the controller to stay shown.
     private var pinnedVisible: Bool { reduceMotion || voiceOverEnabled }
@@ -90,10 +93,13 @@ struct LiveControllerOverlay: View {
         }
         // Re-show + reset the dwell whenever audio activity rises — speech onset
         // is the natural cue to bring the transport back.
-        .onChange(of: audioManager.inputLevel) { _, level in
-            if level > showLevelThreshold { bumpActivity() }
+        .onReceive(audioManager.$inputLevel) { level in
+            guard isActive, level > showLevelThreshold,
+                  !isVisible || Date().timeIntervalSince(lastActivityAt) > activityThrottle
+            else { return }
+            bumpActivity()
         }
-        .onChange(of: audioManager.isPaused) { _, _ in bumpActivity() }
+        .onChange(of: status.isPaused) { _, _ in bumpActivity() }
     }
 
     // MARK: - Capsule
@@ -102,13 +108,17 @@ struct LiveControllerOverlay: View {
         HStack(spacing: DesignTokens.Spacing.md) {
             stateGlyph
 
-            Text(formattedDuration)
-                .font(.system(.callout, design: .monospaced).monospacedDigit())
-                .foregroundStyle(.primary)
-                .contentTransition(.numericText())
-                .accessibilityLabel("Elapsed \(formattedDuration)")
+            RecordingElapsed(clock: clock) { duration in
+                let formatted = LiveFeedStatus.formattedElapsed(duration)
+                Text(formatted)
+                    .font(.system(.callout, design: .monospaced).monospacedDigit())
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .accessibilityLabel("Elapsed \(formatted)")
+            }
 
-            LevelMeterView(level: audioManager.inputLevel,
+            LiveLevelMeter(audioManager: audioManager,
+                           source: .input,
                            tint: accent,
                            barCount: 8,
                            sourceLabel: "Input")
@@ -135,31 +145,31 @@ struct LiveControllerOverlay: View {
 
     /// Shared live-session state, so the controller's glyph/tint classify the
     /// session identically to `LiveSessionView` and the in-note pane.
-    private var status: LiveFeedStatus {
-        .resolve(isTranscribing: appState.isTranscribing,
-                 isPaused: audioManager.isPaused)
+    private var feedStatus: LiveFeedStatus {
+        .resolve(isTranscribing: status.isRecording,
+                 isPaused: status.isPaused)
     }
 
     /// Non-color state glyph (record / pause) so meaning survives
     /// Differentiate Without Color and reads at a glance.
     private var stateGlyph: some View {
-        Image(systemName: status.symbol)
+        Image(systemName: feedStatus.symbol)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(status.tint)
-            .symbolEffect(.pulse, isActive: !audioManager.isPaused && !reduceMotion && !differentiateWithoutColor)
-            .accessibilityLabel(status.label)
+            .foregroundStyle(feedStatus.tint)
+            .symbolEffect(.pulse, isActive: !status.isPaused && !reduceMotion && !differentiateWithoutColor)
+            .accessibilityLabel(feedStatus.label)
     }
 
     private var pauseButton: some View {
         Button(action: { onPauseToggle(); bumpActivity() }) {
-            Image(systemName: audioManager.isPaused ? "play.fill" : "pause.fill")
+            Image(systemName: status.isPaused ? "play.fill" : "pause.fill")
                 .font(.system(size: 13, weight: .semibold))
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.plain)
         .focused($controlFocused)
         .keyboardShortcut(.space, modifiers: [])
-        .accessibilityLabel(audioManager.isPaused ? "Resume recording" : "Pause recording")
+        .accessibilityLabel(status.isPaused ? "Resume recording" : "Pause recording")
         .accessibilityHint("Space")
     }
 
@@ -192,6 +202,9 @@ struct LiveControllerOverlay: View {
     private let showLevelThreshold: Float = 0.12
     /// Minimum time the controller stays up after the last activity.
     private let minDwell: TimeInterval = 2.5
+    /// Speech keeps the level high for many ticks in a row; re-arming the
+    /// dwell more often than this only churns tasks.
+    private let activityThrottle: TimeInterval = 0.5
 
     private func bumpActivity() {
         lastActivityAt = Date()
@@ -226,11 +239,5 @@ struct LiveControllerOverlay: View {
         guard !reduceMotion else { return .opacity }
         return .move(edge: placement == .docked ? .bottom : .trailing)
             .combined(with: .opacity)
-    }
-
-    // MARK: - Helpers
-
-    private var formattedDuration: String {
-        LiveFeedStatus.formattedElapsed(audioManager.recordingDuration)
     }
 }

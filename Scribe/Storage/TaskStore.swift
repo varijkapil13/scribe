@@ -16,7 +16,7 @@ enum TaskStoreError: LocalizedError {
 /// High-level query interface for Scribe's task layer.
 ///
 /// Mirrors the design of `TranscriptStore`: a thin wrapper around a GRDB
-/// `DatabaseQueue` providing strongly-typed CRUD and a handful of
+/// `DatabaseWriter` providing strongly-typed CRUD and a handful of
 /// view-specific queries (Inbox / Today / Upcoming).
 final class TaskStore {
 
@@ -61,7 +61,7 @@ final class TaskStore {
 
     /// Internal (not private) so the taxonomy-sync extension
     /// (`TaskTaxonomySync.swift`) shares the queue.
-    var db: DatabaseQueue { dbManager.database }
+    var db: any DatabaseWriter { dbManager.database }
 
     // MARK: - Initializer
 
@@ -720,10 +720,44 @@ final class TaskStore {
     /// Combine publisher emitting tasks for the given filter whenever the
     /// underlying tables change.
     func observeTasks(filter: Filter) -> DatabasePublishers.Value<[TodoTask]> {
-        let observation = ValueObservation.tracking { database -> [TodoTask] in
-            try Self.fetchTasks(database, filter: filter)
+        let observation = ValueObservation.tracking(regions: Self.taskListRegions) { database -> [TodoTask] in
+            try Perf.measure("TaskStore.observeTasks") {
+                try Self.fetchTasks(database, filter: filter)
+            }
         }
         return observation.publisher(in: db, scheduling: .async(onQueue: .main))
+    }
+
+    /// Every table `fetchTasks` can read. Explicit because the fetch skips
+    /// tables for some inputs (a tag with no tasks), and a fixed region lets a
+    /// DatabasePool refetch on a reader after each commit.
+    private static var taskListRegions: [any DatabaseRegionConvertible] {
+        [Table("tasks"), Table("task_tags"), Table("projects")]
+    }
+
+    /// A filter's tasks plus their tags and subtask progress, fetched together
+    /// so list rows never query per emission on the main actor.
+    struct TaskListSnapshot {
+        var tasks: [TodoTask]
+        var tags: [String: [String]]
+        var subtaskProgress: [String: SubtaskProgress]
+    }
+
+    func observeTaskList(filter: Filter) -> AnyPublisher<TaskListSnapshot, Error> {
+        ValueObservation
+            .tracking(regions: Self.taskListRegions + [Table("task_subtasks")]) { database -> TaskListSnapshot in
+                try Perf.measure("TaskStore.observeTaskList") {
+                    let tasks = try Self.fetchTasks(database, filter: filter)
+                    let ids = tasks.map(\.id)
+                    return TaskListSnapshot(
+                        tasks: tasks,
+                        tags: try Self.tags(database, forTasks: ids),
+                        subtaskProgress: try Self.subtaskProgress(database, for: ids)
+                    )
+                }
+            }
+            .publisher(in: db, scheduling: .async(onQueue: .main))
+            .eraseToAnyPublisher()
     }
 
     /// Emits one task (nil once it's gone) whenever the `tasks` table changes,
@@ -740,17 +774,20 @@ final class TaskStore {
     /// absent from the result (treat a missing key as an empty array).
     func fetchTagsForTasks(_ ids: [String]) throws -> [String: [String]] {
         guard !ids.isEmpty else { return [:] }
-        return try db.read { database in
-            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
-            let rows = try Row.fetchAll(database,
-                sql: "SELECT taskId, tag FROM task_tags WHERE taskId IN (\(placeholders)) ORDER BY tag ASC",
-                arguments: StatementArguments(ids))
-            var out: [String: [String]] = [:]
-            for row in rows {
-                out[row["taskId"], default: []].append(row["tag"])
-            }
-            return out
+        return try db.read { try Self.tags($0, forTasks: ids) }
+    }
+
+    private static func tags(_ database: Database, forTasks ids: [String]) throws -> [String: [String]] {
+        guard !ids.isEmpty else { return [:] }
+        let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+        let rows = try Row.fetchAll(database,
+            sql: "SELECT taskId, tag FROM task_tags WHERE taskId IN (\(placeholders)) ORDER BY tag ASC",
+            arguments: StatementArguments(ids))
+        var out: [String: [String]] = [:]
+        for row in rows {
+            out[row["taskId"], default: []].append(row["tag"])
         }
+        return out
     }
 
     // MARK: - Helpers
@@ -1026,25 +1063,28 @@ final class TaskStore {
     /// tasks that actually have subtasks. Single grouped query (no N+1).
     func subtaskProgress(for ids: [String]) throws -> [String: SubtaskProgress] {
         guard !ids.isEmpty else { return [:] }
-        return try db.read { database in
-            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
-            let rows = try Row.fetchAll(database, sql: """
-                SELECT taskId,
-                       COUNT(*) AS total,
-                       SUM(CASE WHEN isCompleted THEN 1 ELSE 0 END) AS completed
-                FROM task_subtasks
-                WHERE taskId IN (\(placeholders))
-                GROUP BY taskId
-                """, arguments: StatementArguments(ids))
-            var out: [String: SubtaskProgress] = [:]
-            for row in rows {
-                let taskId: String = row["taskId"]
-                let total: Int = row["total"]
-                let completed: Int = row["completed"] ?? 0
-                out[taskId] = SubtaskProgress(completed: completed, total: total)
-            }
-            return out
+        return try db.read { try Self.subtaskProgress($0, for: ids) }
+    }
+
+    private static func subtaskProgress(_ database: Database, for ids: [String]) throws -> [String: SubtaskProgress] {
+        guard !ids.isEmpty else { return [:] }
+        let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+        let rows = try Row.fetchAll(database, sql: """
+            SELECT taskId,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN isCompleted THEN 1 ELSE 0 END) AS completed
+            FROM task_subtasks
+            WHERE taskId IN (\(placeholders))
+            GROUP BY taskId
+            """, arguments: StatementArguments(ids))
+        var out: [String: SubtaskProgress] = [:]
+        for row in rows {
+            let taskId: String = row["taskId"]
+            let total: Int = row["total"]
+            let completed: Int = row["completed"] ?? 0
+            out[taskId] = SubtaskProgress(completed: completed, total: total)
         }
+        return out
     }
 }
 

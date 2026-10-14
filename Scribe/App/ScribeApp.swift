@@ -11,14 +11,16 @@ import SwiftUI
 struct ScribeApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject var appState = AppState.shared
+    // Not observed: a publish here would re-evaluate every scene and command
+    // builder. Views that render AppState observe it themselves.
+    let appState = AppState.shared
     @AppStorage(MenuBarPreferences.showIconKey) private var showMenuBarIcon = true
 
     // MARK: - Scene
 
     var body: some Scene {
         Window("Scribe", id: "main") {
-            MainWindowView()
+            MainWindowView(appState: appState)
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
                 .onContinueUserActivity(SpotlightIndexer.activityType) { _ = SpotlightIndexer.handle($0) }
@@ -58,11 +60,11 @@ struct ScribeApp: App {
         // Menu-bar item: recording/dictation status and controls. While it's
         // shown, closing the main window keeps Scribe running.
         MenuBarExtra(isInserted: $showMenuBarIcon) {
-            MenuBarContent(audioManager: appState.audioManager)
+            MenuBarContent(status: appState.recordingStatus, clock: appState.recordingClock)
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
         } label: {
-            MenuBarLabel(appState: appState, audioManager: appState.audioManager)
+            MenuBarLabel(status: appState.recordingStatus)
         }
     }
 
@@ -89,19 +91,7 @@ struct ScribeApp: App {
         // Recording transport. Start/Stop stays shortcutless so it doesn't
         // double-bind the global ⇧⌘R registered via KeyboardShortcuts.
         CommandMenu("Recording") {
-            Button(appState.isTranscribing ? "Stop Recording" : "Start Recording") {
-                Task { await appDelegate.toggleRecording() }
-            }
-            if appState.isTranscribing {
-                Button(appState.audioManager.isPaused ? "Resume" : "Pause") {
-                    if appState.audioManager.isPaused {
-                        Task { await appDelegate.resumeRecording() }
-                    } else {
-                        appDelegate.pauseRecording()
-                    }
-                }
-                Button("Jump to Live") { go(.live) }
-            }
+            RecordingMenuItems(status: appState.recordingStatus, appDelegate: appDelegate)
         }
 
         // Go → the command bar + history + surface jumps.
@@ -132,5 +122,28 @@ struct ScribeApp: App {
 
     private func go(_ selection: MainSelection) {
         NotificationCenter.default.post(name: .scribeNavigate, object: selection)
+    }
+}
+
+private struct RecordingMenuItems: View {
+    @ObservedObject var status: RecordingStatus
+    let appDelegate: AppDelegate
+
+    var body: some View {
+        Button(status.isRecording ? "Stop Recording" : "Start Recording") {
+            Task { await appDelegate.toggleRecording() }
+        }
+        if status.isRecording {
+            Button(status.isPaused ? "Resume" : "Pause") {
+                if status.isPaused {
+                    Task { await appDelegate.resumeRecording() }
+                } else {
+                    appDelegate.pauseRecording()
+                }
+            }
+            Button("Jump to Live") {
+                NotificationCenter.default.post(name: .scribeNavigate, object: MainSelection.live)
+            }
+        }
     }
 }

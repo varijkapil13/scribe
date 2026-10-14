@@ -42,16 +42,19 @@ enum NoteAIEdit: Sendable, Equatable {
 @MainActor
 enum NoteAIEditWriter {
     static func apply(_ edit: NoteAIEdit, toNoteId noteId: String, noteStore: NoteStore = .shared) throws {
-        guard var note = try noteStore.fetchNote(id: noteId) else { return }
-        // Never write into a locked note's ciphertext.
-        guard !LockedNoteEnvelope.isLocked(note.body) else { return }
-        let updated = edit.apply(to: note.body)
-        if updated != note.body {
-            note.body = updated
-            let tags = try noteStore.tags(for: noteId)
-            // Always keep the pre-edit content in version history.
-            try noteStore.updateNote(note, tags: tags, versionReason: .aiEdit)
+        let applied = try NoteWriteQueue.run { () throws -> Bool in
+            guard var note = try noteStore.fetchNote(id: noteId) else { return false }
+            // Never write into a locked note's ciphertext.
+            guard !LockedNoteEnvelope.isLocked(note.body) else { return false }
+            let updated = edit.apply(to: note.body)
+            if updated != note.body {
+                note.body = updated
+                // Always keep the pre-edit content in version history.
+                try noteStore.updateNote(note, tags: try noteStore.tags(for: noteId), versionReason: .aiEdit)
+            }
+            return true
         }
+        guard applied else { return }
         NotificationCenter.default.post(
             name: .scribeNoteAIEditApplied,
             object: noteId,
