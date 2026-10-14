@@ -70,9 +70,9 @@ struct TaskPlannerView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 Text("Drag a task onto the grid to give it a time.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                sideSection(title: viewModel.calendar.isDateInToday(viewModel.day) ? "Today" : "This Day",
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                sideSection(title: viewModel.calendar.isDateInToday(viewModel.day) ? "Today" : "This day",
                             tasks: list.forDay,
                             empty: "Nothing else due")
                 sideSection(title: "Anytime", tasks: list.undated, empty: "No undated tasks")
@@ -80,28 +80,26 @@ struct TaskPlannerView: View {
             .padding(DesignTokens.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(DesignTokens.Palette.surface)
+        .background(DesignTokens.Palette.ground)
     }
 
     @ViewBuilder
     private func sideSection(title: String, tasks: [TodoTask], empty: String) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack {
+            HStack(spacing: DesignTokens.Spacing.sm) {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Spacer()
+                    .quietListSectionHeader()
                 Text("\(tasks.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(DesignTokens.QuietList.countFont)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                Spacer()
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
             if tasks.isEmpty {
                 Text(empty)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
             } else {
                 ForEach(tasks) { task in sideRow(task) }
             }
@@ -112,21 +110,26 @@ struct TaskPlannerView: View {
         HStack(spacing: DesignTokens.Spacing.xs) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .accessibilityHidden(true)
             Text(task.title)
-                .font(.system(size: 12))
+                .font(DesignTokens.QuietList.rowTitleFont)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(TaskDurationFormat.short(PlannerScheduling.durationMinutes(of: task)))
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, DesignTokens.Spacing.xs)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
+                .fill(DesignTokens.Palette.raised)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture { onOpen(task) }
@@ -160,8 +163,8 @@ struct TaskPlannerView: View {
         ScrollView(.horizontal) {
             HStack(spacing: DesignTokens.Spacing.xs) {
                 Text("All day")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                     .frame(width: Self.hourLabelWidth - 6, alignment: .trailing)
                 ForEach(viewModel.allDayEvents, id: \.self) { event in
                     Text(event.title.isEmpty ? "Event" : event.title)
@@ -169,7 +172,7 @@ struct TaskPlannerView: View {
                         .lineLimit(1)
                         .padding(.horizontal, DesignTokens.Spacing.sm)
                         .padding(.vertical, DesignTokens.Spacing.xxs)
-                        .background(Capsule().fill(DesignTokens.Palette.fill(.selected, contrast: contrast)))
+                        .background(Capsule().fill(DesignTokens.Palette.quietFill))
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -179,8 +182,8 @@ struct TaskPlannerView: View {
 
     private var calendarHint: some View {
         Text("Turn on Settings → Calendar to see your events beside your tasks.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.system(size: 12))
+            .foregroundStyle(DesignTokens.Palette.textTertiary)
             .padding(.horizontal, DesignTokens.Spacing.md)
             .padding(.vertical, DesignTokens.Spacing.xs)
             .frame(maxWidth: .infinity, alignment: .leading)

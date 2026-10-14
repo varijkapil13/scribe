@@ -20,7 +20,6 @@ struct TranscriptDetailView: View {
     @State private var showFollowUp = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @FocusState private var focusedTab: DetailTab?
 
@@ -55,13 +54,16 @@ struct TranscriptDetailView: View {
             headerSection
                 .padding(.horizontal, DesignTokens.Spacing.xl)
                 .padding(.top, DesignTokens.Spacing.xl)
-                .padding(.bottom, DesignTokens.Spacing.lg)
-
-            Divider()
+                .padding(.bottom, DesignTokens.Spacing.md)
 
             tabPicker
-                .padding(.horizontal, DesignTokens.Spacing.xl)
-                .padding(.vertical, DesignTokens.Spacing.md)
+                .padding(.horizontal, DesignTokens.Spacing.xl - DesignTokens.Spacing.sm)
+                .padding(.bottom, DesignTokens.Spacing.md)
+
+            Rectangle()
+                .fill(DesignTokens.Palette.hairline)
+                .frame(height: 1)
+                .padding(.bottom, DesignTokens.Spacing.md)
 
             if audioPlayer.hasAudio {
                 SessionAudioPlayerBar(player: audioPlayer)
@@ -87,10 +89,13 @@ struct TranscriptDetailView: View {
                     case .insights:    insightsSection
                     }
                 }
-                .padding(DesignTokens.Spacing.xl)
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, DesignTokens.Spacing.xl)
+                .padding(.vertical, DesignTokens.Spacing.lg)
             }
         }
         .frame(minWidth: 600, minHeight: 480)
+        .background(DesignTokens.Palette.ground)
         .sheet(isPresented: $showExportSheet) {
             ExportSheetView(session: session, segments: viewModel.segments)
         }
@@ -188,28 +193,22 @@ struct TranscriptDetailView: View {
                     .keyboardShortcut(.return, modifiers: [.command])
                 }
             } else {
-                Text("TRANSCRIPT")
-                    .eyebrowStyle()
-
-                // Muted breadcrumb so the user knows where they landed after a
-                // ⌘K / deep-link jump.
                 HStack(spacing: DesignTokens.Spacing.xs) {
                     Text("Recordings")
                     Image(systemName: "chevron.right")
-                        .imageScale(.small)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 9, weight: .semibold))
                     Text(session.title.isEmpty ? "Untitled Session" : session.title)
                         .lineLimit(1)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Location: Recordings, \(session.title.isEmpty ? "Untitled Session" : session.title)")
 
                 HStack(alignment: .firstTextBaseline) {
                     Text(session.title.isEmpty ? "Untitled Session" : session.title)
-                        .font(DesignTokens.Typography.title1)
-                        .foregroundStyle(.primary)
+                        .font(DesignTokens.Typography.display(size: 24))
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .lineLimit(2)
                         .textSelection(.enabled)
 
@@ -222,36 +221,31 @@ struct TranscriptDetailView: View {
                             .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                     .help("Rename session and edit tags")
                 }
 
-                HStack(spacing: DesignTokens.Spacing.md) {
-                    Label(formattedDate, systemImage: "calendar")
-                    Text("·").foregroundStyle(.tertiary)
-                    Label(viewModel.formattedDuration, systemImage: "waveform")
-                        .monospacedDigit()
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Text(formattedDate)
+                    Text("·")
+                    Text(viewModel.formattedDuration)
                     if let lang = session.language?.uppercased(), !lang.isEmpty, lang != "AUTO" {
-                        Text("·").foregroundStyle(.tertiary)
-                        Label(lang, systemImage: "globe")
+                        Text("·")
+                        Text(lang)
                     }
                     if !viewModel.segments.isEmpty {
-                        Text("·").foregroundStyle(.tertiary)
-                        Label("\(viewModel.segments.count) segments", systemImage: "text.alignleft")
-                            .monospacedDigit()
+                        Text("·")
+                        Text("\(viewModel.segments.count) segments")
+                    }
+                    if !session.tags.isEmpty {
+                        Text("·")
+                        Text(session.tags.map { "#\($0)" }.joined(separator: " "))
+                            .lineLimit(1)
                     }
                     MeetingOriginBadge(sessionId: session.id)
                 }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-                if !session.tags.isEmpty {
-                    HStack(spacing: DesignTokens.Spacing.xs) {
-                        ForEach(session.tags, id: \.self) { tag in
-                            TagChip(text: tag, tint: .secondary)
-                        }
-                    }
-                }
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
 
                 transcriptActionBar
             }
@@ -268,7 +262,8 @@ struct TranscriptDetailView: View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             if viewModel.isSelecting {
                 Text("\(viewModel.selectedSegmentIds.count) selected")
-                    .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                 Button {
                     viewModel.loadMoveTargets()
                     showMoveSheet = true
@@ -321,7 +316,11 @@ struct TranscriptDetailView: View {
                 .help("Export transcript to Markdown, plain text, or JSON")
             }
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderless)
+        .menuStyle(.borderlessButton)
+        .labelStyle(.titleAndIcon)
+        .font(.system(size: 12))
+        .foregroundStyle(DesignTokens.Palette.textSecondary)
         .controlSize(.small)
         .padding(.top, DesignTokens.Spacing.xs)
     }
@@ -339,19 +338,15 @@ struct TranscriptDetailView: View {
 
     // MARK: - Tab Picker
 
-    /// Editorial underlined tabs — feel closer to a magazine table-of-contents
-    /// than an iOS segmented control. The active tab's label is bolder and
-    /// backed by a thin moving underline that animates between positions.
     private var tabPicker: some View {
-        HStack(spacing: DesignTokens.Spacing.lg) {
+        HStack(spacing: DesignTokens.Spacing.xxs) {
             ForEach(DetailTab.allCases, id: \.self) { tab in
                 tabButton(for: tab)
             }
             Spacer()
         }
         // Left/Right arrows move between tabs when any tab owns keyboard focus,
-        // matching the VoiceOver tab-bar idiom. `selectedTab` follows focus so
-        // the underline + content track together.
+        // matching the VoiceOver tab-bar idiom.
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Transcript sections")
         .onKeyPress(.leftArrow) { moveTabFocus(by: -1) }
@@ -363,20 +358,12 @@ struct TranscriptDetailView: View {
         return Button {
             selectTab(tab)
         } label: {
-            VStack(spacing: 6) {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    Image(systemName: tab.systemImage)
-                        .font(.system(.caption, weight: .semibold))
-                    Text(tab.rawValue)
-                        .font(.system(.callout, weight: isSelected ? .semibold : .regular))
-                }
-                .foregroundStyle(isSelected ? Color.primary : .secondary)
-
-                Rectangle()
-                    .fill(isSelected ? Color.accentColor : .clear)
-                    .frame(height: 2)
-                    .clipShape(Capsule())
-            }
+            Text(tab.rawValue)
+                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                .foregroundStyle(isSelected ? DesignTokens.Palette.textPrimary : DesignTokens.Palette.textSecondary)
+                .padding(.horizontal, DesignTokens.Spacing.sm + 2)
+                .frame(height: 28)
+                .quietListRowBackground(selected: isSelected)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
@@ -389,7 +376,7 @@ struct TranscriptDetailView: View {
         .accessibilityAddTraits(isSelected ? [.isSelected, .isHeader] : .isHeader)
     }
 
-    /// Selects a tab, gating the underline animation on Reduce Motion, and
+    /// Selects a tab, gating the animation on Reduce Motion, and
     /// moves keyboard focus to it so arrow traversal continues from there.
     private func selectTab(_ tab: DetailTab) {
         if let animation = ReaderStyle.spring(reduceMotion: reduceMotion) {
@@ -423,7 +410,7 @@ struct TranscriptDetailView: View {
             )
             .frame(minHeight: 280)
         } else {
-            LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 let playingSegmentId = audioPlayer.currentSegmentId
                 ForEach(viewModel.segments) { segment in
                     SegmentView(
@@ -439,7 +426,6 @@ struct TranscriptDetailView: View {
                         onTimestampTap: playAction(for: segment),
                         speakerName: viewModel.speakerName(for: segment)
                     )
-                    .padding(.vertical, DesignTokens.Spacing.xs)
                 }
             }
         }
@@ -517,13 +503,14 @@ struct TranscriptDetailView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DesignTokens.Palette.overdue)
                     Text("Summary failed")
-                        .font(DesignTokens.Typography.section)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                 }
                 Text(error)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
                     .textSelection(.enabled)
                 Button("Try Again") {
                     Task { await viewModel.generateSummary() }
@@ -532,66 +519,43 @@ struct TranscriptDetailView: View {
                 .disabled(viewModel.segments.isEmpty)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accentCard(tint: .orange)
+            .padding(DesignTokens.Spacing.lg)
+            .quietListRaised()
         } else if let summary = viewModel.meetingSummary {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Text("Executive Summary")
-                        .font(DesignTokens.Typography.section)
+            VStack(alignment: .leading, spacing: DesignTokens.QuietList.sectionSpacing + DesignTokens.Spacing.xs) {
+                QuietSection(title: "Executive summary") {
                     Text(summary.summary)
-                        .font(DesignTokens.Typography.body)
-                        .foregroundStyle(.primary)
+                        .font(DesignTokens.Typography.reading)
+                        .lineSpacing(5)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .accentCard(tint: .accentColor)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Executive summary. \(summary.summary)")
 
                 if !summary.keyDecisions.isEmpty {
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                        Text("Key Decisions")
-                            .font(DesignTokens.Typography.section)
+                    QuietSection(title: "Key decisions") {
                         ForEach(summary.keyDecisions, id: \.self) { decision in
-                            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                                    .padding(.top, 3)
-                                Text(decision)
-                                    .textSelection(.enabled)
-                            }
+                            QuietBulletRow(systemImage: "checkmark", text: decision)
                         }
                     }
-                    .accentCard(tint: .green)
                 }
 
                 if !summary.keyTopics.isEmpty {
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                        Text("Topics Discussed")
-                            .font(DesignTokens.Typography.section)
+                    QuietSection(title: "Topics discussed") {
                         FlowLayoutView(items: summary.keyTopics) { topic in
-                            TagChip(text: topic, tint: .accentColor)
+                            QuietChip(text: topic)
                         }
                     }
-                    .accentCard(tint: .purple)
                 }
 
                 if !summary.followUpQuestions.isEmpty {
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                        Text("Follow-Up Questions")
-                            .font(DesignTokens.Typography.section)
+                    QuietSection(title: "Follow-up questions") {
                         ForEach(summary.followUpQuestions, id: \.self) { question in
-                            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-                                Image(systemName: "questionmark.circle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .padding(.top, 3)
-                                Text(question)
-                                    .textSelection(.enabled)
-                            }
+                            QuietBulletRow(systemImage: "questionmark", text: question)
                         }
                     }
-                    .accentCard(tint: .orange)
                 }
             }
             .modifier(RevealModifier(token: viewModel.summaryRevealToken, reduceMotion: reduceMotion))
@@ -617,11 +581,12 @@ struct TranscriptDetailView: View {
                 lineWidths: [0.85, 0.6, 0.92, 0.5]
             )
         } else if let summary = viewModel.meetingSummary, !summary.actionItems.isEmpty {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text("\(summary.actionItems.count) action item\(summary.actionItems.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, DesignTokens.Spacing.xs)
+                    .quietListSectionHeader()
+                    .monospacedDigit()
+                    .padding(.horizontal, DesignTokens.Spacing.sm)
+                    .padding(.bottom, DesignTokens.Spacing.sm)
                     .accessibilityAddTraits(.isHeader)
 
                 ForEach(summary.actionItems) { item in
@@ -667,13 +632,14 @@ struct TranscriptDetailView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DesignTokens.Palette.overdue)
                     Text("Analysis failed")
-                        .font(DesignTokens.Typography.section)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                 }
                 Text(error)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
                     .textSelection(.enabled)
                 Button("Try Again") {
                     viewModel.runAnalysis()
@@ -682,52 +648,57 @@ struct TranscriptDetailView: View {
                 .disabled(viewModel.segments.isEmpty)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accentCard(tint: .orange)
+            .padding(DesignTokens.Spacing.lg)
+            .quietListRaised()
         } else if let analysis = viewModel.transcriptAnalysis {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
-                InsightCard(
-                    tint: .blue,
-                    icon: "globe",
-                    title: "Language"
-                ) {
-                    HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                InsightCard(icon: "globe", title: "Language") {
+                    HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
                         Text(analysis.language.primaryLanguageName)
-                            .font(.system(.title3, weight: .semibold))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
                         Text("\(Int(analysis.language.confidence * 100))% confidence")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                     }
                 }
 
-                InsightCard(
-                    tint: sentimentTint(analysis.sentiment.overallScore),
-                    icon: "heart.text.square",
-                    title: "Sentiment"
-                ) {
+                InsightCard(icon: "heart.text.square", title: "Sentiment") {
                     HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
                         Text(analysis.sentiment.label)
-                            .font(.system(.title3, weight: .semibold))
-                            .foregroundStyle(sentimentTint(analysis.sentiment.overallScore))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
                         Text(String(format: "%.2f", analysis.sentiment.overallScore))
-                            .font(.system(.callout, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                     }
                     if !analysis.sentiment.perSpeaker.isEmpty {
-                        Divider().padding(.vertical, DesignTokens.Spacing.xs)
+                        Rectangle()
+                            .fill(DesignTokens.Palette.hairline)
+                            .frame(height: 1)
+                            .padding(.vertical, DesignTokens.Spacing.xs)
                         ForEach(Array(analysis.sentiment.perSpeaker.keys.sorted()), id: \.self) { speaker in
-                            HStack {
+                            HStack(spacing: DesignTokens.Spacing.sm) {
                                 if differentiateWithoutColor {
                                     Image(systemName: SpeakerGlyph.symbol(for: speaker))
-                                        .font(.system(.caption2, weight: .semibold))
-                                        .foregroundStyle(.secondary)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(DesignTokens.Palette.textTertiary)
+                                        .accessibilityHidden(true)
+                                } else {
+                                    Circle()
+                                        .fill(Color.speakerTint(for: speaker).opacity(0.7))
+                                        .frame(width: 6, height: 6)
                                         .accessibilityHidden(true)
                                 }
-                                SpeakerChip(speaker: speaker)
+                                Text(speakerLabel(speaker))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DesignTokens.Palette.textSecondary)
                                 Spacer()
                                 Text(String(format: "%.2f", analysis.sentiment.perSpeaker[speaker] ?? 0))
-                                    .font(.system(.callout, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 12).monospacedDigit())
+                                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                             }
+                            .frame(minHeight: 24)
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("\(speaker) sentiment \(String(format: "%.2f", analysis.sentiment.perSpeaker[speaker] ?? 0))")
                         }
@@ -735,30 +706,15 @@ struct TranscriptDetailView: View {
                 }
 
                 if !analysis.entities.isEmpty {
-                    InsightCard(
-                        tint: .indigo,
-                        icon: "person.2",
-                        title: "People, Organizations & Places"
-                    ) {
+                    InsightCard(icon: "person.2", title: "People, organizations & places") {
                         ForEach(ExtractedEntity.EntityType.allCases) { type in
                             let filtered = analysis.entities.filter { $0.type == type }
                             if !filtered.isEmpty {
                                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                                    Text(type.rawValue.uppercased())
-                                        .font(.system(.caption2, weight: .semibold))
-                                        .tracking(0.5)
-                                        .foregroundStyle(.tertiary)
+                                    Text(type.rawValue.capitalized)
+                                        .quietListSectionHeader()
                                     FlowLayoutView(items: filtered) { entity in
-                                        // The glyph is the non-color cue for the
-                                        // entity kind (person / org / place /
-                                        // date); the capsule tint is decorative.
-                                        Label(entity.text, systemImage: type.systemImage)
-                                            .font(.caption)
-                                            .padding(.horizontal, DesignTokens.Spacing.sm)
-                                            .padding(.vertical, DesignTokens.Spacing.xs)
-                                            .background(
-                                                Capsule().fill(Color.secondary.opacity(0.12))
-                                            )
+                                        QuietChip(text: entity.text, systemImage: type.systemImage)
                                             .accessibilityElement(children: .ignore)
                                             .accessibilityLabel("\(entity.text), \(type.rawValue)")
                                     }
@@ -770,23 +726,25 @@ struct TranscriptDetailView: View {
                 }
 
                 if !analysis.topics.topics.isEmpty {
-                    InsightCard(tint: .purple, icon: "tag", title: "Key Topics") {
+                    InsightCard(icon: "tag", title: "Key topics") {
                         FlowLayoutView(items: analysis.topics.topics) { topic in
-                            TagChip(text: topic, tint: .purple)
+                            QuietChip(text: topic)
                         }
                     }
                 }
 
                 if !analysis.keyPhrases.isEmpty {
-                    InsightCard(tint: .pink, icon: "quote.bubble", title: "Key Phrases") {
+                    InsightCard(icon: "quote.bubble", title: "Key phrases") {
                         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                             ForEach(analysis.keyPhrases, id: \.self) { phrase in
                                 HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
                                     Image(systemName: "circle.fill")
                                         .font(.system(size: 4))
-                                        .foregroundStyle(.tertiary)
+                                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                                         .padding(.top, 7)
                                     Text(phrase)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                                         .textSelection(.enabled)
                                 }
                             }
@@ -809,10 +767,12 @@ struct TranscriptDetailView: View {
 
     // MARK: - Helpers
 
-    private func sentimentTint(_ score: Double) -> Color {
-        if score > 0.1 { return .green }
-        if score < -0.1 { return .red }
-        return .secondary
+    private func speakerLabel(_ speaker: String) -> String {
+        switch speaker.lowercased() {
+        case "you":    return "You"
+        case "remote": return "Remote"
+        default:       return speaker.capitalized
+        }
     }
 }
 
@@ -826,64 +786,83 @@ private struct ActionItemRow: View {
     var onConvert: (() -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scribeAccent) private var accent
+    @State private var hovered = false
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             Button(action: onToggle) {
                 Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundStyle(isCompleted ? Color.green : Color.secondary)
-                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 16))
+                    .foregroundStyle(isCompleted ? accent : DesignTokens.Palette.textTertiary)
             }
             .buttonStyle(.plain)
-            .padding(.top, DesignTokens.Spacing.xxs)
+            .padding(.top, 1)
             .accessibilityLabel(isCompleted ? "Mark as not done" : "Mark as done")
             .accessibilityAddTraits(isCompleted ? .isSelected : [])
 
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                 Text(item.description)
-                    .font(DesignTokens.Typography.body)
-                    .strikethrough(isCompleted, color: .secondary)
-                    .foregroundStyle(isCompleted ? .secondary : .primary)
+                    .font(DesignTokens.QuietList.rowTitleFont)
+                    .strikethrough(isCompleted, color: DesignTokens.Palette.textTertiary)
+                    .foregroundStyle(isCompleted ? DesignTokens.Palette.textTertiary : DesignTokens.Palette.textPrimary)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: DesignTokens.Spacing.md) {
-                    if let assignee = item.assignee, !assignee.isEmpty {
-                        Label(assignee, systemImage: "person.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let deadline = item.deadline, !deadline.isEmpty {
-                        Label(deadline, systemImage: "calendar")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if let priority = item.priority {
-                        PriorityBadge(priority: priority)
-                    }
-                    if let onConvert {
-                        Button(action: onConvert) {
-                            Label(
-                                isConverted ? "Open task" : "Convert to task",
-                                systemImage: isConverted ? "checkmark.square" : "plus.square.on.square"
-                            )
-                            .font(.caption)
+                if hasMeta {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        if let assignee = item.assignee, !assignee.isEmpty {
+                            Text(assignee)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help(isConverted
-                              ? "Open the linked task in the editor"
-                              : "Create a task from this action item")
-                        .accessibilityLabel(isConverted ? "Open linked task" : "Convert to task")
+                        if let deadline = item.deadline, !deadline.isEmpty {
+                            Text(deadline)
+                        }
+                        if let priority = item.priority {
+                            Text("\(priority.rawValue.capitalized) priority")
+                                .foregroundStyle(priority == .high
+                                                 ? DesignTokens.Palette.overdue
+                                                 : DesignTokens.Palette.textTertiary)
+                        }
                     }
+                    .font(DesignTokens.QuietList.rowMetaFont)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                 }
             }
+
+            Spacer(minLength: DesignTokens.Spacing.md)
+
+            if let onConvert {
+                Button(action: onConvert) {
+                    Text(isConverted ? "Open task" : "Convert to task")
+                        .font(.system(size: 12))
+                        .foregroundStyle(accent)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 1)
+                .help(isConverted
+                      ? "Open the linked task in the editor"
+                      : "Create a task from this action item")
+                .accessibilityLabel(isConverted ? "Open linked task" : "Convert to task")
+            }
         }
-        .cardStyle(padding: DesignTokens.Spacing.md, radius: DesignTokens.Radius.md)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, DesignTokens.Spacing.sm + 1)
+        .frame(minHeight: DesignTokens.QuietList.rowHeight + 4)
+        .quietListRowBackground(selected: false, hovered: hovered)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(DesignTokens.Palette.hairline)
+                .frame(height: 1)
+                .padding(.leading, DesignTokens.Spacing.sm + 28)
+        }
+        .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: DesignTokens.Motion.fast), value: isCompleted)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    private var hasMeta: Bool {
+        !(item.assignee ?? "").isEmpty || !(item.deadline ?? "").isEmpty || item.priority != nil
     }
 
     /// A spoken summary of the action item: status, description, then owner /
@@ -898,10 +877,9 @@ private struct ActionItemRow: View {
     }
 }
 
-// MARK: - InsightCard
+// MARK: - Quiet building blocks
 
 private struct InsightCard<Content: View>: View {
-    let tint: Color
     let icon: String
     let title: String
     @ViewBuilder var content: () -> Content
@@ -909,21 +887,77 @@ private struct InsightCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
             HStack(spacing: DesignTokens.Spacing.sm) {
-                ZStack {
-                    Circle()
-                        .fill(tint.opacity(0.14))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(tint)
-                }
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .accessibilityHidden(true)
                 Text(title)
-                    .font(DesignTokens.Typography.section)
+                    .quietListSectionHeader()
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             content()
         }
-        .cardStyle(elevation: DesignTokens.Shadow.soft)
+        .padding(DesignTokens.Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .quietListRaised()
+    }
+}
+
+private struct QuietSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            Text(title)
+                .quietListSectionHeader()
+                .accessibilityAddTraits(.isHeader)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct QuietBulletRow: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .frame(width: 14)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct QuietChip: View {
+    let text: String
+    var systemImage: String? = nil
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+            }
+            Text(text)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(DesignTokens.Palette.quietFill))
     }
 }
 
@@ -1012,10 +1046,11 @@ struct MoveSegmentsSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                     Text("Move Segments")
-                        .font(.system(.title3, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                     Text("\(viewModel.selectedSegmentIds.count) segment\(viewModel.selectedSegmentIds.count == 1 ? "" : "s") will be appended to the chosen transcript.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
                 }
                 Spacer()
                 Button("Cancel", action: onClose)
@@ -1023,7 +1058,9 @@ struct MoveSegmentsSheet: View {
             }
             .padding(DesignTokens.Spacing.lg)
 
-            Divider()
+            Rectangle()
+                .fill(DesignTokens.Palette.hairline)
+                .frame(height: 1)
 
             if viewModel.moveTargetCandidates.isEmpty {
                 EmptyStateView(
@@ -1035,7 +1072,7 @@ struct MoveSegmentsSheet: View {
                 .padding(DesignTokens.Spacing.lg)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(viewModel.moveTargetCandidates) { candidate in
                             Button {
                                 viewModel.moveSelectedSegments(to: candidate)
@@ -1056,44 +1093,38 @@ struct MoveSegmentsSheet: View {
 
 private struct MoveTargetRow: View {
     let session: Session
+    @State private var hovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
-            Image(systemName: "text.alignleft")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(Color.secondary.opacity(0.12)))
+        HStack(spacing: DesignTokens.Spacing.md) {
+            Image(systemName: "waveform")
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
-                Text(session.title.isEmpty ? "Untitled Session" : session.title)
-                    .font(.system(.body, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+            Text(session.title.isEmpty ? "Untitled Session" : session.title)
+                .font(DesignTokens.QuietList.rowTitleFont)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                .lineLimit(1)
 
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    Text(session.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    if let duration = session.durationSeconds {
-                        Text("·").foregroundStyle(.tertiary)
-                        Text(formatDuration(duration))
-                            .monospacedDigit()
-                    }
+            Spacer(minLength: DesignTokens.Spacing.md)
+
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                if let duration = session.durationSeconds {
+                    Text(formatDuration(duration))
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(session.createdAt.formatted(date: .abbreviated, time: .shortened))
             }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
+            .font(DesignTokens.QuietList.rowMetaFont)
+            .foregroundStyle(DesignTokens.Palette.textTertiary)
+            .lineLimit(1)
         }
-        .padding(DesignTokens.Spacing.md)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .frame(minHeight: DesignTokens.QuietList.rowHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-                .fill(Color.secondary.opacity(0.08))
-        )
+        .quietListRowBackground(selected: false, hovered: hovered)
         .contentShape(Rectangle())
+        .onHover { hovered = $0 }
     }
 
     private func formatDuration(_ total: Int) -> String {

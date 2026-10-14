@@ -12,12 +12,14 @@ struct PeopleView: View {
     var body: some View {
         HStack(spacing: 0) {
             peopleList
-                .frame(width: 260)
-            Divider()
+                .frame(width: 280)
+            Rectangle()
+                .fill(DesignTokens.Palette.hairline)
+                .frame(width: 1)
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(DesignTokens.Palette.surface)
+        .background(DesignTokens.Palette.ground)
         .task { await viewModel.load() }
         .alert("People", isPresented: Binding(
             get: { viewModel.errorMessage != nil },
@@ -32,44 +34,66 @@ struct PeopleView: View {
     // MARK: - List
 
     private var peopleList: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("People")
-                    .font(DesignTokens.Typography.section)
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            QuietListHeader(title: "People", count: "\(viewModel.filteredPeople.count)") {
                 Button {
                     Task { await viewModel.load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .help("Reload people")
+                .accessibilityLabel("Reload people")
                 .disabled(viewModel.isLoading)
             }
-            .padding(.horizontal, DesignTokens.Spacing.md)
-            .padding(.top, DesignTokens.Spacing.md)
+            .padding(.horizontal, DesignTokens.QuietList.gutter)
+            .padding(.top, DesignTokens.Spacing.xl)
 
             TextField("Filter", text: $viewModel.filterText)
                 .textFieldStyle(.roundedBorder)
-                .padding(DesignTokens.Spacing.md)
+                .controlSize(.small)
+                .padding(.horizontal, DesignTokens.QuietList.gutter)
+                .padding(.top, DesignTokens.Spacing.md)
+                .padding(.bottom, DesignTokens.Spacing.sm)
 
             if viewModel.isLoading && viewModel.people.isEmpty {
                 ProgressView()
+                    .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: Binding(
-                    get: { viewModel.selectedId },
-                    set: { viewModel.select($0) }
-                )) {
-                    ForEach(viewModel.filteredPeople) { person in
-                        PersonRow(person: person)
-                            .tag(person.id as String?)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 1) {
+                            ForEach(viewModel.filteredPeople) { person in
+                                PersonRow(person: person, isSelected: viewModel.selectedId == person.id) {
+                                    viewModel.select(person.id)
+                                }
+                                .id(person.id)
+                            }
+                        }
+                        .padding(.horizontal, DesignTokens.Spacing.md)
+                        .padding(.bottom, DesignTokens.Spacing.md)
                     }
+                    .focusable()
+                    .focusEffectDisabled()
+                    .onKeyPress(.upArrow) { moveSelection(by: -1, proxy: proxy) }
+                    .onKeyPress(.downArrow) { moveSelection(by: 1, proxy: proxy) }
                 }
-                .listStyle(.sidebar)
             }
         }
+    }
+
+    private func moveSelection(by offset: Int, proxy: ScrollViewProxy) -> KeyPress.Result {
+        let people = viewModel.filteredPeople
+        guard !people.isEmpty else { return .ignored }
+        let current = people.firstIndex { $0.id == viewModel.selectedId }
+        let next = current.map { min(max($0 + offset, 0), people.count - 1) } ?? 0
+        let id = people[next].id
+        viewModel.select(id)
+        proxy.scrollTo(id)
+        return .handled
     }
 
     // MARK: - Detail
@@ -111,19 +135,39 @@ struct PeopleView: View {
 
 private struct PersonRow: View {
     let person: Person
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
-            Text(person.name)
-                .font(DesignTokens.Typography.body)
-                .fontWeight(.medium)
-                .lineLimit(1)
-            Text(summary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Button(action: action) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Text(person.name)
+                    .font(DesignTokens.QuietList.rowTitleFont.weight(isSelected ? .medium : .regular))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: DesignTokens.Spacing.sm)
+                Text(compactSummary)
+                    .font(DesignTokens.QuietList.rowMetaFont)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .frame(minHeight: DesignTokens.QuietList.rowHeight)
+            .quietListRowBackground(selected: isSelected, hovered: hovered)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, DesignTokens.Spacing.xxs)
-        .accessibilityElement(children: .combine)
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(person.name), \(summary)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var compactSummary: String {
+        person.openTasks.isEmpty
+            ? "\(person.meetingCount)"
+            : "\(person.meetingCount) · \(person.openTasks.count) open"
     }
 
     private var summary: String {
@@ -152,7 +196,8 @@ private struct PersonDetailView: View {
                 meetingsSection
                 tasksSection
             }
-            .padding(DesignTokens.Spacing.xl)
+            .padding(.horizontal, DesignTokens.Spacing.xxl)
+            .padding(.vertical, DesignTokens.Spacing.xl)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -166,12 +211,13 @@ private struct PersonDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             Text(person.name)
-                .font(DesignTokens.Typography.title2)
+                .font(DesignTokens.Typography.display(size: 24))
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
                 .textSelection(.enabled)
             if person.aliases.count > 1 {
-                Text("Also seen as: \(otherNames)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Also seen as \(otherNames)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
             }
             HStack(spacing: DesignTokens.Spacing.sm) {
                 if let noteId {
@@ -180,7 +226,6 @@ private struct PersonDetailView: View {
                     } label: {
                         Label("Open person note", systemImage: "doc.text")
                     }
-                    .buttonStyle(.borderedProminent)
                     Button {
                         onRefreshNote()
                     } label: {
@@ -197,14 +242,14 @@ private struct PersonDetailView: View {
                     .help("Write a note for \(person.name) in the People notebook, linking their meetings and open tasks.")
                 }
             }
+            .controlSize(.small)
             .padding(.top, DesignTokens.Spacing.xs)
         }
     }
 
     private var meetingsSection: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            Text("Meetings (\(person.meetingCount))")
-                .eyebrowStyle()
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Meetings", count: person.meetingCount)
             ForEach(person.meetings) { meeting in
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Button {
@@ -216,13 +261,17 @@ private struct PersonDetailView: View {
                     } label: {
                         HStack(spacing: DesignTokens.Spacing.sm) {
                             Image(systemName: "doc.text")
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                                .frame(width: 16)
                             Text(meeting.linkTitle)
+                                .font(DesignTokens.QuietList.rowTitleFont)
+                                .foregroundStyle(DesignTokens.Palette.textPrimary)
                                 .lineLimit(1)
                             Spacer(minLength: DesignTokens.Spacing.sm)
                             Text(meeting.date, style: .date)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(DesignTokens.QuietList.rowMetaFont)
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
                         }
                         .contentShape(Rectangle())
                     }
@@ -231,25 +280,29 @@ private struct PersonDetailView: View {
                         onNavigate(.session(meeting.sessionId))
                     } label: {
                         Image(systemName: "waveform")
+                            .font(.system(size: 12))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                     .help("Open transcript")
                     .accessibilityLabel("Open transcript for \(meeting.linkTitle)")
                 }
-                .padding(.vertical, DesignTokens.Spacing.xxs)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
+                .frame(minHeight: DesignTokens.QuietList.rowHeight)
+                .overlay(alignment: .bottom) { hairline }
             }
         }
     }
 
     private var tasksSection: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            Text("Open tasks (\(person.openTasks.count))")
-                .eyebrowStyle()
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Open tasks", count: person.openTasks.count)
             if person.openTasks.isEmpty {
                 Text("No open tasks mention \(person.name).")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .padding(.horizontal, DesignTokens.Spacing.sm)
+                    .padding(.top, DesignTokens.Spacing.xs)
             } else {
                 ForEach(person.openTasks) { task in
                     Button {
@@ -257,22 +310,47 @@ private struct PersonDetailView: View {
                     } label: {
                         HStack(spacing: DesignTokens.Spacing.sm) {
                             Image(systemName: "circle")
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 14))
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                                .frame(width: 16)
                             Text(task.title)
+                                .font(DesignTokens.QuietList.rowTitleFont)
+                                .foregroundStyle(DesignTokens.Palette.textPrimary)
                                 .lineLimit(2)
                             Spacer(minLength: DesignTokens.Spacing.sm)
                             if let due = task.dueAt {
                                 Text(due, style: .date)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .font(DesignTokens.QuietList.rowMetaFont)
+                                    .foregroundStyle(due < Date() ? DesignTokens.Palette.overdue : DesignTokens.Palette.textTertiary)
                             }
                         }
+                        .padding(.horizontal, DesignTokens.Spacing.sm)
+                        .frame(minHeight: DesignTokens.QuietList.rowHeight)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.vertical, DesignTokens.Spacing.xxs)
+                    .overlay(alignment: .bottom) { hairline }
                 }
             }
         }
+    }
+
+    private func sectionHeader(_ title: String, count: Int) -> some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Text(title)
+            Text("\(count)").monospacedDigit()
+        }
+        .quietListSectionHeader()
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.bottom, DesignTokens.Spacing.xs)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(DesignTokens.Palette.hairline)
+            .frame(height: 1)
+            .padding(.leading, DesignTokens.Spacing.sm + 24)
     }
 }

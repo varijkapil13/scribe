@@ -39,12 +39,6 @@ struct TaskListView: View {
     @Environment(\.scribeAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// First-use coachmark: teach the quick-add power syntax once, inline,
-    /// instead of leaving it hidden behind the "?" popover. Persisted so it's
-    /// shown a single time across launches; dismissed on first task add or via
-    /// the "Got it" button.
-    @AppStorage("tasks.hasSeenQuickAddSyntaxHint") private var hasSeenQuickAddSyntaxHint: Bool = false
-
     /// Per-filter bucket-collapse state. Persisted to `UserDefaults` keyed by
     /// `(filter, bucket)` so collapsing "Completed" under one filter no longer
     /// leaks into every other filter (the old shared local-`Set` bug). Loaded
@@ -129,64 +123,74 @@ struct TaskListView: View {
         UserDefaults.standard.set(sort.rawValue, forKey: sortStorageKey)
     }
 
-    private var listControlsBar: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
+    private var listHeader: some View {
+        QuietListHeader(title: headerTitle, count: headerCount) {
             if viewModel.isSelecting {
                 batchControls
-            } else {
-                Spacer()
-                if case .project = filter {
-                    Button { headingPrompt = .add } label: {
-                        Label("Heading", systemImage: "plus.rectangle.on.rectangle").font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Add a heading to this project")
+            } else if layoutMode == .list || viewModel.isSearching {
+                if sortMode != .smart {
+                    Text(sortMode.rawValue)
+                        .font(DesignTokens.QuietList.countFont)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                 }
-                Button { viewModel.enterSelectMode() } label: {
-                    Label("Select", systemImage: "checkmark.circle").font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .help("Select multiple tasks")
-                sortMenu
+                listOptionsMenu
             }
         }
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .padding(.vertical, 3)
+        .padding(.horizontal, DesignTokens.QuietList.gutter)
+        .padding(.top, DesignTokens.Spacing.lg)
+        .padding(.bottom, DesignTokens.Spacing.xs)
         .animation(DesignTokens.Motion.resolve(DesignTokens.Motion.snappy, reduceMotion: reduceMotion),
                    value: viewModel.isSelecting)
     }
 
-    private var sortMenu: some View {
+    private var headerCount: String? {
+        guard !viewModel.isSearching else { return nil }
+        let tasks = viewModel.groups.lazy.flatMap { $0.tasks }
+        if filter == .completed {
+            return "\(tasks.count) done"
+        }
+        return "\(tasks.filter { !$0.isCompleted && !$0.isCancelled }.count) open"
+    }
+
+    private var listOptionsMenu: some View {
         Menu {
-            ForEach(TaskListViewModel.TaskSort.allCases) { sort in
-                Button { setSort(sort) } label: {
-                    Label(sort.rawValue, systemImage: sortMode == sort ? "checkmark" : sort.systemImage)
+            Button { viewModel.enterSelectMode() } label: {
+                Label("Select Tasks", systemImage: "checkmark.circle")
+            }
+            if case .project = filter {
+                Button { headingPrompt = .add } label: {
+                    Label("Add Heading", systemImage: "plus.rectangle.on.rectangle")
                 }
             }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.up.arrow.down")
-                Text(sortMode == .smart ? "Sort" : sortMode.rawValue)
+            Divider()
+            Picker(selection: Binding(get: { sortMode }, set: { setSort($0) })) {
+                ForEach(TaskListViewModel.TaskSort.allCases) { sort in
+                    Label(sort.rawValue, systemImage: sort.systemImage).tag(sort)
+                }
+            } label: {
+                Label("Sort By", systemImage: "arrow.up.arrow.down")
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Sort tasks")
-        .accessibilityLabel("Sort: \(sortMode.rawValue)")
+        .help("Select, sort and list options")
+        .accessibilityLabel("List options, sort: \(sortMode.rawValue)")
     }
 
     /// Batch action bar shown in multi-select mode.
     private var batchControls: some View {
         let empty = viewModel.selection.isEmpty
-        return HStack(spacing: DesignTokens.Spacing.sm) {
+        return HStack(spacing: DesignTokens.Spacing.md) {
             Text("\(viewModel.selection.count) selected")
-                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            Spacer()
+                .font(DesignTokens.QuietList.countFont)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
             Button { viewModel.batchComplete() } label: { Image(systemName: "checkmark.circle") }
                 .help("Complete selected").disabled(empty)
             Menu {
@@ -223,27 +227,26 @@ struct TaskListView: View {
         .menuIndicator(.hidden)
         .buttonStyle(.borderless)
         .font(.callout)
+        .foregroundStyle(DesignTokens.Palette.textSecondary)
+        .fixedSize()
     }
 
     var body: some View {
         HStack(spacing: 0) {
             // Left: quick-add + task list
             VStack(spacing: 0) {
-                quickAddBar
-                    .padding(.horizontal, DesignTokens.Spacing.md)
-                    .padding(.top, DesignTokens.Spacing.sm)
-                    .padding(.bottom, DesignTokens.Spacing.xs)
-                    .background(DesignTokens.Palette.surface)
+                listHeader
 
-                if showQuickAddSyntaxHint {
-                    quickAddSyntaxCoachmark
-                        .padding(.horizontal, DesignTokens.Spacing.md)
-                        .padding(.bottom, DesignTokens.Spacing.xs)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
+                quickAddBar
+                    .padding(.horizontal, DesignTokens.QuietList.gutter - DesignTokens.Spacing.sm)
+                    .padding(.bottom, DesignTokens.Spacing.xs)
+
+                Rectangle()
+                    .fill(DesignTokens.Palette.cardBorder(contrast))
+                    .frame(height: 1)
+                    .padding(.horizontal, DesignTokens.QuietList.gutter)
 
                 if layoutMode == .board && !viewModel.isSearching {
-                    Divider()
                     TaskBoardView(
                         viewModel: viewModel,
                         filter: filter,
@@ -252,10 +255,6 @@ struct TaskListView: View {
                         onOpen: { openInspector($0) }
                     )
                 } else {
-                    listControlsBar
-
-                    Divider()
-
                     content
                         .focusable(true)
                         .focused($listFocused)
@@ -267,7 +266,9 @@ struct TaskListView: View {
 
             // Right: detail panel (slides in when a task is selected)
             if let task = selectedTask {
-                Divider()
+                Rectangle()
+                    .fill(DesignTokens.Palette.cardBorder(contrast))
+                    .frame(width: 1)
                 TaskDetailPanel(
                     task: task,
                     onDismiss: { selectedTask = nil },
@@ -278,7 +279,7 @@ struct TaskListView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .background(DesignTokens.Palette.surface)
+        .background(DesignTokens.Palette.ground)
         .scribeAnimation(.snappy, value: selectedTask?.id)
         .navigationTitle(headerTitle)
         .searchable(text: $viewModel.searchQuery, prompt: "Search tasks")
@@ -321,7 +322,6 @@ struct TaskListView: View {
             }
             Button("Cancel", role: .cancel) { pendingDelete = nil }
         }
-        .toolbar { projectHeaderToolbar }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 TaskLayoutModePicker(mode: Binding(get: { layoutMode }, set: { setLayoutMode($0) }))
@@ -334,31 +334,6 @@ struct TaskListView: View {
             case .rename(let heading): viewModel.renameHeading(heading, to: text)
             }
         })
-    }
-
-    /// For a `.project` filter, surfaces the project's color swatch + name in
-    /// the toolbar (the navigation title is text-only). Empty for other filters.
-    @ToolbarContentBuilder
-    private var projectHeaderToolbar: some ToolbarContent {
-        if case .project(let id) = filter, let project = viewModel.project(id: id) {
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    if let icon = project.icon {
-                        Image(systemName: icon)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(project.color.flatMap { Color(hex: $0) } ?? accent)
-                    } else {
-                        Circle()
-                            .fill(project.color.flatMap { Color(hex: $0) } ?? accent)
-                            .frame(width: 9, height: 9)
-                    }
-                    Text(project.name)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Project \(project.name)")
-            }
-        }
     }
 
     // MARK: - Shortcuts
@@ -513,100 +488,33 @@ struct TaskListView: View {
 
     // MARK: - Quick add
 
-    /// Whether the one-time quick-add syntax coachmark should be visible. Only
-    /// on the task-entry filters (where the quick-add field is focused), and
-    /// only until the user has seen it once.
-    private var showQuickAddSyntaxHint: Bool {
-        guard !hasSeenQuickAddSyntaxHint else { return false }
-        switch filter {
-        case .today, .inbox, .dueOn: return true
-        default:                     return false
-        }
-    }
-
-    /// Marks the syntax coachmark as seen and animates it away.
-    private func dismissQuickAddSyntaxHint() {
-        guard !hasSeenQuickAddSyntaxHint else { return }
-        withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
-            hasSeenQuickAddSyntaxHint = true
-        }
-    }
-
-    /// Inline first-use hint that teaches the power tokens up front. Mirrors the
-    /// "?" popover content but lives in the layout so it's unmissable on first
-    /// run, then dismisses for good.
-    @ViewBuilder
-    private var quickAddSyntaxCoachmark: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.xs) {
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 11))
-                    .foregroundStyle(accent)
-                    .accessibilityHidden(true)
-                Text("Type as you go — Scribe reads the shorthand")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Got it") { dismissQuickAddSyntaxHint() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(accent)
-                    .accessibilityHint("Dismiss the quick-add syntax hint")
-            }
-            HStack(spacing: DesignTokens.Spacing.md) {
-                coachmarkToken("#tag", color: .purple)
-                coachmarkToken("+project", color: .green)
-                coachmarkToken("!high", color: .red)
-                coachmarkToken("tmr", color: .orange)
-            }
-        }
-        .padding(DesignTokens.Spacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Quick-add syntax tip. Type #tag to tag, +project to file, !high for priority, or a date phrase like tomorrow.")
-    }
-
-    private func coachmarkToken(_ token: String, color: Color) -> some View {
-        Text(token)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(color)
-            .accessibilityHidden(true)
-    }
-
     @ViewBuilder
     private var quickAddBar: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .frame(width: 16)
 
             MultilineQuickAddField(
                 text: $viewModel.quickAddText,
                 intrinsicHeight: $quickAddFieldHeight,
-                placeholder: "Add a task — #tag +project !priority, “tmr”…",
+                placeholder: "New task",
                 minHeight: 24,
                 maxHeight: 24,
                 onSubmit: {
                     viewModel.commitQuickAdd()
                     quickAddFieldHeight = 24
-                    dismissQuickAddSyntaxHint()
                     ScribeTips.taskQuickAddUsed()
                 }
             )
             .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+            .help(Self.quickAddSyntaxSummary)
 
             Button { showQuickAddSyntaxHelp.toggle() } label: {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -616,7 +524,7 @@ struct TaskListView: View {
                 // No custom backing: the system popover is already glass.
                 quickAddSyntaxHelp
             }
-            .help("Quick-add syntax")
+            .help(Self.quickAddSyntaxSummary)
 
             Button { showQuickAddDatePicker.toggle() } label: {
                 Image(systemName: viewModel.quickAddDueDate != nil
@@ -624,8 +532,8 @@ struct TaskListView: View {
                       : "calendar")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(viewModel.quickAddDueDate != nil
-                                     ? Color.orange
-                                     : Color.secondary)
+                                     ? accent
+                                     : DesignTokens.Palette.textTertiary)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -641,21 +549,17 @@ struct TaskListView: View {
             } ?? "Pick due date")
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, DesignTokens.Spacing.xs)
-        .background(DesignTokens.Palette.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
-        )
+        .frame(minHeight: DesignTokens.QuietList.rowHeight)
     }
+
+    private static let quickAddSyntaxSummary =
+        "Type as you go: #tag, +project, !high, and dates like “tmr” or “next fri”."
 
     @ViewBuilder
     private var quickAddSyntaxHelp: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            Text("Quick-add syntax")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+            Text("Quick-add shorthand")
+                .quietListSectionHeader()
             Group {
                 row(token: "tmr · next fri", meaning: "due date phrases")
                 row(token: "#tag", meaning: "add a tag")
@@ -676,11 +580,11 @@ struct TaskListView: View {
     private func row(token: String, meaning: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
             Text(token)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.primary)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
             Text(meaning)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
     }
 
@@ -703,7 +607,7 @@ struct TaskListView: View {
             )
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                LazyVStack(alignment: .leading, spacing: DesignTokens.QuietList.sectionSpacing) {
                     ForEach(visibleGroups, id: \.bucket) { group in
                         section(for: group.bucket, tasks: group.tasks)
                     }
@@ -711,8 +615,8 @@ struct TaskListView: View {
                         showMoreButton(count: hidden)
                     }
                 }
-                .padding(.horizontal, DesignTokens.Spacing.md)
-                .padding(.vertical, DesignTokens.Spacing.sm)
+                .padding(.horizontal, DesignTokens.QuietList.gutter - DesignTokens.Spacing.sm)
+                .padding(.vertical, DesignTokens.Spacing.md)
             }
         }
     }
@@ -753,7 +657,7 @@ struct TaskListView: View {
                 Text("Show \(count) more upcoming")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DesignTokens.Palette.textSecondary)
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.xs)
         }
@@ -772,20 +676,28 @@ struct TaskListView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     Text("\(viewModel.searchResults.count) result\(viewModel.searchResults.count == 1 ? "" : "s")")
-                        .eyebrowStyle()
+                        .quietListSectionHeader()
                         .padding(.horizontal, DesignTokens.Spacing.sm)
                         .padding(.bottom, DesignTokens.Spacing.xs)
                     ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, task in
                         if index > 0 {
-                            Divider().padding(.leading, DesignTokens.Spacing.xxl)
+                            rowSeparator
                         }
                         taskRow(for: task)
                     }
                 }
-                .padding(.horizontal, DesignTokens.Spacing.md)
-                .padding(.vertical, DesignTokens.Spacing.sm)
+                .padding(.horizontal, DesignTokens.QuietList.gutter - DesignTokens.Spacing.sm)
+                .padding(.vertical, DesignTokens.Spacing.md)
             }
         }
+    }
+
+    private var rowSeparator: some View {
+        Rectangle()
+            .fill(DesignTokens.Palette.cardBorder(contrast))
+            .frame(height: 1)
+            .padding(.leading, DesignTokens.Spacing.xxl)
+            .padding(.trailing, DesignTokens.Spacing.sm)
     }
 
     @ViewBuilder
@@ -963,21 +875,22 @@ struct TaskListView: View {
                 }
                 persistCollapsedBuckets()
             } label: {
-                HStack(spacing: DesignTokens.Spacing.xs) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
                     Text(bucket.title)
-                        .eyebrowStyle()
+                        .quietListSectionHeader()
+                    Text("\(tasks.count)")
+                        .font(DesignTokens.QuietList.countFont)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                         .scribeAnimation(.snappy, value: isCollapsed)
                     Spacer()
-                    Text("\(tasks.count)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
                 }
                 .padding(.horizontal, DesignTokens.Spacing.sm)
-                .padding(.vertical, DesignTokens.Spacing.xs)
+                .padding(.bottom, DesignTokens.Spacing.xs)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .contextMenu {
@@ -999,8 +912,7 @@ struct TaskListView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(tasks) { task in
                         if task.id != tasks.first?.id {
-                            Divider()
-                                .padding(.leading, DesignTokens.Spacing.xxl)
+                            rowSeparator
                         }
                         taskRow(for: task, bucket: bucket)
                             .overlay(alignment: .top) {
@@ -1021,7 +933,7 @@ struct TaskListView: View {
             }
         }
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
                 .strokeBorder(accent, lineWidth: isDropTarget ? 2 : 0)
         )
         .modifier(BucketDropModifier(
@@ -1174,9 +1086,8 @@ private struct RowReorderDropModifier: ViewModifier {
 
 // MARK: - Row
 
-/// Compact single-line row: checkbox · title (with inline tag spans) ·
-/// trailing meta (priority dot, due text, notes glyph). No per-row card
-/// chrome — hairline dividers between rows live in the parent list.
+/// Single-line row: checkbox · title · quiet trailing metadata (tags,
+/// project, due). Hairline dividers between rows live in the parent list.
 ///
 /// Inline editing affordances (priority dot click-to-cycle, due-date popover,
 /// project chip menu, double-click title) appear on hover OR keyboard focus,
@@ -1214,7 +1125,6 @@ struct TaskRowView: View {
     @State private var bounceTrigger = 0
     @FocusState private var titleFieldFocused: Bool
 
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scribeAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
@@ -1232,21 +1142,15 @@ struct TaskRowView: View {
             .buttonStyle(.plain)
             .contentShape(Rectangle())
         }
-        .padding(.vertical, 5)
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .background(rowBackground)
-        .overlay(alignment: .leading) {
-            // Leading accent bar marks the open inspector selection.
-            if isSelected {
-                Rectangle().fill(accent).frame(width: 2)
-            }
-        }
+        .frame(minHeight: DesignTokens.QuietList.rowHeight)
+        .quietListRowBackground(selected: isSelected || isMultiSelected,
+                                hovered: affordancesVisible)
         .overlay(
-            // Keyboard-focus ring — visually distinct from hover/selection.
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                .strokeBorder(accent, lineWidth: isKeyboardFocused ? 2 : 0)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
+                .strokeBorder(accent.opacity(0.7), lineWidth: isKeyboardFocused ? 1.5 : 0)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous))
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
@@ -1268,12 +1172,12 @@ struct TaskRowView: View {
         } label: {
             if isSelecting {
                 Image(systemName: isMultiSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isMultiSelected ? accent : .secondary)
-                    .font(.system(size: 15))
+                    .foregroundStyle(isMultiSelected ? accent : DesignTokens.Palette.textTertiary)
+                    .font(.system(size: 16))
             } else {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(task.isCompleted ? accent : .secondary)
-                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(task.isCompleted ? accent : DesignTokens.Palette.textTertiary)
+                    .font(.system(size: 16, weight: .light))
                     .contentTransition(.symbolEffect(.replace))
                     .symbolEffect(.bounce, value: bounceTrigger)
             }
@@ -1286,25 +1190,12 @@ struct TaskRowView: View {
     }
 
     @ViewBuilder
-    private var rowBackground: some View {
-        if isMultiSelected {
-            DesignTokens.Palette.accentFill(.selected, accent: accent, contrast: contrast)
-        } else if isSelected {
-            DesignTokens.Palette.accentFill(.selected, accent: accent, contrast: contrast)
-        } else if affordancesVisible {
-            DesignTokens.Palette.fill(.hover, contrast: contrast)
-        } else {
-            Color.clear
-        }
-    }
-
-    @ViewBuilder
     private var rowContent: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
             if task.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                     .accessibilityLabel("Pinned")
             }
 
@@ -1316,26 +1207,37 @@ struct TaskRowView: View {
                 titleText
             }
 
-            Spacer(minLength: DesignTokens.Spacing.xs)
-
-            if let project = currentProject {
-                projectChip(project)
-            } else if affordancesVisible {
-                projectChipMenu(label: "Inbox", tint: .secondary)
-            }
-
             if !task.notes.isEmpty {
                 Image(systemName: "text.alignleft")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 9))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary.opacity(0.7))
                     .accessibilityHidden(true)
             }
 
-            subtaskChip
+            Spacer(minLength: DesignTokens.Spacing.sm)
 
-            planningChips
+            HStack(spacing: DesignTokens.Spacing.md) {
+                subtaskChip
 
-            dueControl
+                planningChips
+
+                if !tags.isEmpty {
+                    Text(tags.map { "#\($0)" }.joined(separator: " "))
+                        .font(DesignTokens.QuietList.rowMetaFont)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(-1)
+                }
+
+                if let project = currentProject {
+                    projectMenu(label: project.name)
+                } else if affordancesVisible {
+                    projectMenu(label: "Inbox")
+                }
+
+                dueControl
+            }
         }
     }
 
@@ -1345,35 +1247,34 @@ struct TaskRowView: View {
     private var planningChips: some View {
         if task.recurrenceRule != nil {
             Image(systemName: "repeat")
-                .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 10))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .accessibilityLabel("Repeats")
         }
         if let minutes = task.estimatedMinutes, minutes > 0 {
             Text(TaskDurationFormat.short(minutes))
-                .font(.system(size: 10, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .font(DesignTokens.QuietList.rowMetaFont)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .accessibilityLabel("Estimated \(TaskDurationFormat.short(minutes))")
         }
         if let start = task.startAt, start > Date() {
             Text("Starts \(start.formatted(.dateTime.month(.abbreviated).day()))")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+                .font(DesignTokens.QuietList.rowMetaFont)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .lineLimit(1)
         }
     }
 
     @ViewBuilder
     private var subtaskChip: some View {
         if let progress = subtaskProgress, progress.total > 0 {
-            HStack(spacing: 2) {
+            HStack(spacing: 3) {
                 Image(systemName: progress.isComplete ? "checklist.checked" : "checklist")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                 Text("\(progress.completed)/\(progress.total)")
-                    .font(.system(size: 10, weight: .medium))
-                    .monospacedDigit()
+                    .font(DesignTokens.QuietList.rowMetaFont)
             }
-            .foregroundStyle(progress.isComplete ? Color.accentColor : .secondary)
+            .foregroundStyle(DesignTokens.Palette.textTertiary)
             .accessibilityLabel("\(progress.completed) of \(progress.total) subtasks completed")
         }
     }
@@ -1381,10 +1282,10 @@ struct TaskRowView: View {
     // MARK: - Title (double-click to edit)
 
     private var titleText: some View {
-        Text(titleWithTags)
-            .font(.system(size: 13))
-            .strikethrough(struck, color: .secondary)
-            .foregroundStyle(struck ? .secondary : .primary)
+        Text(task.title)
+            .font(DesignTokens.QuietList.rowTitleFont)
+            .strikethrough(struck, color: DesignTokens.Palette.textTertiary)
+            .foregroundStyle(struck ? DesignTokens.Palette.textTertiary : DesignTokens.Palette.textPrimary)
             .lineLimit(1)
             .truncationMode(.tail)
             .contentShape(Rectangle())
@@ -1398,7 +1299,7 @@ struct TaskRowView: View {
     private var titleEditor: some View {
         TextField("Title", text: $titleDraft)
             .textFieldStyle(.plain)
-            .font(.system(size: 13))
+            .font(DesignTokens.QuietList.rowTitleFont)
             .focused($titleFieldFocused)
             .onSubmit { commitTitle() }
             .onExitCommand { isEditingTitle = false }
@@ -1411,19 +1312,6 @@ struct TaskRowView: View {
     private func commitTitle() {
         defer { isEditingTitle = false }
         onRename(titleDraft)
-    }
-
-    /// Title with `#tag` spans appended in tinted attributed text. Keeps the
-    /// row to a single line while preserving tag visibility.
-    private var titleWithTags: AttributedString {
-        var out = AttributedString(task.title)
-        for tag in tags {
-            var chip = AttributedString("  #\(tag)")
-            chip.foregroundColor = .secondary
-            chip.font = .system(size: 12)
-            out.append(chip)
-        }
-        return out
     }
 
     // MARK: - Priority (click-to-cycle)
@@ -1451,13 +1339,9 @@ struct TaskRowView: View {
         }
     }
 
-    // MARK: - Project chip (move menu)
+    // MARK: - Project (move menu)
 
-    private func projectChip(_ project: Project) -> some View {
-        projectChipMenu(label: project.name, tint: project.color.flatMap { Color(hex: $0) } ?? accent)
-    }
-
-    private func projectChipMenu(label: String, tint: Color) -> some View {
+    private func projectMenu(label: String) -> some View {
         Menu {
             Button("Inbox") { onMoveProject(nil) }
             Divider()
@@ -1465,24 +1349,14 @@ struct TaskRowView: View {
                 Button(project.name) { onMoveProject(project.id) }
             }
         } label: {
-            HStack(spacing: 3) {
-                Circle().fill(tint).frame(width: 6, height: 6)
-                Text(label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(DesignTokens.Palette.fill(.hover, contrast: contrast))
-            )
+            Text(label)
+                .font(DesignTokens.QuietList.rowMetaFont)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .lineLimit(1)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .opacity(currentProject != nil || affordancesVisible ? 1 : 0)
         .accessibilityLabel("Project: \(label)")
         .accessibilityHint("Activate to move to another project")
     }
@@ -1512,7 +1386,7 @@ struct TaskRowView: View {
             Button { showDuePopover = true } label: {
                 Image(systemName: "calendar.badge.plus")
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Set due date")
@@ -1592,16 +1466,15 @@ private struct PriorityIndicator: View {
 }
 
 /// Trailing due-date label using relative phrasing ("Today", "Tomorrow",
-/// "Mon", "Mar 12") with tabular figures. Overdue dates render in the
-/// recording-red accent; no capsule background.
+/// "Mon", "Mar 12") with tabular figures; overdue dates use the overdue tone.
 private struct DueDateLabel: View {
     let date: Date
     let isOverdue: Bool
 
     var body: some View {
         Text(formatted)
-            .font(.system(size: 11, design: .monospaced).monospacedDigit())
-            .foregroundStyle(isOverdue ? DesignTokens.Palette.recording : .secondary)
+            .font(DesignTokens.QuietList.rowMetaFont)
+            .foregroundStyle(isOverdue ? DesignTokens.Palette.overdue : DesignTokens.Palette.textTertiary)
             .lineLimit(1)
     }
 

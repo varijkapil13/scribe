@@ -69,14 +69,15 @@ struct TaskBoardView: View {
         let allColumns = columns
         return VStack(spacing: 0) {
             groupingBar
-            Divider()
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
                     ForEach(allColumns) { column in
                         columnView(column, allColumns: allColumns)
                     }
                 }
-                .padding(DesignTokens.Spacing.md)
+                .padding(.horizontal, DesignTokens.QuietList.gutter)
+                .padding(.bottom, DesignTokens.QuietList.gutter)
+                .padding(.top, DesignTokens.Spacing.xs)
                 .frame(maxHeight: .infinity, alignment: .top)
             }
         }
@@ -94,8 +95,8 @@ struct TaskBoardView: View {
     private var groupingBar: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             Text("Group by")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
             Picker("Group by", selection: $grouping) {
                 ForEach(TaskBoardGrouping.allCases) { option in
                     Label(option.title, systemImage: option.systemImage).tag(option)
@@ -104,11 +105,12 @@ struct TaskBoardView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .controlSize(.small)
             .accessibilityLabel("Group board by")
             Spacer()
         }
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .padding(.vertical, DesignTokens.Spacing.xs)
+        .padding(.horizontal, DesignTokens.QuietList.gutter)
+        .padding(.vertical, DesignTokens.Spacing.md)
     }
 
     // MARK: - Column
@@ -119,15 +121,15 @@ struct TaskBoardView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: DesignTokens.Spacing.xs) {
                 Image(systemName: column.systemImage)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(columnTint(column))
                 Text(column.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .quietListSectionHeader()
                     .lineLimit(1)
-                Spacer(minLength: 0)
                 Text("\(column.tasks.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(DesignTokens.QuietList.countFont)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.sm)
@@ -135,18 +137,18 @@ struct TaskBoardView: View {
             .accessibilityAddTraits(.isHeader)
 
             ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                     ForEach(column.tasks) { task in
                         card(for: task, in: column, allColumns: allColumns)
                     }
                     if column.tasks.isEmpty {
                         Text("Drop tasks here")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                 }
-                .padding(.horizontal, DesignTokens.Spacing.xs)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
                 .padding(.bottom, DesignTokens.Spacing.sm)
             }
         }
@@ -156,7 +158,7 @@ struct TaskBoardView: View {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .fill(isTargeted
                       ? DesignTokens.Palette.accentFill(.hover, accent: accent, contrast: contrast)
-                      : DesignTokens.Palette.fill(.hover, contrast: contrast))
+                      : DesignTokens.Palette.quietFill.opacity(0.6))
         )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
@@ -181,7 +183,7 @@ struct TaskBoardView: View {
     private func columnTint(_ column: TaskBoardColumn) -> Color {
         if let hex = column.colorHex, let color = Color(hex: hex) { return color }
         if case .priority(let priority) = column.key { return Self.priorityColor(priority) }
-        return .secondary
+        return DesignTokens.Palette.textTertiary
     }
 
     // MARK: - Card
@@ -231,14 +233,14 @@ struct TaskBoardView: View {
         case .high:   return DesignTokens.Palette.priorityHigh
         case .medium: return DesignTokens.Palette.priorityMedium
         case .low:    return DesignTokens.Palette.priorityLow
-        case .none:   return .secondary
+        case .none:   return DesignTokens.Palette.textTertiary
         }
     }
 }
 
 // MARK: - Card view
 
-/// One board card: checkbox, title, then due · priority · subtasks · tags.
+/// One board card: checkbox, title, then quiet due · subtasks · project · tags.
 private struct TaskBoardCard: View {
     let task: TodoTask
     let tags: [String]
@@ -254,19 +256,19 @@ private struct TaskBoardCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
                 Button(action: onToggle) {
                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 14))
-                        .foregroundStyle(task.isCompleted ? accent : .secondary)
+                        .font(.system(size: 15, weight: .light))
+                        .foregroundStyle(task.isCompleted ? accent : DesignTokens.Palette.textTertiary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(task.isCompleted ? "Mark incomplete" : "Complete")
 
                 Text(task.title)
-                    .font(.system(size: 13))
-                    .strikethrough(finished, color: .secondary)
-                    .foregroundStyle(finished ? .secondary : .primary)
+                    .font(DesignTokens.QuietList.rowTitleFont)
+                    .strikethrough(finished, color: DesignTokens.Palette.textTertiary)
+                    .foregroundStyle(finished ? DesignTokens.Palette.textTertiary : DesignTokens.Palette.textPrimary)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -281,62 +283,48 @@ private struct TaskBoardCard: View {
             if hasMeta {
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     if let due = task.dueAt {
-                        Label(Self.dueText(due), systemImage: "calendar")
-                            .font(.system(size: 10))
-                            .foregroundStyle(isOverdue(due) ? DesignTokens.Palette.recording : .secondary)
+                        Text(Self.dueText(due))
+                            .foregroundStyle(isOverdue(due) ? DesignTokens.Palette.overdue : DesignTokens.Palette.textTertiary)
                             .lineLimit(1)
                     }
                     if let progress = subtaskProgress, progress.total > 0 {
                         HStack(spacing: 2) {
                             Image(systemName: progress.isComplete ? "checklist.checked" : "checklist")
-                            Text("\(progress.completed)/\(progress.total)").monospacedDigit()
+                            Text("\(progress.completed)/\(progress.total)")
                         }
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(progress.isComplete ? accent : .secondary)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("\(progress.completed) of \(progress.total) subtasks completed")
                     }
                     if let minutes = task.estimatedMinutes, minutes > 0 {
                         Text(TaskDurationFormat.short(minutes))
-                            .font(.system(size: 10, weight: .medium))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
                     }
                     if let projectName {
                         Text(projectName)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
-                }
-            }
-
-            if !tags.isEmpty {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    ForEach(tags.prefix(4), id: \.self) { tag in
-                        Text("#\(tag)")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(accent)
+                    if !tags.isEmpty {
+                        Text(tags.prefix(3).map { "#\($0)" }.joined(separator: " ")
+                             + (tags.count > 3 ? " +\(tags.count - 3)" : ""))
                             .lineLimit(1)
-                    }
-                    if tags.count > 4 {
-                        Text("+\(tags.count - 4)")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .truncationMode(.tail)
                     }
                 }
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .padding(.leading, 22)
             }
         }
-        .padding(DesignTokens.Spacing.sm)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .fill(DesignTokens.Palette.surfaceElevated)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(DesignTokens.Palette.raised)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(isSelected ? accent : DesignTokens.Palette.cardBorder(contrast),
-                              lineWidth: isSelected ? 2 : 1)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(isSelected ? accent.opacity(0.8) : DesignTokens.Palette.cardBorder(contrast),
+                              lineWidth: isSelected ? 1.5 : 1)
         )
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -348,6 +336,7 @@ private struct TaskBoardCard: View {
             || (subtaskProgress?.total ?? 0) > 0
             || (task.estimatedMinutes ?? 0) > 0
             || projectName != nil
+            || !tags.isEmpty
     }
 
     private func isOverdue(_ due: Date) -> Bool {
