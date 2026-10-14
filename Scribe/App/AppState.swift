@@ -171,6 +171,7 @@ final class AppState: ObservableObject {
         let initial = UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? ""
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .map { _ in UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? "" }
             .changes(from: initial)
             .sink { [weak self] stored in
@@ -225,6 +226,7 @@ final class AppState: ObservableObject {
         let initial = UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .map { _ in UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool }
             .changes(from: initial)
             .compactMap { $0 }
@@ -249,6 +251,7 @@ final class AppState: ObservableObject {
 
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .compactMap { _ in UserDefaults.standard.string(forKey: "selectedLanguage") }
             .removeDuplicates()
             .sink { [weak self] newLanguage in
