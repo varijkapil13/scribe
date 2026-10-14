@@ -13,6 +13,7 @@ struct NotesBrowserView: View {
     /// card; the breadcrumb + Back pop it. `navPath.last` is the displayed note.
     @State private var navPath: [String] = []
     @State private var currentNote: Note?
+    @AppStorage("notes.listWidth") private var listWidth: Double = DesignTokens.Notes.listWidth
     @State private var titlesById: [String: String] = [:]
     @State private var activeScope: NoteListScope
 
@@ -40,14 +41,16 @@ struct NotesBrowserView: View {
     }
 
     var body: some View {
-        HSplitView {
+        // Not HSplitView: its AppKit divider runs up through the toolbar.
+        HStack(spacing: 0) {
             NoteListView(scope: activeScope,
                          selectedNoteId: listSelection,
                          scopeChoice: showsScopeChips ? $activeScope : nil)
                 .id(NoteListScopeID(scope: activeScope))
-                .frame(minWidth: DesignTokens.Notes.listMinWidth,
-                       idealWidth: DesignTokens.Notes.listWidth,
-                       maxWidth: DesignTokens.Notes.listMaxWidth)
+                .frame(width: clampedListWidth)
+
+            ResizableColumnDivider(width: $listWidth,
+                                   range: DesignTokens.Notes.listMinWidth...DesignTokens.Notes.listMaxWidth)
 
             detailColumn
         }
@@ -61,6 +64,10 @@ struct NotesBrowserView: View {
                 titlesById[note.id] = note.title.isEmpty ? "Untitled" : note.title
             }
         }
+    }
+
+    private var clampedListWidth: CGFloat {
+        min(max(listWidth, DesignTokens.Notes.listMinWidth), DesignTokens.Notes.listMaxWidth)
     }
 
     @ViewBuilder
@@ -173,5 +180,37 @@ private struct NoteListScopeID: Hashable {
         case (.notebook(let a), .notebook(let b)): return a == b
         default: return false
         }
+    }
+}
+
+
+private struct ResizableColumnDivider: View {
+    @Binding var width: Double
+    let range: ClosedRange<CGFloat>
+    @State private var dragStartWidth: Double?
+
+    var body: some View {
+        Rectangle()
+            .fill(DesignTokens.Palette.hairline)
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { value in
+                                let start = dragStartWidth ?? width
+                                dragStartWidth = start
+                                let proposed = CGFloat(start) + value.translation.width
+                                width = Double(min(max(proposed, range.lowerBound), range.upperBound))
+                            }
+                            .onEnded { _ in dragStartWidth = nil }
+                    )
+            }
+            .accessibilityHidden(true)
     }
 }
