@@ -7,8 +7,9 @@ import Combine
 /// were only reachable through their owning note.
 @MainActor
 final class TranscriptArchiveViewModel: ObservableObject {
-    @Published var sessions: [Session] = []
-    @Published var query: String = ""
+    @Published var sessions: [Session] = [] { didSet { regroup() } }
+    @Published var query: String = "" { didSet { regroup() } }
+    @Published private(set) var groups: [(title: String, sessions: [Session])] = []
 
     private let store: TranscriptStore
     private var cancellables = Set<AnyCancellable>()
@@ -36,8 +37,12 @@ final class TranscriptArchiveViewModel: ObservableObject {
         return sessions.filter { $0.title.lowercased().contains(q) }
     }
 
+    private func regroup() {
+        groups = Perf.measure("archive.group") { computeGroups() }
+    }
+
     /// Sessions grouped into relative date buckets (most-recent first).
-    var groups: [(title: String, sessions: [Session])] {
+    private func computeGroups() -> [(title: String, sessions: [Session])] {
         let cal = Calendar.current
         let now = Date()
         var buckets: [(key: Int, title: String, items: [Session])] = []

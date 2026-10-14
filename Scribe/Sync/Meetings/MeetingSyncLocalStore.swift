@@ -49,7 +49,7 @@ struct MeetingSyncLocalStore: Sendable {
         self.dbManager = dbManager
     }
 
-    private var db: DatabaseQueue { dbManager.database }
+    private var db: any DatabaseWriter { dbManager.database }
 
     private static let changeTokenKey = "changeToken"
     private static let deviceIdKey = "deviceId"

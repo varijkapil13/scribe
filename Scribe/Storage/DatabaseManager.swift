@@ -3,8 +3,8 @@ import GRDB
 
 /// Manages the SQLite database used by Scribe, including setup and migrations.
 ///
-/// Conforms to `@unchecked Sendable` because its only mutable state is the
-/// GRDB `DatabaseQueue`, which serializes access internally.
+/// Conforms to `@unchecked Sendable` because its only state is the GRDB
+/// writer, which is itself `Sendable`.
 final class DatabaseManager: @unchecked Sendable {
 
     // MARK: - Singleton
@@ -35,15 +35,16 @@ final class DatabaseManager: @unchecked Sendable {
 
     // MARK: - Properties
 
-    /// The underlying GRDB database queue.
-    let database: DatabaseQueue
+    /// A WAL `DatabasePool` on disk, so reads never wait behind a background
+    /// write; a `DatabaseQueue` for `":memory:"`, which a pool can't open.
+    let database: any DatabaseWriter
 
     // MARK: - Initializer
 
     /// Creates a `DatabaseManager` backed by the database at the given file path.
     /// Pass `":memory:"` for an in-memory database (useful for tests).
     init(path: String) throws {
-        database = try DatabaseQueue(path: path)
+        database = path == ":memory:" ? try DatabaseQueue() : try DatabasePool(path: path)
         try runMigrations()
     }
 

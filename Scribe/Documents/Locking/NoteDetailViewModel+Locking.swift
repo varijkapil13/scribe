@@ -211,16 +211,18 @@ extension NoteDetailViewModel {
     /// Sets / clears `locked: true` in the note's frontmatter (for other
     /// tools; Scribe itself detects the envelope).
     func setLockedFrontmatterFlag(_ locked: Bool) {
-        guard let fileStore = store.fileStore,
-              let entry = try? fileStore.locate(id: note.id) else { return }
-        var file = entry.file
-        file.frontmatter.setExtra(LockedNoteEnvelope.frontmatterKey, locked ? "true" : nil)
-        guard file != entry.file else { return }
-        do {
-            _ = try fileStore.write(file)
-            rebaseOnOwnLatestWrite()
-        } catch {
-            errorMessage = error.localizedDescription
+        store.modifyNote(id: note.id, by: .editor(writerId)) {
+            guard let fileStore = store.fileStore,
+                  let entry = try? fileStore.locate(id: note.id) else { return }
+            var file = entry.file
+            file.frontmatter.setExtra(LockedNoteEnvelope.frontmatterKey, locked ? "true" : nil)
+            guard file != entry.file else { return }
+            do {
+                _ = try fileStore.write(file)
+                rebaseOnOwnLatestWrite()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }

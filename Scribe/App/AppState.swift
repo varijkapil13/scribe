@@ -32,10 +32,19 @@ final class AppState: ObservableObject {
 
     // MARK: - Published Properties
 
-    @Published var audioManager = AudioSessionManager()
-    @Published var speechEngine = SpeechRecognizerEngine()
-    @Published var transcriptStore: TranscriptStore
-    @Published var overlaySegments: [TranscriptionSegment] = []
+    let audioManager = AudioSessionManager()
+    let speechEngine = SpeechRecognizerEngine()
+    let transcriptStore: TranscriptStore
+    /// Live-feed rows; observed by the feed views only, never through `AppState`.
+    let liveTranscript = LiveTranscript()
+    let recordingStatus = RecordingStatus()
+    let recordingClock = RecordingClock()
+
+    var overlaySegments: [TranscriptionSegment] {
+        get { liveTranscript.segments }
+        set { liveTranscript.segments = newValue }
+    }
+
     @Published var currentSessionId: String?
     @Published var isTranscribing: Bool = false
     /// True while a recording is being started (permission checks, model
@@ -68,8 +77,9 @@ final class AppState: ObservableObject {
 
     /// The current sidebar selection in `MainWindowView`. Updated by the view
     /// on every selection change. `AppDelegate.startRecording` reads it when
-    /// deciding which Note a new global recording should bind to.
-    @Published var currentSelection: MainSelection?
+    /// deciding which Note a new global recording should bind to. Not
+    /// published: nothing renders it.
+    var currentSelection: MainSelection?
 
     // MARK: - Private Properties
 
@@ -132,6 +142,8 @@ final class AppState: ObservableObject {
     ///   the shared on-disk store backing the running app.
     init(transcriptStore: TranscriptStore = TranscriptStore()) {
         self.transcriptStore = transcriptStore
+        recordingStatus.bind(isRecording: $isTranscribing, isPaused: audioManager.$isPaused)
+        recordingClock.bind(duration: audioManager.$recordingDuration)
         // Under `--uitesting`, skip everything that touches audio hardware,
         // CoreAudio device enumeration, or ScreenCaptureKit so XCUITest can
         // launch the app without booting the capture stack (which crashes a
@@ -159,6 +171,7 @@ final class AppState: ObservableObject {
         let initial = UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? ""
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .map { _ in UserDefaults.standard.string(forKey: "selectedMicrophoneID") ?? "" }
             .changes(from: initial)
             .sink { [weak self] stored in
@@ -213,6 +226,7 @@ final class AppState: ObservableObject {
         let initial = UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .map { _ in UserDefaults.standard.object(forKey: "captureSystemAudio") as? Bool }
             .changes(from: initial)
             .compactMap { $0 }
@@ -237,6 +251,7 @@ final class AppState: ObservableObject {
 
         NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .compactMap { _ in UserDefaults.standard.string(forKey: "selectedLanguage") }
             .removeDuplicates()
             .sink { [weak self] newLanguage in
@@ -405,14 +420,16 @@ final class AppState: ObservableObject {
             text: pending.text
         )
 
-        if let idx = overlaySegments.firstIndex(where: { $0.id == liveId }) {
-            overlaySegments[idx] = liveSegment
+        var segments = liveTranscript.segments
+        if let idx = segments.firstIndex(where: { $0.id == liveId }) {
+            segments[idx] = liveSegment
         } else {
-            overlaySegments.append(liveSegment)
-            if overlaySegments.count > 20 {
-                overlaySegments.removeFirst(overlaySegments.count - 20)
+            segments.append(liveSegment)
+            if segments.count > 20 {
+                segments.removeFirst(segments.count - 20)
             }
         }
+        liveTranscript.segments = segments
     }
 
     /// Stable identifier for the in-progress live row — re-using the same

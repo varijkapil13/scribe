@@ -232,9 +232,11 @@ struct ScribeShareInboxImporter {
     }
 
     private func appendToInboxNote(_ payload: ScribeSharePayload, in folder: URL, timeZone: TimeZone) throws -> ScribeShareImportOutcome {
-        var note: Note
-        if let existing = try noteStore.resolveTitle(ScribeShareComposer.inboxNoteTitle) {
-            note = existing
+        let existing = try noteStore.resolveTitle(ScribeShareComposer.inboxNoteTitle)
+            ?? noteStore.createNote(title: ScribeShareComposer.inboxNoteTitle, body: "")
+        let links = saveImages(payload, in: folder, noteId: existing.id)
+        let note = try noteStore.modifyNote(id: existing.id, by: .other) { () throws -> Note in
+            var note = existing
             // The DB row's body is only a placeholder when notes live on disk;
             // never append to it (that would replace the note with one entry).
             if noteStore.fileStore != nil {
@@ -245,14 +247,11 @@ struct ScribeShareInboxImporter {
             } else if let fresh = try noteStore.fetchNote(id: existing.id) {
                 note = fresh
             }
-        } else {
-            note = try noteStore.createNote(title: ScribeShareComposer.inboxNoteTitle, body: "")
+            let entry = ScribeShareComposer.inboxEntry(for: payload, imageLinks: links, timeZone: timeZone)
+            note.body = ScribeShareComposer.appending(entry, to: note.body)
+            try noteStore.updateNote(note, tags: try noteStore.tags(for: note.id))
+            return note
         }
-        let links = saveImages(payload, in: folder, noteId: note.id)
-        let entry = ScribeShareComposer.inboxEntry(for: payload, imageLinks: links, timeZone: timeZone)
-        note.body = ScribeShareComposer.appending(entry, to: note.body)
-        let tags = try noteStore.tags(for: note.id)
-        try noteStore.updateNote(note, tags: tags)
         NotificationCenter.default.post(
             name: .scribeNoteChangedInApp,
             object: nil,

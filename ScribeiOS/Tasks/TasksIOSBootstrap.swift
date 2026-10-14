@@ -63,7 +63,7 @@ final class TasksReminderAutoScheduler {
     private var needsRefresh = false
     private var reconciledPending = false
 
-    func start(database: DatabaseQueue) {
+    func start(database: any DatabaseWriter) {
         guard observation == nil else { return }
         observation = Self.observeTasks(in: database) {
             Task { @MainActor in TasksReminderAutoScheduler.shared.changed() }
@@ -121,7 +121,7 @@ final class TasksReminderAutoScheduler {
     /// `nonisolated` so GRDB's change callback (on the database queue) is not
     /// a main-actor closure.
     nonisolated private static func observeTasks(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let observation = DatabaseRegionObservation(tracking: TodoTask.all())

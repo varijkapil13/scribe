@@ -273,7 +273,7 @@ struct LiveTranscriptFeed: View {
     private func scrollToNewest(_ proxy: ScrollViewProxy, partial: Bool = false) {
         let target: AnyHashable? = partial ? "partial" : segments.last?.id
         guard let target else { return }
-        if reduceMotion {
+        if reduceMotion || partial {
             proxy.scrollTo(target, anchor: .bottom)
         } else {
             withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {

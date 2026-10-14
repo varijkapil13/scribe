@@ -132,6 +132,9 @@ struct TranscriptDetailView: View {
             highlights.load(sessionId: session.id)
         }
         .onDisappear { audioPlayer.stop() }
+        .onChange(of: viewModel.segments, initial: true) { _, segments in
+            audioPlayer.segments = segments
+        }
         // Background diarization finished: segments were split/relabelled.
         .onReceive(NotificationCenter.default.publisher(for: .scribeSpeakersDidChange)) { note in
             if (note.object as? String) == viewModel.session.id {
@@ -421,9 +424,7 @@ struct TranscriptDetailView: View {
             .frame(minHeight: 280)
         } else {
             LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                let playingSegmentId = audioPlayer.isPlaying
-                    ? PlaybackTimeline.currentSegmentId(at: audioPlayer.currentTimeMs, in: viewModel.segments)
-                    : nil
+                let playingSegmentId = audioPlayer.currentSegmentId
                 ForEach(viewModel.segments) { segment in
                     SegmentView(
                         segment: segment,

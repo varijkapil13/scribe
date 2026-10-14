@@ -23,18 +23,21 @@ enum ScribeIntentsBridge {
     /// version history and tells an open editor to reload.
     static func append(_ text: String, toNoteId noteId: String) async throws -> NoteEntity {
         let store = NoteStore.shared
-        guard var current = try store.fetchNote(id: noteId) else { throw ScribeIntentError.noteNotFound }
-        if current.body.isEmpty, !(current.bodyExcerpt ?? "").isEmpty {
-            throw ScribeIntentError.noteUnreadable
-        }
-        if LockedNoteEnvelope.isLocked(current.body) {
-            throw ScribeIntentError.noteUnreadable
-        }
-        let updated = ScribeIntentsText.append(text, to: current.body)
-        if updated != current.body {
+        let changed = try store.modifyNote(id: noteId, by: .other) { () throws -> Bool in
+            guard var current = try store.fetchNote(id: noteId) else { throw ScribeIntentError.noteNotFound }
+            if current.body.isEmpty, !(current.bodyExcerpt ?? "").isEmpty {
+                throw ScribeIntentError.noteUnreadable
+            }
+            if LockedNoteEnvelope.isLocked(current.body) {
+                throw ScribeIntentError.noteUnreadable
+            }
+            let updated = ScribeIntentsText.append(text, to: current.body)
+            guard updated != current.body else { return false }
             current.body = updated
-            let tags = try store.tags(for: noteId)
-            try store.updateNote(current, tags: tags, versionReason: .aiEdit)
+            try store.updateNote(current, tags: try store.tags(for: noteId), versionReason: .aiEdit)
+            return true
+        }
+        if changed {
             NotificationCenter.default.post(
                 name: .scribeNoteChangedInApp,
                 object: nil,

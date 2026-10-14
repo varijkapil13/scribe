@@ -98,7 +98,7 @@ final class AttachmentTextStore: Sendable {
         self.dbManager = dbManager
     }
 
-    private var db: DatabaseQueue { dbManager.database }
+    private var db: any DatabaseWriter { dbManager.database }
 
     // MARK: Reads
 

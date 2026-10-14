@@ -3,6 +3,11 @@ import Foundation
 import GRDB
 import Combine
 
+struct NoteTitle: Equatable, Sendable {
+    let id: String
+    let title: String
+}
+
 enum NoteStoreError: Error, LocalizedError {
     case dailyNoteNotFound(String)
     var errorDescription: String? {
@@ -12,7 +17,7 @@ enum NoteStoreError: Error, LocalizedError {
     }
 }
 
-// @unchecked Sendable is safe: DatabaseQueue is thread-safe and dbManager is
+// @unchecked Sendable is safe: the GRDB writer is Sendable and dbManager is
 // immutable after init — no mutable state crosses actor boundaries.
 final class NoteStore: @unchecked Sendable {
 
@@ -38,7 +43,7 @@ final class NoteStore: @unchecked Sendable {
         _fileStore = newValue
         fileStoreLock.unlock()
     }
-    private var db: DatabaseQueue { dbManager.database }
+    private var db: any DatabaseWriter { dbManager.database }
 
     // nonisolated(unsafe) required for Swift 6 strict concurrency on a global
     // stored property accessed from non-isolated contexts.
@@ -94,7 +99,7 @@ final class NoteStore: @unchecked Sendable {
     func createNote(title: String, body: String = "", tags: [String] = [],
                     isDailyNote: Bool = false, dailyDate: String? = nil,
                     notebookId: String? = nil) throws -> Note {
-        let created = try db.write { database -> Note in
+        let created = try NoteWriteQueue.run { try db.write { database -> Note in
             var note = Note(title: title, body: body,
                             isDailyNote: isDailyNote, dailyDate: dailyDate,
                             notebookId: notebookId)
@@ -110,7 +115,7 @@ final class NoteStore: @unchecked Sendable {
             // rolls the row back.
             try mirrorToDisk(note: note, tags: tags)
             return note
-        }
+        } }
         return created
     }
 
@@ -119,6 +124,14 @@ final class NoteStore: @unchecked Sendable {
     /// history per `NoteVersionPolicy` (`versionReason` other than `.edit`
     /// bypasses the five-minute throttle).
     func updateNote(_ note: Note, tags: [String], versionReason: NoteVersionReason = .edit) throws {
+        try NoteWriteQueue.run {
+            try Perf.measure("NoteStore.updateNote") {
+                try writeNote(note, tags: tags, versionReason: versionReason)
+            }
+        }
+    }
+
+    private func writeNote(_ note: Note, tags: [String], versionReason: NoteVersionReason) throws {
         recordVersionBeforeSave(of: note, reason: versionReason)
         try db.write { database in
             var mutable = note
@@ -155,7 +168,7 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func deleteNote(id: String) throws {
-        let audioDirectories = try db.write { database -> [String] in
+        let audioDirectories = try NoteWriteQueue.run { try db.write { database -> [String] in
             // Collect retained-audio folders before the session rows go.
             let audioPaths = try String.fetchAll(
                 database,
@@ -177,7 +190,7 @@ final class NoteStore: @unchecked Sendable {
             // file without the row and resurrect the note.
             deleteFromDisk(id: id)
             return audioPaths
-        }
+        } }
         for path in audioDirectories {
             SessionAudioStorage.removeDirectory(atPath: path)
         }
@@ -207,7 +220,7 @@ final class NoteStore: @unchecked Sendable {
     /// Outgoing wiki-links are rebuilt here; links *into* the note are rebuilt
     /// as the linking notes are next saved.
     func restoreDeletedNote(_ note: Note, tags: [String], extra: [FrontmatterEntry] = []) throws {
-        try db.write { database in
+        try NoteWriteQueue.run { try db.write { database in
             var restored = note
             restored.bodyExcerpt = Note.makeExcerpt(from: note.body)
             // The notebook may have been deleted since; notebookId has no FK,
@@ -231,7 +244,7 @@ final class NoteStore: @unchecked Sendable {
             try Self.upsertFTS(database, noteId: note.id, title: note.title, body: note.body)
             // Inside the transaction — see `createNote`.
             try mirrorToDisk(note: restored, tags: tags, extra: extra)
-        }
+        } }
     }
 
     /// Returns the number of recording sessions bound to a note. Cheap —
@@ -299,7 +312,9 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func fetchAllNotes() throws -> [Note] {
-        try db.read { try Note.order(Column("updatedAt").desc).fetchAll($0) }
+        try Perf.measure("NoteStore.fetchAllNotes") {
+            try db.read { try Note.order(Column("updatedAt").desc).fetchAll($0) }
+        }
     }
 
     // MARK: - Daily notes
@@ -443,6 +458,15 @@ final class NoteStore: @unchecked Sendable {
         }
     }
 
+    /// Id and title of every note, newest first — for callers that don't
+    /// need the rest of the row.
+    func fetchNoteTitles() throws -> [NoteTitle] {
+        try db.read { database in
+            try Row.fetchAll(database, sql: "SELECT id, title FROM notes ORDER BY updatedAt DESC")
+                .map { NoteTitle(id: $0["id"], title: $0["title"]) }
+        }
+    }
+
     // MARK: - Links
 
     func fetchAllLinks() throws -> [NoteLinkRow] {
@@ -475,7 +499,13 @@ final class NoteStore: @unchecked Sendable {
         guard !q.isEmpty else { return try fetchAllNotes() }
         let sanitized = Self.ftsQuery(from: q)
         guard !sanitized.isEmpty else { return [] }
-        return try db.read { database -> [Note] in
+        return try Perf.measure("NoteStore.searchNotes") {
+            try searchNotes(ftsQuery: sanitized)
+        }
+    }
+
+    private func searchNotes(ftsQuery sanitized: String) throws -> [Note] {
+        try db.read { database -> [Note] in
             let notes = try Note.fetchAll(database, sql: """
                 SELECT notes.* FROM notes
                 JOIN notes_fts ON notes.id = notes_fts.noteId
@@ -515,16 +545,22 @@ final class NoteStore: @unchecked Sendable {
 
     // MARK: - Observation
 
+    // Constant-region observations let a DatabasePool re-fetch on a reader
+    // after each commit instead of on the writer that made the change.
     func observeNotes() -> AnyPublisher<[Note], Error> {
         ValueObservation
-            .tracking { try Note.order(Column("updatedAt").desc).fetchAll($0) }
+            .trackingConstantRegion { database in
+                try Perf.measure("NoteStore.observeNotes") {
+                    try Note.order(Column("updatedAt").desc).fetchAll(database)
+                }
+            }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .eraseToAnyPublisher()
     }
 
     func observeNotebooks() -> AnyPublisher<[Notebook], Error> {
         ValueObservation
-            .tracking { try Notebook.order(Column("sortOrder")).fetchAll($0) }
+            .trackingConstantRegion { try Notebook.order(Column("sortOrder")).fetchAll($0) }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .eraseToAnyPublisher()
     }
@@ -547,7 +583,7 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func deleteNotebook(id: String) throws {
-        try db.write { database in
+        try NoteWriteQueue.run { try db.write { database in
             let affected = try String.fetchAll(
                 database,
                 sql: "SELECT id FROM notes WHERE notebookId = ?",
@@ -570,7 +606,7 @@ final class NoteStore: @unchecked Sendable {
                 arguments: [id]
             )
             try Notebook.deleteOne(database, key: id)
-        }
+        } }
     }
 
     func fetchAllNotebooks() throws -> [Notebook] {
@@ -598,7 +634,7 @@ final class NoteStore: @unchecked Sendable {
     }
 
     func moveNote(id: String, toNotebookId: String?) throws {
-        try db.write { database in
+        try NoteWriteQueue.run { try db.write { database in
             try database.execute(
                 sql: "UPDATE notes SET notebookId = ? WHERE id = ?",
                 arguments: [toNotebookId, id]
@@ -606,7 +642,7 @@ final class NoteStore: @unchecked Sendable {
             // Keep the file's `notebookId` in step so the reconciler
             // doesn't restore the old notebook.
             try rewriteFrontmatter(noteId: id) { $0.notebookId = toNotebookId }
-        }
+        } }
     }
 
     /// Re-writes only the frontmatter of the note's file (body and every
@@ -735,13 +771,15 @@ final class NoteStore: @unchecked Sendable {
     /// and the choice survives external edits / vault moves. Preserves body +
     /// other extras.
     func setNoteFont(id: String, _ font: String?) {
-        guard let fileStore, let entry = try? fileStore.locate(id: id) else { return }
-        var file = entry.file
-        file.frontmatter.setExtra("font", font)
-        do {
-            try fileStore.write(file)
-        } catch {
-            Log.storage.error("NoteStore.setNoteFont failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        NoteWriteQueue.run {
+            guard let fileStore, let entry = try? fileStore.locate(id: id) else { return }
+            var file = entry.file
+            file.frontmatter.setExtra("font", font)
+            do {
+                try fileStore.write(file)
+            } catch {
+                Log.storage.error("NoteStore.setNoteFont failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 

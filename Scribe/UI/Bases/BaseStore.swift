@@ -395,11 +395,13 @@ final class BaseStore: @unchecked Sendable {
     /// preserving body + reserved extras. No-op when no file store is
     /// configured (logic-only contexts).
     func saveProperties(_ properties: [NoteProperty], forNoteId id: String) throws {
-        guard let fileStore = noteStore.fileStore,
-              let url = try fileStore.findURL(for: id),
-              var file = try? fileStore.read(at: url) else { return }
-        file.frontmatter.applyProperties(properties)
-        VaultWriteGuard.shared.recordSelfWrite()
-        try fileStore.write(file)
+        try NoteWriteQueue.run {
+            guard let fileStore = noteStore.fileStore,
+                  let url = try fileStore.findURL(for: id),
+                  var file = try? fileStore.read(at: url) else { return }
+            file.frontmatter.applyProperties(properties)
+            VaultWriteGuard.shared.recordSelfWrite()
+            try fileStore.write(file)
+        }
     }
 }

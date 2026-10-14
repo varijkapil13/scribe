@@ -69,7 +69,7 @@ final class RemindersSyncScheduler {
 
     /// Starts observing settings, Reminders and local tasks, and runs the
     /// launch round. Idempotent.
-    func start(database: DatabaseQueue) {
+    func start(database: any DatabaseWriter) {
         guard !started else { return }
         started = true
         lastSignature = settingsSignature()
@@ -179,7 +179,7 @@ final class RemindersSyncScheduler {
     /// Observes the `tasks` table. `nonisolated` so GRDB's change callback
     /// (invoked on the database queue) is not a main-actor closure.
     nonisolated private static func observeLocalTaskChanges(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let observation = DatabaseRegionObservation(tracking: TodoTask.all())

@@ -96,14 +96,19 @@ final class UnlinkedMentionsModel: ObservableObject {
         NotificationCenter.default.post(name: .scribeNoteWillChangeInApp, object: nil,
                                         userInfo: [NoteVaultChange.noteIdsKey: ids])
         do {
-            guard var source = try store.fetchNote(id: sourceId) else { return }
-            guard let newBody = transform(source.body) else {
+            let linked = try store.modifyNote(id: sourceId, by: .other) { () throws -> Bool? in
+                guard var source = try store.fetchNote(id: sourceId) else { return nil }
+                guard let newBody = transform(source.body) else { return false }
+                source.body = newBody
+                try store.updateNote(source, tags: try store.tags(for: sourceId))
+                return true
+            }
+            guard let linked else { return }
+            guard linked else {
                 AppState.shared.report("That note changed since the mention was found. The list has been refreshed.")
                 reload()
                 return
             }
-            source.body = newBody
-            try store.updateNote(source, tags: try store.tags(for: sourceId))
             NotificationCenter.default.post(name: .scribeNoteChangedInApp, object: nil,
                                             userInfo: [NoteVaultChange.noteIdsKey: ids])
             AppState.shared.notify("Linked")

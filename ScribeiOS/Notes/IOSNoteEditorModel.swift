@@ -215,8 +215,12 @@ final class IOSNoteEditorModel {
     func flush() {
         saveTask?.cancel()
         saveTask = nil
-        guard dirty, var note else { return }
+        guard dirty, let note else { return }
+        NoteWriteQueue.run { write(note) }
+    }
 
+    private func write(_ note: Note) {
+        var note = note
         let current = store.currentFileFingerprint(forNoteId: noteId, reusing: loadedFingerprint)
         let decision = NoteExternalEditPolicy.decide(
             loaded: loadedFingerprint,
@@ -351,6 +355,10 @@ final class IOSNoteEditorModel {
     /// Sets / clears `locked: true` in the frontmatter (for other tools; the
     /// envelope itself is what Scribe detects).
     private func setLockedFrontmatterFlag(_ locked: Bool) {
+        NoteWriteQueue.run { writeLockedFrontmatterFlag(locked) }
+    }
+
+    private func writeLockedFrontmatterFlag(_ locked: Bool) {
         guard let fileStore = store.fileStore,
               let entry = try? fileStore.locate(id: noteId) else { return }
         var file = entry.file

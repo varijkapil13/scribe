@@ -996,9 +996,9 @@ struct TaskListView: View {
             .accessibilityHint(isCollapsed ? "Collapsed. Activate to expand." : "Expanded. Activate to collapse.")
 
             if !isCollapsed {
-                VStack(spacing: 0) {
-                    ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
-                        if index > 0 {
+                LazyVStack(spacing: 0) {
+                    ForEach(tasks) { task in
+                        if task.id != tasks.first?.id {
                             Divider()
                                 .padding(.leading, DesignTokens.Spacing.xxl)
                         }

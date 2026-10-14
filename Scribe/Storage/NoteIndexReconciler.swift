@@ -54,10 +54,14 @@ struct NoteIndexReconciler: Sendable {
     /// Runs one full pass in a single GRDB write transaction so partial
     /// states are never visible to readers.
     func reconcileDetailed() throws -> NoteReconcileResult {
+        try Perf.measure("NoteIndexReconciler.reconcile") { try reconcileWarmingFirst() }
+    }
+
+    private func reconcileWarmingFirst() throws -> NoteReconcileResult {
         // Parse changed files *before* taking the write lock: the listing
         // inside the transaction then re-reads nothing that is unchanged
-        // since (one stat per file), so the database — which the main
-        // thread also reads — is held only briefly. The authoritative
+        // since (one stat per file), so the write lock is held only
+        // briefly. The authoritative
         // listing is still the one inside the transaction.
         // It leaves the id → path map alone: only a listing taken inside a
         // transaction is consistent with NoteStore's in-transaction writes.

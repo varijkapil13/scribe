@@ -140,6 +140,19 @@ struct MeetingNoteRecapWriter {
         highlights: String?,
         transcript: String?
     ) throws -> Bool {
+        try NoteWriteQueue.run {
+            try upsert(noteId: noteId, sessionId: sessionId, summary: summary,
+                       highlights: highlights, transcript: transcript)
+        }
+    }
+
+    private func upsert(
+        noteId: String,
+        sessionId: String,
+        summary: String?,
+        highlights: String?,
+        transcript: String?
+    ) throws -> Bool {
         guard var note = try noteStore.fetchNote(id: noteId) else { return false }
         let updated = MeetingNoteRecap.apply(
             to: note.body,

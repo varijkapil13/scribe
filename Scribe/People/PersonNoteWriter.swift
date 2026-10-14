@@ -123,7 +123,8 @@ struct PersonNoteService {
     func createOrRefresh(_ person: Person) throws -> Note {
         let block = PersonNoteContent.autoBlock(for: person)
 
-        if var existing = try existingNote(for: person) {
+        let refreshed = try NoteWriteQueue.run { () throws -> Note? in
+            guard var existing = try existingNote(for: person) else { return nil }
             // Never write into a locked note's ciphertext.
             guard !LockedNoteEnvelope.isLocked(existing.body) else { return existing }
             let updated = PersonNoteContent.upsert(block: block, into: existing.body)
@@ -134,6 +135,7 @@ struct PersonNoteService {
             try noteStore.updateNote(existing, tags: tags)
             return existing
         }
+        if let refreshed { return refreshed }
 
         let notebookId = try peopleNotebookId(createIfMissing: true)
         let created = try noteStore.createNote(

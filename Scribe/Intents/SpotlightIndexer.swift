@@ -332,7 +332,7 @@ final class SpotlightIndexer {
     ) -> [SpotlightRecord]? {
         let records: [SpotlightRecord]
         do {
-            records = try fetchRecords(manager: manager)
+            records = try Perf.measure("SpotlightIndexer.fetchRecords") { try fetchRecords(manager: manager) }
         } catch {
             Log.storage.error("Spotlight: reading notes/tasks failed: \(error.localizedDescription, privacy: .public)")
             return nil
@@ -414,7 +414,7 @@ final class SpotlightIndexer {
     /// Pings `onChange` after every committed write to `notes` or `tasks`.
     /// `nonisolated` so GRDB's change callback isn't a main-actor closure.
     nonisolated private static func observeChanges(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let observation = DatabaseRegionObservation(tracking: Note.all(), TodoTask.all())

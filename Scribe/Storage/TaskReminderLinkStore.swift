@@ -77,7 +77,7 @@ final class TaskReminderLinkStore: Sendable {
 
     private let dbManager: DatabaseManager
 
-    private var db: DatabaseQueue { dbManager.database }
+    private var db: any DatabaseWriter { dbManager.database }
 
     init(databaseManager: DatabaseManager) {
         self.dbManager = databaseManager

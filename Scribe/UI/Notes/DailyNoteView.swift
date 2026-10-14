@@ -21,8 +21,8 @@ struct DailyNoteView: View {
 
     @State private var state: DailyState
     @Binding private var selectedDate: Date
-    @State private var datesWithNotes: Set<String> = []
-    @State private var taskSummariesByDay: [String: DaySummary] = [:]
+    @State private var datesWithNotes = Self.lastDatesWithNotes
+    @State private var taskSummariesByDay = Self.lastTaskSummaries
     @State private var noteChangeCancellable: AnyCancellable?
     @State private var taskChangeCancellable: AnyCancellable?
 
@@ -31,13 +31,13 @@ struct DailyNoteView: View {
     init(selectedDate: Binding<Date>, onNavigate: @escaping (String) -> Void) {
         self.onNavigate = onNavigate
         self._selectedDate = selectedDate
-        let day = Calendar.current.startOfDay(for: selectedDate.wrappedValue)
-        if let note = try? NoteStore.shared.fetchExistingDailyNote(for: day) {
-            _state = State(initialValue: .existing(note))
-        } else {
-            _state = State(initialValue: .draft(day))
-        }
+        _state = State(initialValue: Self.lookUpState(for: selectedDate.wrappedValue))
     }
+
+    // Seed the header on re-entry so its dots don't pop in after the first
+    // observation delivers.
+    @MainActor private static var lastDatesWithNotes: Set<String> = []
+    @MainActor private static var lastTaskSummaries: [String: DaySummary] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,19 +72,22 @@ struct DailyNoteView: View {
             }
         }
         .onChange(of: selectedDate) { _, newValue in
-            selectDate(newValue)
+            showDay(newValue)
         }
         .onAppear {
-            datesWithNotes = Set((try? NoteStore.shared.fetchDailyDates()) ?? [])
             noteChangeCancellable = NoteStore.shared.observeNotes()
+                .map { notes in Set(notes.compactMap { $0.isDailyNote ? $0.dailyDate : nil }) }
                 .sink(receiveCompletion: { _ in },
-                      receiveValue: { _ in
-                          datesWithNotes = Set((try? NoteStore.shared.fetchDailyDates()) ?? [])
+                      receiveValue: { dates in
+                          datesWithNotes = dates
+                          Self.lastDatesWithNotes = dates
                       })
             taskChangeCancellable = TaskStore.shared.observeTasks(filter: .all)
                 .sink(receiveCompletion: { _ in },
                       receiveValue: { tasks in
-                          taskSummariesByDay = Self.buildSummaries(tasks: tasks)
+                          let summaries = Self.buildSummaries(tasks: tasks)
+                          taskSummariesByDay = summaries
+                          Self.lastTaskSummaries = summaries
                       })
         }
     }
@@ -118,18 +121,22 @@ struct DailyNoteView: View {
     }
 
     private func selectDate(_ date: Date) {
-        let cal = Calendar.current
-        let day = cal.startOfDay(for: date)
-        selectedDate = day
-        if let note = try? NoteStore.shared.fetchExistingDailyNote(for: day) {
-            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                state = .existing(note)
-            }
-        } else {
-            withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                state = .draft(day)
-            }
+        let day = Calendar.current.startOfDay(for: date)
+        if selectedDate != day { selectedDate = day }
+    }
+
+    private func showDay(_ date: Date) {
+        let loaded = Self.lookUpState(for: date)
+        withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) { state = loaded }
+    }
+
+    // Synchronous: an async lookup renders a blank frame before the note.
+    private static func lookUpState(for date: Date) -> DailyState {
+        let day = Calendar.current.startOfDay(for: date)
+        let note = Perf.measure("daily note lookup") {
+            try? NoteStore.shared.fetchExistingDailyNote(for: day)
         }
+        return note.map { .existing($0) } ?? .draft(day)
     }
 }
 
@@ -700,27 +707,30 @@ private struct DraftDailyNoteView: View {
             guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             do {
                 let store = NoteStore.shared
-                let (fetched, didCreate) = try store.dailyNoteCreatingIfNeeded(for: date)
-                // If the day's note already exists (another window, iCloud,
-                // an external editor created it since this draft appeared),
-                // bind to it as-is — never overwrite its body with the
-                // draft's first keystroke.
-                var note = fetched
-                if !didCreate, let full = try store.fetchNote(id: fetched.id) {
-                    note = full   // real body from disk, not the DB placeholder
-                }
-                // A daily template seeded the new note: keep it, with the
-                // draft typed so far after it.
-                let draft = didCreate
-                    ? NoteTemplateRenderer.appendingDraft(newValue, toSeed: note.body)
-                    : newValue
-                if let body = NoteStore.dailyDraftBodyToWrite(
-                    created: didCreate,
-                    existingBody: note.body,
-                    draft: draft
-                ) {
-                    note.body = body
-                    try store.updateNote(note, tags: (try? store.tags(for: note.id)) ?? [])
+                let note = try NoteWriteQueue.run { () throws -> Note in
+                    let (fetched, didCreate) = try store.dailyNoteCreatingIfNeeded(for: date)
+                    // If the day's note already exists (another window, iCloud,
+                    // an external editor created it since this draft appeared),
+                    // bind to it as-is — never overwrite its body with the
+                    // draft's first keystroke.
+                    var note = fetched
+                    if !didCreate, let full = try store.fetchNote(id: fetched.id) {
+                        note = full   // real body from disk, not the DB placeholder
+                    }
+                    // A daily template seeded the new note: keep it, with the
+                    // draft typed so far after it.
+                    let draft = didCreate
+                        ? NoteTemplateRenderer.appendingDraft(newValue, toSeed: note.body)
+                        : newValue
+                    if let body = NoteStore.dailyDraftBodyToWrite(
+                        created: didCreate,
+                        existingBody: note.body,
+                        draft: draft
+                    ) {
+                        note.body = body
+                        try store.updateNote(note, tags: (try? store.tags(for: note.id)) ?? [])
+                    }
+                    return note
                 }
                 hasCreated = true
                 onCreated(note)

@@ -133,9 +133,13 @@ final class NotesLibraryModel {
     func rename(noteId: String, to rawTitle: String) {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            guard var note = try store.fetchNote(id: noteId), note.title != title else { return }
-            note.title = title
-            try store.updateNote(note, tags: try store.tags(for: noteId))
+            let renamed = try NoteWriteQueue.run { () throws -> Bool in
+                guard var note = try store.fetchNote(id: noteId), note.title != title else { return false }
+                note.title = title
+                try store.updateNote(note, tags: try store.tags(for: noteId))
+                return true
+            }
+            guard renamed else { return }
             NotificationCenter.default.post(name: .noteVaultFilesChanged, object: nil,
                                             userInfo: [NoteVaultChange.noteIdsKey: Set([noteId])])
         } catch {

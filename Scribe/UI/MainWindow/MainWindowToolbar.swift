@@ -49,7 +49,7 @@ struct MainWindowToolbar: CustomizableToolbarContent {
         .defaultCustomization(.hidden)
 
         ToolbarItem(id: "recordingStatus", placement: .navigation) {
-            RecordingStatusPill(audioManager: appState.audioManager, appState: appState)
+            RecordingStatusPill(status: appState.recordingStatus, clock: appState.recordingClock)
                 .onTapGesture {
                     if isRecording { onShowLive() }
                 }

@@ -22,14 +22,14 @@ enum NoteVersionStoreError: Error, LocalizedError {
 /// failure must never block saving the note itself.
 ///
 /// `@unchecked Sendable`: the only state is immutable configuration plus the
-/// thread-safe `DatabaseQueue`.
+/// `Sendable` GRDB writer.
 final class NoteVersionStore: @unchecked Sendable {
 
     let dbManager: DatabaseManager
     /// Root folder for compressed snapshot files.
     let directory: URL
 
-    private var db: DatabaseQueue { dbManager.database }
+    private var db: any DatabaseWriter { dbManager.database }
 
     init(dbManager: DatabaseManager, directory: URL) {
         self.dbManager = dbManager

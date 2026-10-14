@@ -36,7 +36,7 @@ final class WidgetSnapshotPublisher {
     // MARK: - Lifecycle
 
     /// Starts observing the sources and publishes once. Idempotent.
-    func start(database: DatabaseQueue) {
+    func start(database: any DatabaseWriter) {
         guard !started else { return }
         started = true
 
@@ -159,7 +159,7 @@ final class WidgetSnapshotPublisher {
     /// Pings `onChange` after every committed write to `tasks`.
     /// `nonisolated` so GRDB's change callback isn't a main-actor closure.
     nonisolated private static func observeTaskChanges(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let observation = DatabaseRegionObservation(tracking: TodoTask.all())

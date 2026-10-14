@@ -80,23 +80,25 @@ struct QuickCaptureSaver {
 
         case .appendToDaily(let text):
             let daily = try noteStore.dailyNote(for: now)
-            // `dailyNote(for:)` returns the DB row, whose body is only a
-            // placeholder; the real body lives on disk. With a vault, refuse
-            // to append when the file can't be read: appending to the
-            // placeholder would overwrite the day's note with one line.
-            var note = daily
-            if noteStore.fileStore != nil {
-                guard let entry = noteStore.diskEntry(forNoteId: daily.id) else {
-                    throw QuickCaptureSaveError.dailyNoteUnreadable
+            let note = try noteStore.modifyNote(id: daily.id, by: .other) {
+                // `dailyNote(for:)` returns the DB row, whose body is only a
+                // placeholder; the real body lives on disk. With a vault, refuse
+                // to append when the file can't be read: appending to the
+                // placeholder would overwrite the day's note with one line.
+                var note = daily
+                if noteStore.fileStore != nil {
+                    guard let entry = noteStore.diskEntry(forNoteId: daily.id) else {
+                        throw QuickCaptureSaveError.dailyNoteUnreadable
+                    }
+                    note.body = entry.file.body
+                } else {
+                    note = try noteStore.fetchNote(id: daily.id) ?? daily
                 }
-                note.body = entry.file.body
-            } else {
-                note = try noteStore.fetchNote(id: daily.id) ?? daily
+                let entry = QuickCaptureComposer.dailyEntry(text: text, at: now, timeZone: timeZone)
+                note.body = QuickCaptureComposer.appendingDailyEntry(entry, to: note.body)
+                try noteStore.updateNote(note, tags: try noteStore.tags(for: note.id))
+                return note
             }
-            let entry = QuickCaptureComposer.dailyEntry(text: text, at: now, timeZone: timeZone)
-            note.body = QuickCaptureComposer.appendingDailyEntry(entry, to: note.body)
-            let tags = try noteStore.tags(for: note.id)
-            try noteStore.updateNote(note, tags: tags)
             NotificationCenter.default.post(
                 name: .scribeNoteChangedInApp,
                 object: nil,

@@ -34,6 +34,7 @@ struct NoteEditorView: View {
     /// Known note titles, refreshed when the editor appears / the note changes,
     /// so the web editor can style `[[wiki links]]` as resolved vs broken.
     @State private var knownTitles: [String] = []
+    @State private var completionCache = EditorCompletionCache()
     /// Lets the menu bar's Format / Find commands reach this editor.
     @State private var commandBridge = EditorCommandBridge()
     /// Fallback outline/command model when the owner doesn't supply one.
@@ -84,11 +85,9 @@ struct NoteEditorView: View {
                     plantUMLRemoteEnabled: plantUMLRemoteEnabled,
                     commandBridge: commandBridge,
                     attachmentNoteId: noteId,
-                    completionDataProvider: { [noteStore] in
-                        EditorCompletionData(
-                            titles: (try? noteStore.allNoteTitles()) ?? [],
-                            tags: (try? noteStore.allNoteTags()) ?? []
-                        )
+                    completionDataProvider: { [completionCache, noteStore] in
+                        completionCache.refresh(from: noteStore)
+                        return completionCache.data
                     },
                     model: editorModel ?? ownEditorModel
                 )
@@ -110,18 +109,15 @@ struct NoteEditorView: View {
         )
         .onAppear {
             loadPerNoteTypeface()
-            loadKnownTitles()
         }
         .onChange(of: noteId) { _, _ in
             loadPerNoteTypeface()
-            loadKnownTitles()
+        }
+        .task(id: noteId) {
+            await completionCache.reload(from: noteStore)
+            knownTitles = completionCache.data.titles
         }
         .onChange(of: perNoteTypefaceRaw) { _, newValue in savePerNoteTypeface(newValue) }
-    }
-
-    /// Loads the set of known note titles for wiki-link resolution styling.
-    private func loadKnownTitles() {
-        knownTitles = (try? noteStore.allNoteTitles()) ?? []
     }
 
     // MARK: - Per-note typeface persistence
@@ -144,6 +140,34 @@ struct NoteEditorView: View {
         // Persist to frontmatter (portable); clear the legacy app-side key.
         NoteStore.shared.setNoteFont(id: noteId, value.isEmpty ? nil : value)
         UserDefaults.standard.removeObject(forKey: NoteTypeface.storageKey(forNoteId: noteId))
+    }
+}
+
+/// Note titles and tags for the web editor's `[[` / `#` completion, fetched
+/// off the main actor. The editor asks synchronously, so it gets the cached
+/// set and a refresh is started for its next request.
+@MainActor
+final class EditorCompletionCache {
+    private(set) var data = EditorCompletionData(titles: [], tags: [])
+    private var refreshTask: Task<Void, Never>?
+
+    func refresh(from store: NoteStore) {
+        guard refreshTask == nil else { return }
+        refreshTask = Task { [weak self] in
+            await self?.reload(from: store)
+            self?.refreshTask = nil
+        }
+    }
+
+    func reload(from store: NoteStore) async {
+        data = await Task.detached(priority: .userInitiated) {
+            Perf.measure("NoteEditorView.completionData") {
+                EditorCompletionData(
+                    titles: (try? store.allNoteTitles()) ?? [],
+                    tags: (try? store.allNoteTags()) ?? []
+                )
+            }
+        }.value
     }
 }
 

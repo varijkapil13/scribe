@@ -424,7 +424,7 @@ enum ScribeBackupArchiver {
 
     // MARK: - Helpers
 
-    private nonisolated static func backupDatabase(_ source: DatabaseQueue, toFileAt url: URL) throws {
+    private nonisolated static func backupDatabase(_ source: any DatabaseReader, toFileAt url: URL) throws {
         let destination = try DatabaseQueue(path: url.path)
         try source.backup(to: destination)
     }

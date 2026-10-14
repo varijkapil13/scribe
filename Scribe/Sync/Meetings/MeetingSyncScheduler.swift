@@ -319,7 +319,7 @@ final class MeetingSyncScheduler: ObservableObject {
     /// meeting write). `nonisolated` so GRDB's callback isn't a main-actor
     /// closure; it only forwards a Sendable ping.
     nonisolated private static func observeLocalMeetingChanges(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let observation = DatabaseRegionObservation(

@@ -156,6 +156,11 @@ struct ShimmerPlaceholder: View {
                 phase = 1.6
             }
         }
+        .onDisappear {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { phase = -1 }
+        }
         .accessibilityHidden(true)
     }
 

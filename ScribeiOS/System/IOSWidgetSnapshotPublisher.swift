@@ -41,7 +41,7 @@ final class IOSWidgetSnapshotPublisher {
 
     // MARK: - Lifecycle
 
-    func start(database: DatabaseQueue) {
+    func start(database: any DatabaseWriter) {
         guard !started else { return }
         started = true
 
@@ -157,7 +157,7 @@ final class IOSWidgetSnapshotPublisher {
 
     /// Pings `onChange` after every committed write to `tasks`.
     nonisolated private static func observeTaskChanges(
-        in database: DatabaseQueue,
+        in database: any DatabaseWriter,
         onChange: @escaping @Sendable () -> Void
     ) -> AnyDatabaseCancellable {
         let observation = DatabaseRegionObservation(tracking: TodoTask.all())

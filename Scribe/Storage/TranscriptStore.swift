@@ -3,7 +3,7 @@ import GRDB
 import Combine
 
 /// High-level query interface for reading and writing transcription data.
-// @unchecked Sendable is safe: DatabaseQueue is thread-safe and dbManager is
+// @unchecked Sendable is safe: the GRDB writer is Sendable and dbManager is
 // immutable after init — no mutable state crosses actor boundaries.
 final class TranscriptStore: @unchecked Sendable {
 
@@ -16,7 +16,7 @@ final class TranscriptStore: @unchecked Sendable {
     let dbManager: DatabaseManager
 
     /// Convenience accessor for the underlying database queue.
-    private var db: DatabaseQueue { dbManager.database }
+    private var db: any DatabaseWriter { dbManager.database }
 
     // MARK: - Initializer
 
