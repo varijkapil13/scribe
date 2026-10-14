@@ -14,9 +14,6 @@ struct NotesBrowserView: View {
     @State private var navPath: [String] = []
     @State private var currentNote: Note?
     @State private var titlesById: [String: String] = [:]
-    /// Direction of the last navigation, so the card transition slides the
-    /// right way (push → in from trailing; pop → in from leading).
-    @State private var goingBack = false
     @State private var activeScope: NoteListScope
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -38,7 +35,6 @@ struct NotesBrowserView: View {
         Binding(
             get: { navPath.first },
             set: { newValue in
-                goingBack = false
                 navPath = newValue.map { [$0] } ?? []
             }
         )
@@ -73,48 +69,34 @@ struct NotesBrowserView: View {
                 breadcrumbBar
             }
             Group {
-                if let note = currentNote, note.id == navPath.last {
+                if navPath.isEmpty {
+                    emptyState
+                } else if let note = currentNote {
                     NoteDetailView(note: note, onNavigate: { push($0) })
                         .id(note.id)
-                        .transition(cardTransition)
-                } else if navPath.isEmpty {
-                    emptyState
-                } else {
-                    Color.clear  // brief gap while the next card loads
+                        .transition(.opacity)
                 }
             }
-            .animation(DesignTokens.Motion.resolve(DesignTokens.Motion.gentle, reduceMotion: reduceMotion),
-                       value: currentNote?.id)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: currentNote?.id)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(DesignTokens.Palette.ground)
-    }
-
-    private var cardTransition: AnyTransition {
-        guard !reduceMotion else { return .opacity }
-        return .asymmetric(
-            insertion: .move(edge: goingBack ? .leading : .trailing).combined(with: .opacity),
-            removal:   .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity)
-        )
     }
 
     // MARK: - Navigation
 
     private func push(_ noteId: String) {
         guard noteId != navPath.last else { return }
-        goingBack = false
         navPath.append(noteId)
     }
 
     private func pop() {
         guard navPath.count > 1 else { return }
-        goingBack = true
         navPath.removeLast()
     }
 
     private func popTo(index: Int) {
         guard index < navPath.count - 1 else { return }
-        goingBack = true
         navPath = Array(navPath.prefix(index + 1))
     }
 
