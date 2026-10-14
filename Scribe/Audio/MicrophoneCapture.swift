@@ -78,7 +78,7 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// own actor before touching UI state.
     var onLevel: ((Float) -> Void)?
 
-    /// Called (on the main queue) when the *system default* input device
+    /// Called (on ``listenerQueue``) when the *system default* input device
     /// changes while we are following the default — i.e. ``selectedDeviceID``
     /// is `nil`. The owner should restart capture so the new device is picked
     /// up live. Not fired when the user has pinned a specific device.
@@ -88,7 +88,7 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// be removed again in ``stopObservingDefaultInputDevice()``.
     private var defaultDeviceListener: AudioObjectPropertyListenerBlock?
 
-    /// Called (on the main queue) when the set of in-use input devices changes
+    /// Called (on ``listenerQueue``) when the set of in-use input devices changes
     /// while ``autoDetectActiveInput`` is on, so the owner can re-resolve and
     /// switch to the mic a call app just started using. Fired on any input
     /// device's running-state change or when devices are added/removed.
@@ -99,10 +99,19 @@ final class MicrophoneCapture: @unchecked Sendable {
     private var runningListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
     private var deviceListListener: AudioObjectPropertyListenerBlock?
 
+    /// Queue the CoreAudio device listeners (and so the `on…Changed`
+    /// callbacks) run on. Set before observing; listeners are removed on the
+    /// queue they were added with.
+    var listenerQueue: DispatchQueue = .main
+
     // MARK: - Device Enumeration
 
     /// Returns the list of available audio input devices via CoreAudio.
     func availableInputDevices() -> [(id: AudioDeviceID, name: String)] {
+        Self.inputDevices()
+    }
+
+    static func inputDevices() -> [(id: AudioDeviceID, name: String)] {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -415,7 +424,7 @@ final class MicrophoneCapture: @unchecked Sendable {
         let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
-            DispatchQueue.main,
+            listenerQueue,
             block
         )
         guard status == noErr else {
@@ -432,7 +441,7 @@ final class MicrophoneCapture: @unchecked Sendable {
         AudioObjectRemovePropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
-            DispatchQueue.main,
+            listenerQueue,
             block
         )
         defaultDeviceListener = nil
@@ -567,7 +576,7 @@ final class MicrophoneCapture: @unchecked Sendable {
         let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
-            DispatchQueue.main,
+            listenerQueue,
             block
         )
         guard status == noErr else {
@@ -585,14 +594,14 @@ final class MicrophoneCapture: @unchecked Sendable {
             AudioObjectRemovePropertyListenerBlock(
                 AudioObjectID(kAudioObjectSystemObject),
                 &address,
-                DispatchQueue.main,
+                listenerQueue,
                 block
             )
             deviceListListener = nil
         }
         var address = Self.runningSomewhereAddress
         for (deviceID, block) in runningListeners {
-            AudioObjectRemovePropertyListenerBlock(deviceID, &address, DispatchQueue.main, block)
+            AudioObjectRemovePropertyListenerBlock(deviceID, &address, listenerQueue, block)
         }
         runningListeners.removeAll()
     }
@@ -609,7 +618,7 @@ final class MicrophoneCapture: @unchecked Sendable {
             let status = AudioObjectAddPropertyListenerBlock(
                 device.id,
                 &address,
-                DispatchQueue.main,
+                listenerQueue,
                 block
             )
             if status == noErr {
