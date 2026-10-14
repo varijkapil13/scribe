@@ -33,11 +33,6 @@
   --scribe-mono-font: ui-monospace, SFMono-Regular, Menlo, monospace;
   --scribe-measure: 100000px;
   --scribe-gutter: 2.75rem;
-  --scribe-page: #fbfbfa;
-}
-
-html[data-theme="dark"] {
-  --scribe-page: #1b1b1a;
 }
 
 @media (max-width: 600px) {
@@ -53,7 +48,7 @@ body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background-color: var(--scribe-page);
+  background-color: transparent;
 }
 
 #editor {

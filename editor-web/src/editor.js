@@ -188,7 +188,7 @@ function makeTheme(dark) {
     {
       "&": {
         color: p.text,
-        backgroundColor: p.ground,
+        backgroundColor: "transparent",
         "--scribe-text": p.text,
         "--scribe-secondary": p.secondary,
         "--scribe-caret": p.accent,
