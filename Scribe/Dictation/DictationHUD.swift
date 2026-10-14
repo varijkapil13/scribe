@@ -41,7 +41,7 @@ final class DictationHUD {
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.contentView = NSHostingView(rootView: DictationHUDView(controller: controller))
+        panel.contentView = NSHostingView(rootView: DictationHUDView(controller: controller).tint(DesignTokens.Palette.accent))
         return panel
     }
 

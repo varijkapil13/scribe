@@ -1,17 +1,8 @@
+import CoreText
 import SwiftUI
 
-/// Design tokens for Scribe's native macOS UI.
-///
-/// Everything is derived from the system palette and SF typography so light/
-/// dark mode, high-contrast, Dynamic Type, and Reduce-Motion work
-/// automatically. Consumers should reference these tokens instead of
-/// hardcoding values — that's how the app stays visually coherent as
-/// features grow.
-///
-/// Design direction: **editorial minimalism**. Oversized serif display
-/// headlines, generous whitespace, muted chrome, colorful content only where
-/// it's semantic (speaker tints, recording state). Think Granola / Things 3 /
-/// Notes — not a generic AI dashboard.
+/// Design tokens for Scribe's "Native Quiet" macOS UI. Reference these
+/// instead of hardcoding values.
 enum DesignTokens {
 
     // MARK: - Spacing (4/8 rhythm)
@@ -37,33 +28,53 @@ enum DesignTokens {
         static let lg: CGFloat = 14
         static let xl: CGFloat = 20
         static let pill: CGFloat = 999
+        static let row: CGFloat = 7
+        static let sidebar: CGFloat = 12
+    }
+
+    enum Metrics {
+        static let sidebarWidth: CGFloat = 240
+        static let sidebarRowHeight: CGFloat = 30
+        static let toolbarCapsuleHeight: CGFloat = 34
     }
 
     // MARK: - Typography
 
-    /// Editorial type scale. Display sizes use the SF "New York" serif
-    /// (`design: .serif`) for headlines; body/label use the system sans for
-    /// native legibility. Body and numeric styles default to tabular figures
-    /// so durations and counts don't jitter as digits change.
+    /// UI text is the system font. Display and reading text use the bundled
+    /// Newsreader serif, falling back to the system serif when it isn't
+    /// registered (e.g. under `swift test`).
     enum Typography {
-        /// Hero display used on the welcome empty state (~44pt, serif).
-        static let display = Font.system(size: 44, weight: .semibold, design: .serif)
-        /// Large editorial title used on transcript detail headers (~34pt).
-        static let title1 = Font.system(size: 34, weight: .semibold, design: .serif)
-        /// Secondary serif title, e.g. settings pane header (~28pt).
-        static let title2 = Font.system(size: 28, weight: .semibold, design: .serif)
-        /// Sans-serif section headline inside detail content.
+        nonisolated static let serifFamily = "Newsreader"
+
+        nonisolated static let isSerifAvailable: Bool = {
+            let font = CTFontCreateWithName(serifFamily as CFString, 12, nil)
+            return (CTFontCopyFamilyName(font) as String) == serifFamily
+        }()
+
+        static func display(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+            guard isSerifAvailable else { return .system(size: size, weight: weight, design: .serif) }
+            return .custom(serifFamily, fixedSize: size).weight(weight)
+        }
+
+        static func reading(size: CGFloat, relativeTo style: Font.TextStyle) -> Font {
+            guard isSerifAvailable else { return .system(style, design: .serif) }
+            return .custom(serifFamily, size: size, relativeTo: style)
+        }
+
+        static let reading = reading(size: 16, relativeTo: .body)
+
+        static let display = display(size: 44)
+        static let title1 = display(size: 34)
+        static let title2 = display(size: 28)
         static let section = Font.system(.headline, weight: .semibold)
-        /// Section / eyebrow label, small, letter-spaced. Pair with `.tracking`.
         static let eyebrow = Font.system(.caption, weight: .semibold)
-        /// Body copy for transcript text and summaries.
         static let body = Font.system(.body)
-        /// Callout body for metadata strips.
         static let callout = Font.system(.callout)
-        /// Monospaced, tabular-digit display for timers and durations.
         static let timer = Font.system(.title3, design: .monospaced).monospacedDigit()
-        /// Small monospaced timestamp (transcript segments).
         static let timestamp = Font.system(.caption2, design: .monospaced).monospacedDigit()
+
+        static let sidebarRow = Font.system(size: 13)
+        static let sidebarHeader = Font.system(size: 11, weight: .semibold)
     }
 
     // MARK: - Shadows
@@ -95,41 +106,72 @@ enum DesignTokens {
 
     // MARK: - Semantic colors
 
+    /// "Native Quiet" palette: warm neutral grounds, one blue accent. Every
+    /// colour is an appearance-adaptive pair (light, dark).
     enum Palette {
-        /// Brand / chrome accent. Resolves to the `AccentColor` asset (a muted
-        /// ink indigo with a lighter dark-mode variant; it is also the
-        /// project's global accent via ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME).
-        /// macOS only uses the app's accent when the user's system accent is
-        /// "Multicolor" — any accent the user picked wins, which is the point.
-        /// Never hardcode a brand colour; reference this (or `.accentColor`).
-        static let accent: Color = .accentColor
+        static let ground = Color(light: 0xFBFBFA, dark: 0x1B1B1A)
+        static let sidebar = Color(light: 0xF3F3F1, dark: 0x232322)
+        static let raised = Color(light: 0xFFFFFF, dark: 0x262625)
+        static let hairline = Color(light: 0xEDECE8, dark: 0x2E2E2C)
+        static let quietFill = Color(light: 0xF3F3F1, dark: 0x2A2A28)
+        static let selectionFill = Color(lightWhite: 0, lightAlpha: 0.065, darkWhite: 1, darkAlpha: 0.08)
 
-        /// Accent bar / chip for the user's own audio.
-        static let speakerYou: Color = .blue
-        /// Accent bar / chip for remote participants (system audio).
+        static let textPrimary = Color(light: 0x1D1D1F, dark: 0xF2F2F0)
+        static let textSecondary = Color(light: 0x6E6E73, dark: 0xA1A1A6)
+        static let textTertiary = Color(light: 0x8E8E93, dark: 0x7C7C80)
+
+        /// Brand accent; mirrors the `AccentColor` asset, which is also the
+        /// project's global accent so system controls match.
+        static let accent = Color(light: 0x2F5BD3, dark: 0x7B97F2)
+
+        static let speakerYou: Color = accent
         static let speakerRemote: Color = .teal
-        /// Fallback for speakers that aren't classified.
         static let speakerOther: Color = .gray
 
-        /// Recording state accent.
-        static let recording: Color = .red
-        /// Paused state accent.
+        static let recording = Color(light: 0xD93B2B, dark: 0xFF6961)
         static let paused: Color = .orange
 
-        /// Action-item priority.
-        static let priorityHigh: Color = .red
+        static let priorityHigh: Color = recording
         static let priorityMedium: Color = .orange
-        static let priorityLow: Color = .blue
+        static let priorityLow: Color = accent
 
-        /// Surface tokens — derived from AppKit so themes track automatically.
-        static let surface = Color(nsColor: .windowBackgroundColor)
-        static let surfaceElevated = Color(nsColor: .controlBackgroundColor)
-        /// A slightly lifted surface used for sunken panels (transcript body
-        /// background behind segments, side panels, etc.).
-        static let surfaceSunken = Color(nsColor: .underPageBackgroundColor)
-        static let divider = Color(nsColor: .separatorColor)
-        /// Hairline border used on elevated cards in both themes.
-        static let cardBorder = Color.primary.opacity(0.06)
+        static let surface = ground
+        static let surfaceElevated = raised
+        static let surfaceSunken = sidebar
+        static let divider = hairline
+        static let cardBorder = hairline
+    }
+}
+
+extension Color {
+    init(light: UInt32, dark: UInt32) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            NSColor(srgbHex: appearance.scribeIsDark ? dark : light)
+        })
+    }
+
+    init(lightWhite: CGFloat, lightAlpha: CGFloat, darkWhite: CGFloat, darkAlpha: CGFloat) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            appearance.scribeIsDark
+                ? NSColor(white: darkWhite, alpha: darkAlpha)
+                : NSColor(white: lightWhite, alpha: lightAlpha)
+        })
+    }
+}
+
+private extension NSColor {
+    convenience init(srgbHex hex: UInt32) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                  green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255,
+                  alpha: 1)
+    }
+}
+
+private extension NSAppearance {
+    var scribeIsDark: Bool {
+        bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+            .map { $0 == .darkAqua || $0 == .accessibilityHighContrastDarkAqua } ?? false
     }
 }
 
@@ -329,7 +371,7 @@ extension DesignTokens.Palette {
     /// Hairline card/divider border that strengthens under Increase Contrast
     /// (the flat 0.06 wash drops below WCAG in dark mode / high contrast).
     static func cardBorder(_ contrast: ColorSchemeContrast) -> Color {
-        Color.primary.opacity(contrast == .increased ? 0.20 : 0.06)
+        contrast == .increased ? Color.primary.opacity(0.20) : hairline
     }
 
     /// Neutral interactive fill (hover / selection / pressed) that scales up
@@ -396,7 +438,7 @@ private struct ScaledSerifFont: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.font(.system(size: size, weight: weight, design: .serif))
+        content.font(DesignTokens.Typography.display(size: size, weight: weight))
     }
 }
 

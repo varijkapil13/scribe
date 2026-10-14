@@ -239,7 +239,7 @@ final class DocumentImportController: ObservableObject {
             existing.makeKeyAndOrderFront(nil)
             return
         }
-        let hosting = NSHostingController(rootView: DocumentImportSheet(controller: self))
+        let hosting = NSHostingController(rootView: DocumentImportSheet(controller: self).tint(DesignTokens.Palette.accent))
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled]
         window.title = "Import"

@@ -111,7 +111,7 @@ final class NoteTemplatePanelController: NSObject, NSWindowDelegate {
         )
         panel.title = mode.isInsert ? "Insert Template" : "New Note from Template"
         panel.isReleasedWhenClosed = false
-        panel.contentViewController = NSHostingController(rootView: view)
+        panel.contentViewController = NSHostingController(rootView: view.tint(DesignTokens.Palette.accent))
         panel.delegate = self
         panel.center()
         self.panel = panel

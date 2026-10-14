@@ -24,6 +24,7 @@ struct ScribeApp: App {
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
                 .onContinueUserActivity(SpotlightIndexer.activityType) { _ = SpotlightIndexer.handle($0) }
+                .tint(DesignTokens.Palette.accent)
         }
         .commands { scribeCommands }
         .commands { ScribeMenuCommands() }
@@ -38,23 +39,26 @@ struct ScribeApp: App {
             NoteWindowRoot(value: $value)
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
+                .tint(DesignTokens.Palette.accent)
         }
 
         // File › Translate Note… / Translate Transcript….
         WindowGroup("Translate", id: ScribeTranslationRequest.windowID, for: ScribeTranslationRequest.self) { $request in
-            if let request { TranslationWindowView(request: request) }
+            if let request { TranslationWindowView(request: request).tint(DesignTokens.Palette.accent) }
         }
         .windowResizability(.contentSize)
 
         // Help › Keyboard Shortcuts.
         Window("Keyboard Shortcuts", id: ShortcutReferenceWindow.windowID) {
             ShortcutReferenceView()
+                .tint(DesignTokens.Palette.accent)
         }
 
         Settings {
             SettingsRootView(audioManager: appState.audioManager)
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
+                .tint(DesignTokens.Palette.accent)
         }
 
         // Menu-bar item: recording/dictation status and controls. While it's
@@ -63,6 +67,7 @@ struct ScribeApp: App {
             MenuBarContent(status: appState.recordingStatus, clock: appState.recordingClock)
                 .environmentObject(appState)
                 .environmentObject(appDelegate)
+                .tint(DesignTokens.Palette.accent)
         } label: {
             MenuBarLabel(status: appState.recordingStatus)
         }

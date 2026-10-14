@@ -47,7 +47,7 @@ let package = Package(
             // SwiftPM would treat it as a localized resource (requiring
             // `defaultLocalization` and catalog compilation) for no benefit to
             // the logic tests, which fall back to the English keys.
-            exclude: ["Resources/Localizable.xcstrings"]
+            exclude: ["Resources/Localizable.xcstrings", "Resources/Fonts"]
         ),
         .testTarget(
             name: "ScribeTests",
