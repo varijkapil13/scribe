@@ -10,6 +10,42 @@
  * light/dark automatically.
  */
 
+/* Newsreader ships in the app bundle (Contents/Resources/Fonts); the scheme
+ * handler serves it under editor/fonts/. Hosts without it fall back to Georgia. */
+@font-face {
+  font-family: "Newsreader";
+  src: url("fonts/Newsreader-Variable.ttf") format("truetype");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Newsreader";
+  src: url("fonts/Newsreader-Italic-Variable.ttf") format("truetype");
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  --scribe-body-font: "Newsreader", Georgia, "Times New Roman", serif;
+  --scribe-ui-font: -apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  --scribe-mono-font: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --scribe-measure: 100000px;
+  --scribe-gutter: 2.75rem;
+  --scribe-page: #fbfbfa;
+}
+
+html[data-theme="dark"] {
+  --scribe-page: #1b1b1a;
+}
+
+@media (max-width: 600px) {
+  :root {
+    --scribe-gutter: 1.25rem;
+  }
+}
+
 html,
 body {
   margin: 0;
@@ -17,12 +53,7 @@ body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background-color: #ffffff;
-}
-
-html[data-theme="dark"],
-html[data-theme="dark"] body {
-  background-color: #1e1e1e;
+  background-color: var(--scribe-page);
 }
 
 #editor {
@@ -30,86 +61,122 @@ html[data-theme="dark"] body {
   width: 100%;
 }
 
-/* Make the CodeMirror view fill the host so the prose column can center
- * itself with full available width (the #1 product complaint was no wrap /
- * narrow column). */
 .cm-editor {
   height: 100%;
   width: 100%;
 }
 
+/* The fold gutter hangs in the side gutter so the text column, not the
+ * gutter, sits on the centred measure (and lines up with the native title). */
+.cm-editor .cm-scroller .cm-gutters {
+  margin-left: -20px;
+  min-width: 20px;
+}
+
 /* ── Live-preview decoration classes ─────────────────────────────────────── */
 
-/* Hidden syntax markers (`#`, `**`, backticks, `>` …). `Decoration.replace`
- * already removes the text; this is a belt-and-braces no-display in case a
- * `.cm-sl-hidden` mark variant is used. */
+/* Belt-and-braces for a `.cm-sl-hidden` mark variant; `Decoration.replace`
+ * already removes the text. */
 .cm-sl-hidden {
   display: none;
 }
 
-/* Headings — scaled sizes/weights applied at the LINE level so the whole line
- * (including any revealed `#` markers on the active line) scales together. */
+/* Heading sizes sit on the LINE so revealed `#` markers scale with it. */
 .cm-sl-h1 {
-  font-size: 1.8em;
-  font-weight: 700;
-  line-height: 1.25;
-  margin-top: 0.4em;
+  font-size: 1.89em;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  padding-top: 0.5em !important;
+  padding-bottom: 0.15em !important;
 }
 .cm-sl-h2 {
-  font-size: 1.45em;
-  font-weight: 700;
-  line-height: 1.3;
-  margin-top: 0.3em;
-}
-.cm-sl-h3 {
   font-size: 1.22em;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.3;
+  padding-top: 0.9em !important;
+  padding-bottom: 0.1em !important;
 }
-.cm-sl-h4 {
-  font-size: 1.08em;
+.cm-sl-h3 {
+  font-size: 1.06em;
   font-weight: 600;
+  line-height: 1.4;
+  padding-top: 0.7em !important;
 }
+.cm-sl-h4,
 .cm-sl-h5 {
   font-size: 1em;
   font-weight: 600;
+  padding-top: 0.5em !important;
 }
 .cm-sl-h6 {
   font-size: 0.92em;
   font-weight: 600;
-  color: var(--scribe-muted);
+  color: var(--scribe-secondary);
+  padding-top: 0.5em !important;
 }
 
-/* Inline emphasis. */
 .cm-sl-strong {
-  font-weight: 700;
+  font-weight: 650;
 }
 .cm-sl-emphasis {
   font-style: italic;
 }
 .cm-sl-strike {
   text-decoration: line-through;
-  opacity: 0.75;
+  color: var(--scribe-muted);
 }
 .cm-sl-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.9em;
+  font-family: var(--scribe-mono-font);
+  font-size: 0.86em;
   background-color: var(--scribe-code-bg);
   border-radius: 4px;
-  padding: 0.05em 0.35em;
+  padding: 0.08em 0.32em;
 }
 
-/* Blockquotes / callouts — left bar + subtle tint, applied to each quoted
- * line. The `>` markers are hidden by the decorations. */
 .cm-sl-quote {
-  border-left: 3px solid var(--scribe-quote-bar);
+  border-left: 2px solid var(--scribe-quote-bar);
   background-color: var(--scribe-quote-bg);
-  padding-left: 0.9em !important;
-  color: var(--scribe-muted);
+  padding-left: 1em !important;
+  color: var(--scribe-secondary);
   font-style: italic;
 }
 
-/* Lists — indent the line and give the rendered bullet room. */
+/* Fenced code (not diagrams) and GFM tables: a quiet sunken block. */
+.cm-sl-codeblock,
+.cm-sl-table {
+  font-family: var(--scribe-mono-font);
+  font-size: 0.82em;
+  line-height: 1.6;
+  background-color: var(--scribe-code-bg);
+  padding-left: 1em !important;
+  padding-right: 1em !important;
+}
+.cm-sl-codeblock-first,
+.cm-sl-table-first {
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  padding-top: 0.5em !important;
+}
+.cm-sl-codeblock-last,
+.cm-sl-table-last {
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  padding-bottom: 0.5em !important;
+}
+.cm-sl-table {
+  background-color: transparent;
+  box-shadow: inset 1px 0 0 var(--scribe-panel-border), inset -1px 0 0 var(--scribe-panel-border);
+}
+.cm-sl-table-first {
+  box-shadow: inset 1px 0 0 var(--scribe-panel-border), inset -1px 0 0 var(--scribe-panel-border),
+    inset 0 1px 0 var(--scribe-panel-border);
+}
+.cm-sl-table-last {
+  box-shadow: inset 1px 0 0 var(--scribe-panel-border), inset -1px 0 0 var(--scribe-panel-border),
+    inset 0 -1px 0 var(--scribe-panel-border);
+}
+
 .cm-sl-listline {
   padding-left: 1.4em !important;
   text-indent: 0;
@@ -118,19 +185,24 @@ html[data-theme="dark"] body {
   display: inline-block;
   width: 1em;
   margin-left: -1em;
-  color: var(--scribe-accent);
-  font-weight: 700;
+  color: var(--scribe-muted);
 }
 
-/* Task checkbox widget. */
+/* Task lines read as UI: system face, checkbox in the accent. */
+.cm-sl-taskline {
+  font-family: var(--scribe-ui-font);
+  font-size: 0.88em;
+}
+.cm-sl-taskline-done {
+  color: var(--scribe-muted);
+}
 .cm-sl-task {
-  margin: 0 0.45em 0 -1.1em;
-  vertical-align: -0.08em;
+  margin: 0 0.5em 0 -1.2em;
+  vertical-align: -0.1em;
   cursor: pointer;
   accent-color: var(--scribe-accent);
 }
 
-/* Horizontal rule — render the `---` line as a rule. */
 .cm-sl-hr {
   position: relative;
 }
@@ -148,20 +220,21 @@ html[data-theme="dark"] body {
 /* Rendered (inactive-line) wiki-link: a styled, clickable chip. */
 .cm-sl-wikilink {
   color: var(--scribe-accent);
-  background-color: var(--scribe-accent-soft);
-  border-radius: 4px;
-  padding: 0.02em 0.3em;
+  border-radius: 3px;
   cursor: pointer;
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: var(--scribe-accent-soft);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
 }
 .cm-sl-wikilink:hover {
-  text-decoration: underline;
+  text-decoration-color: var(--scribe-accent);
 }
 /* Broken link — different colour so it reads as unresolved. */
 .cm-sl-wikilink-unresolved {
   color: var(--scribe-unresolved);
-  background-color: var(--scribe-unresolved-soft);
-  text-decoration: line-through;
+  text-decoration: underline dashed;
+  text-decoration-color: var(--scribe-unresolved);
   text-decoration-thickness: 1px;
 }
 /* Active-line raw `[[...]]` text (still editable) just gets the accent tint. */
@@ -183,10 +256,13 @@ html[data-theme="dark"] body {
   background-color: var(--scribe-menu-bg);
   border: 1px solid var(--scribe-menu-border);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
   padding: 4px;
   display: none;
-  font-size: 0.92rem;
+  font-family: var(--scribe-ui-font);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--scribe-text);
 }
 .cm-sl-slashitem {
   display: flex;
@@ -205,7 +281,7 @@ html[data-theme="dark"] body {
 }
 .cm-sl-slashhint {
   color: var(--scribe-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--scribe-mono-font);
   font-size: 0.85em;
 }
 
@@ -221,7 +297,7 @@ html[data-theme="dark"] body {
 }
 .cm-sl-math-error {
   color: var(--scribe-unresolved);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--scribe-mono-font);
 }
 
 /* ── Diagrams (mermaid / plantuml) ───────────────────────────────────────── */
@@ -232,7 +308,7 @@ html[data-theme="dark"] body {
   padding: 0.8em;
   background-color: var(--scribe-panel-bg);
   border: 1px solid var(--scribe-panel-border);
-  border-radius: 8px;
+  border-radius: 10px;
   text-align: center;
   overflow-x: auto;
 }
@@ -253,7 +329,7 @@ html[data-theme="dark"] body {
 .cm-sl-diagram-error pre {
   white-space: pre-wrap;
   margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--scribe-mono-font);
   font-size: 0.85em;
 }
 /* Remote PlantUML rendering disabled (privacy default): notice + raw source. */
@@ -269,7 +345,7 @@ html[data-theme="dark"] body {
 .cm-sl-diagram-disabled pre {
   white-space: pre-wrap;
   margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--scribe-mono-font);
   font-size: 0.85em;
 }
 

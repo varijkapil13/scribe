@@ -35,6 +35,7 @@
 //   native -> JS:  window.scribeSetDoc(text)
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px)
+//                  window.scribeSetTypography({face, measure})  body face + column width
 //                  window.scribeSetKnownTitles([title, …])  resolved-link styling
 //                  window.scribeSetPlantUMLRemote(bool)  opt-in plantuml.com rendering
 //                  window.scribeFocus()
@@ -68,6 +69,9 @@ struct WebMarkdownEditor: NSViewRepresentable {
     /// Optional body font size (points) pushed to the JS editor. When nil the
     /// editor keeps its built-in default (17px).
     var fontSize: CGFloat? = nil
+    /// Body typeface and centred column width; nil keeps the page defaults
+    /// (Newsreader, full width).
+    var typography: WebEditorTypography? = nil
     /// Titles of all known notes (lowercased match) so the JS editor can style
     /// `[[wiki links]]` as resolved vs broken. Pushed to JS on change.
     var knownTitles: [String] = []
@@ -121,6 +125,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.pendingText = text
         context.coordinator.pendingTheme = colorScheme
         context.coordinator.pendingFontSize = fontSize
+        context.coordinator.pendingTypography = typography
         context.coordinator.pendingTitles = knownTitles
         context.coordinator.initialPlantUMLRemote(plantUMLRemoteEnabled)
         context.coordinator.attachmentNoteId = attachmentNoteId
@@ -150,6 +155,7 @@ struct WebMarkdownEditor: NSViewRepresentable {
         context.coordinator.setDoc(text)
         context.coordinator.setTheme(colorScheme)
         if let fontSize { context.coordinator.setFontSize(fontSize) }
+        if let typography { context.coordinator.setTypography(typography) }
         context.coordinator.setKnownTitles(knownTitles)
         context.coordinator.setPlantUMLRemote(plantUMLRemoteEnabled)
         context.coordinator.attachmentNoteId = attachmentNoteId

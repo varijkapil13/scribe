@@ -4,9 +4,8 @@ import SwiftUI
 
 // MARK: - Page width
 
-/// Reading-measure presets for the note body. The editor clamps the text
-/// column to one of these widths by growing `textContainerInset` symmetrically
-/// (Craft-style centred measure) instead of letting prose run full-bleed.
+/// Reading-measure presets for the note body. The web editor centres its text
+/// column at one of these widths instead of letting prose run full-bleed.
 enum NotePageWidth: String, CaseIterable, Identifiable {
     case full
     case regular
@@ -20,8 +19,8 @@ enum NotePageWidth: String, CaseIterable, Identifiable {
     var measure: CGFloat {
         switch self {
         case .full:    return .infinity   // no cap — fill the available width
-        case .regular: return 680
-        case .wide:    return 920
+        case .regular: return 620
+        case .wide:    return 860
         }
     }
 
@@ -60,9 +59,8 @@ enum NotePageWidth: String, CaseIterable, Identifiable {
 
 // MARK: - Per-note typeface
 
-/// Body typeface for a note. `System` keeps the existing default so nothing
-/// changes for notes that never opt in. `Serif` resolves to New York via the
-/// font descriptor's `.serif` design; `Mono` to SF Mono.
+/// Body typeface for a note. `Serif` is the bundled Newsreader (the default);
+/// `System` is SF Pro, `Mono` SF Mono.
 enum NoteTypeface: String, CaseIterable, Identifiable {
     case system
     case serif
@@ -86,24 +84,15 @@ enum NoteTypeface: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Resolves the base body `NSFont` for this typeface at the given size.
-    /// Falls back to the system font if a design isn't available so the editor
-    /// always gets a valid font.
-    func baseFont(size: CGFloat) -> NSFont {
-        let system = NSFont.systemFont(ofSize: size)
+    /// Body size in the web editor; Newsreader runs small next to SF.
+    var editorFontSize: CGFloat {
         switch self {
-        case .system:
-            return system
-        case .serif:
-            if let descriptor = system.fontDescriptor.withDesign(.serif),
-               let font = NSFont(descriptor: descriptor, size: size) {
-                return font
-            }
-            return system
-        case .mono:
-            return .monospacedSystemFont(ofSize: size, weight: .regular)
+        case .serif:          return 18
+        case .system, .mono:  return 16
         }
     }
+
+    static let defaultTypeface: NoteTypeface = .serif
 
     /// AppStorage key for the default typeface applied to notes that have no
     /// explicit per-note choice yet.

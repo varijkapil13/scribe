@@ -40,13 +40,30 @@ final class NoteListViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var allNotes: [Note] = []
     private var searchTask: Task<Void, Never>?
+    private var notebookNames: [String: String] = [:]
     var scope: NoteListScope = .all {
-        didSet { applyScope() }
+        didSet {
+            title = scopeTitle()
+            applyScope()
+        }
     }
+    /// Header title for the current scope.
+    @Published private(set) var title = "All Notes"
 
     init(store: NoteStore = .shared, scope: NoteListScope = .all) {
         self.store = store
         self.scope = scope
+        self.title = scopeTitle()
+        store.observeNotebooks()
+            .sink(receiveCompletion: { _ in },
+                  receiveValue: { [weak self] notebooks in
+                      guard let self else { return }
+                      self.notebookNames = Dictionary(notebooks.map { ($0.id, $0.name) },
+                                                      uniquingKeysWith: { first, _ in first })
+                      let title = self.scopeTitle()
+                      if title != self.title { self.title = title }
+                  })
+            .store(in: &cancellables)
         store.observeNotes()
             .sink(receiveCompletion: { [weak self] completion in
                       if case .failure(let error) = completion {
@@ -100,6 +117,15 @@ final class NoteListViewModel: ObservableObject {
             }.value
             guard !Task.isCancelled, let self else { return }
             self.filteredNotes = results ?? self.notes
+        }
+    }
+
+    private func scopeTitle() -> String {
+        switch scope {
+        case .all:   return "All Notes"
+        case .inbox: return "Unfiled"
+        case .notebook(let id):
+            return notebookNames[id] ?? "Notebook"
         }
     }
 

@@ -1,5 +1,4 @@
 // Scribe/UI/Notes/NoteDetailView.swift
-import Combine
 import SwiftUI
 
 struct NoteDetailView: View {
@@ -7,25 +6,22 @@ struct NoteDetailView: View {
     @EnvironmentObject var appDelegate: AppDelegate
     @StateObject private var vm: NoteDetailViewModel
     var onNavigate: (String) -> Void
-    @State private var backlinksExpanded: Bool = false
-    /// Whether the frontmatter "Properties" panel is expanded. Collapsed by
-    /// default — the meta-bar chip shows a count; opening reveals a
-    /// content-sized card.
-    @State private var propertiesExpanded: Bool = false
-    /// Whether the recording summary panel is expanded. Collapsed by default:
-    /// the old layout auto-reserved ~280px even with no summary, leaving a tall
-    /// void above the editor. Now the panel opens on demand, sized to content.
+    /// Whether the recording summary panel is expanded. Opens on demand,
+    /// sized to content.
     @State private var recordingExpanded: Bool = false
     /// Which session the expanded recording panel shows (defaults to the latest).
     @State private var selectedSessionId: String? = nil
     @State private var openedTaskFromAction: TodoTask?
     @State private var openedTranscriptSession: Session?
+    @State private var editorModel = WebEditorModel()
     @FocusState private var titleFocused: Bool
-    /// Focus mode: hides the sessions strip, backlinks, and document metadata,
-    /// dims non-active blocks in the body, leaving just title + body. Persisted
-    /// so it survives note switches and relaunches.
+    /// Focus mode: hides the header metadata, recordings and footer, leaving
+    /// just title + body. Persisted so it survives note switches and relaunches.
     @AppStorage("noteEditor.focusMode") private var focusMode: Bool = false
+    @AppStorage(NotePageWidth.storageKey) private var pageWidthRaw: String = NotePageWidth.regular.rawValue
+    @SceneStorage("scribe.noteInspector.isPresented") private var inspectorPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.noteDetailShowsDocumentHeader) private var showsDocumentHeader
 
     init(note: Note, onNavigate: @escaping (String) -> Void) {
         _vm = StateObject(wrappedValue: NoteDetailViewModel(note: note, onNavigate: onNavigate))
@@ -37,152 +33,33 @@ struct NoteDetailView: View {
         return vm.sessions.contains(where: { $0.id == currentId })
     }
 
+    /// Matches the web editor's centred text column so the title and body
+    /// share one left edge.
+    private var columnMaxWidth: CGFloat {
+        let width = NotePageWidth(rawValue: pageWidthRaw) ?? .regular
+        return width.capsWidth ? width.measure + DesignTokens.Notes.editorGutter * 2 : .infinity
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // ── Document header ────────────────────────────────────────────
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                if !focusMode {
-                    // Muted breadcrumb so the user knows where they landed after a
-                    // ⌘K / deep-link jump. Uses the static "Notes" root rather than
-                    // the notebook name — the notebook label lives inside the
-                    // NotebookPicker's own state and isn't available here without a
-                    // new fetch.
-                    HStack(spacing: DesignTokens.Spacing.xs) {
-                        Text("Notes")
-                        Image(systemName: "chevron.right")
-                            .imageScale(.small)
-                            .foregroundStyle(.tertiary)
-                        Text(vm.note.title.isEmpty ? "Untitled" : vm.note.title)
-                            .lineLimit(1)
+            header
+                .frame(maxWidth: columnMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+
+            if !focusMode, recordingExpanded || isRecordingForThisNote {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    if isRecordingForThisNote { NoteLiveRecordingPane() }
+                    if recordingExpanded, let session = displayedSession {
+                        recordingPanel(session)
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Location: Notes, \(vm.note.title.isEmpty ? "Untitled" : vm.note.title)")
                 }
-
-                TextField("Untitled", text: Binding(
-                    get: { vm.note.title },
-                    set: { vm.note.title = $0; vm.markDirty() }
-                ))
-                .font(.system(size: 20, weight: .semibold, design: .serif))
-                .textFieldStyle(.plain)
-                .foregroundStyle(.primary)
-                .focused($titleFocused)
-                .padding(.vertical, DesignTokens.Spacing.xxs)
-                .padding(.horizontal, DesignTokens.Spacing.xs)
-                .background(
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                        .fill(titleFocused ? Color.accentColor.opacity(0.07) : .clear)
-                        .animation(.easeOut(duration: DesignTokens.Motion.fast), value: titleFocused)
-                )
-
-                if !focusMode {
-                    HStack(spacing: DesignTokens.Spacing.md) {
-                        HStack(spacing: DesignTokens.Spacing.sm) {
-                            Image(systemName: "clock")
-                                .imageScale(.small)
-                            Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
-                        }
-                        .font(DesignTokens.Typography.eyebrow)
-                        .foregroundStyle(.tertiary)
-                        .tracking(0.5)
-
-                        if !vm.note.isDailyNote {
-                            NotebookPicker(selectedNotebookId: Binding(
-                                get: { vm.note.notebookId },
-                                set: { newId in
-                                    vm.note.notebookId = newId
-                                    vm.markDirty()
-                                }
-                            ))
-                        }
-
-                        Spacer()
-
-                        let headings = Self.headings(in: vm.note.body)
-                        if !headings.isEmpty {
-                            Menu {
-                                ForEach(headings) { heading in
-                                    Button {
-                                        NotificationCenter.default.post(
-                                            name: .scribeScrollToOffset, object: nil,
-                                            userInfo: ["offset": heading.offset])
-                                    } label: {
-                                        Text(String(repeating: "    ", count: max(0, heading.level - 1)) + heading.title)
-                                    }
-                                }
-                            } label: {
-                                Image(systemName: "list.bullet.indent")
-                            }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .fixedSize()
-                            .help("Outline — jump to a heading")
-                            .accessibilityLabel("Document outline")
-                        }
-
-                        if vm.unresolvedLinkCount > 0 {
-                            HStack(spacing: DesignTokens.Spacing.xs) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .imageScale(.small)
-                                Text("\(vm.unresolvedLinkCount) unresolved link\(vm.unresolvedLinkCount == 1 ? "" : "s")")
-                            }
-                            .font(DesignTokens.Typography.eyebrow)
-                            .foregroundStyle(.tertiary)
-                            .tracking(0.5)
-                            .help("These [[wiki links]] don't match an existing note title")
-                            .accessibilityLabel("\(vm.unresolvedLinkCount) unresolved wiki link\(vm.unresolvedLinkCount == 1 ? "" : "s")")
-                        }
-                    }
-
-                    // Inline tags — same token field the Tasks inspector uses,
-                    // so a note's tags are visible and editable where they live
-                    // (they were previously stored + sidebar-navigable but had
-                    // no UI in the editor).
-                    TagTokenField(
-                        tags: vm.tags,
-                        suggestions: { vm.tagSuggestions($0) },
-                        onAdd: { vm.addTag($0) },
-                        onRemove: { vm.removeTag($0) }
-                    )
-                    .accessibilityLabel("Note tags")
-
-                    // Compact meta bar — Properties + Recording disclosure
-                    // chips on a single row, plus "New recording". Replaces the
-                    // old tall stack (a full-width properties section + the
-                    // sessions strip + a 280px auto-reserved summary block).
-                    // The matching panels open below, sized to content.
-                    metaBar
-                        .padding(.top, DesignTokens.Spacing.xxs)
-                        .accessibilityElement(children: .contain)
-                        .accessibilityLabel("Note properties and recordings")
-                }
-            }
-            .padding(.horizontal, DesignTokens.Spacing.xl)
-            .padding(.top, DesignTokens.Spacing.sm)
-            .padding(.bottom, DesignTokens.Spacing.xs)
-
-            if !focusMode {
-                // Expandable panels — opened from the meta bar, sized to their
-                // content. No fixed height is reserved, so an empty or short
-                // summary no longer leaves a tall void above the editor.
-                if propertiesExpanded || recordingExpanded || isRecordingForThisNote {
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                        if propertiesExpanded { propertiesPanel }
-                        if isRecordingForThisNote { NoteLiveRecordingPane() }
-                        if recordingExpanded, let session = displayedSession {
-                            recordingPanel(session)
-                        }
-                    }
-                    .padding(.horizontal, DesignTokens.Spacing.xl)
-                    .padding(.bottom, DesignTokens.Spacing.sm)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                Divider()
+                .padding(.horizontal, DesignTokens.Notes.editorGutter)
+                .padding(.bottom, DesignTokens.Spacing.sm)
+                .frame(maxWidth: columnMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // ── Body editor (full width) ───────────────────────────────────
             // A locked note shows its unlock view until Touch ID releases it.
             if vm.lockPhase == .locked {
                 LockedNoteUnlockView(title: vm.note.title) {
@@ -204,41 +81,31 @@ struct NoteDetailView: View {
                     noteStore: .shared,
                     noteId: vm.note.id,
                     onNavigate: { anchor in vm.handleWikiLinkNavigate(anchor: anchor) },
-                    focusModeEnabled: focusMode
+                    focusModeEnabled: focusMode,
+                    editorModel: editorModel
                 )
-                .padding(.vertical, DesignTokens.Spacing.xs)
             }
 
-            // ── Backlinks (collapsible, only when non-empty) ───────────────
-            if !vm.backlinks.isEmpty && !focusMode {
-                Divider()
-                BacklinksBar(
-                    backlinks: vm.backlinks,
-                    isExpanded: $backlinksExpanded,
-                    onNavigate: onNavigate
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            if !focusMode {
+                footer
+                    .transition(.opacity)
             }
         }
+        .background(DesignTokens.Palette.ground)
         // Note info inspector (⌥⌘I) + the focused-note value the menu bar's
         // Print / Export as PDF / Open in New Window commands act on.
-        .modifier(NoteInspectorModifier(vm: vm, onNavigate: onNavigate))
+        .modifier(NoteInspectorModifier(vm: vm, editorModel: editorModel,
+                                        isPresented: $inspectorPresented, onNavigate: onNavigate))
         .onDisappear {
             // Commit any edit still inside the autosave debounce window before
             // this view (and its view model) is torn down on a note switch.
             vm.flushPendingSave()
         }
-        // Note save / reload failures are recoverable, background-ish problems
-        // (autosave debounce, a backlinks refresh) — they should never block the
-        // editor with a modal. Route them to the unified banner instead of a
-        // blocking `.alert` (one feedback language — see FeedbackPolicy). A
-        // genuine hard failure that the user *must* act on would still warrant a
-        // `.alert`; none of these qualify.
+        // Save / reload failures are recoverable and go to the unified banner,
+        // never a blocking alert (see FeedbackPolicy).
         .onChange(of: vm.errorMessage) { _, newValue in
             if let message = newValue {
                 appState.report(message)
-                // The banner now owns the message; clear the VM flag so it
-                // doesn't re-fire on the next dependency change.
                 vm.errorMessage = nil
             }
         }
@@ -271,7 +138,7 @@ struct NoteDetailView: View {
                     Label(focusMode ? "Exit Focus Mode" : "Focus Mode",
                           systemImage: focusMode ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                 }
-                .help(focusMode ? "Exit focus mode (⌃⌘F)" : "Focus mode: hide chrome and dim other blocks (⌃⌘F)")
+                .help(focusMode ? "Exit focus mode (⌃⌘F)" : "Focus mode: hide note chrome (⌃⌘F)")
                 .keyboardShortcut("f", modifiers: [.control, .command])
                 .accessibilityLabel(focusMode ? "Exit focus mode" : "Enter focus mode")
             }
@@ -286,6 +153,125 @@ struct NoteDetailView: View {
         }
     }
 
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            if !focusMode {
+                metaLine
+            }
+
+            if showsDocumentHeader {
+                titleField
+            }
+
+            if !focusMode {
+                NoteHeaderChips(
+                    tags: vm.tags,
+                    notebookId: vm.note.isDailyNote ? nil : Binding(
+                        get: { vm.note.notebookId },
+                        set: { newId in
+                            vm.note.notebookId = newId
+                            vm.markDirty()
+                        }
+                    ),
+                    suggestions: { vm.tagSuggestions($0) },
+                    onAdd: { vm.addTag($0) },
+                    onRemove: { vm.removeTag($0) }
+                )
+            }
+        }
+        .padding(.horizontal, DesignTokens.Notes.editorGutter)
+        .padding(.top, DesignTokens.Spacing.lg)
+        .padding(.bottom, DesignTokens.Spacing.xs)
+    }
+
+    private var titleField: some View {
+        TextField("Untitled", text: Binding(
+            get: { vm.note.title },
+            set: { vm.note.title = $0; vm.markDirty() }
+        ), axis: .vertical)
+        .font(DesignTokens.Typography.display(size: DesignTokens.Notes.titleSize, weight: .medium))
+        .textFieldStyle(.plain)
+        .foregroundStyle(DesignTokens.Palette.textPrimary)
+        .lineLimit(1...3)
+        .focused($titleFocused)
+        .onSubmit { titleFocused = false }
+    }
+
+    /// Quiet top line: when the note was edited, link health, and recordings.
+    private var metaLine: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Text("Edited \(vm.note.updatedAt.formatted(.relative(presentation: .named)))")
+                .lineLimit(1)
+
+            if vm.unresolvedLinkCount > 0 {
+                Text("·")
+                Text("\(vm.unresolvedLinkCount) unresolved link\(vm.unresolvedLinkCount == 1 ? "" : "s")")
+                    .help("These [[wiki links]] don't match an existing note title")
+                    .accessibilityLabel("\(vm.unresolvedLinkCount) unresolved wiki link\(vm.unresolvedLinkCount == 1 ? "" : "s")")
+            }
+
+            Spacer(minLength: DesignTokens.Spacing.sm)
+
+            if let session = latestSession {
+                Button { toggle($recordingExpanded) } label: {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        sessionDot(session)
+                        Text(Self.sessionSubtitle(session)).lineLimit(1)
+                        Image(systemName: recordingExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(recordingExpanded ? "Hide the recording summary" : "Show the recording summary")
+                .accessibilityLabel("Recording from \(Self.sessionSubtitle(session))")
+            }
+
+            Button { vm.startRecording(appDelegate: appDelegate) } label: {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Image(systemName: "record.circle")
+                        .foregroundStyle(DesignTokens.Palette.recording)
+                    Text("Record")
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Start a new recording for this note")
+        }
+        .font(DesignTokens.Notes.meta)
+        .foregroundStyle(DesignTokens.Palette.textTertiary)
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        let words = NoteStatistics.compute(body: vm.note.body).words
+        return HStack(spacing: DesignTokens.Spacing.sm) {
+            if !vm.backlinks.isEmpty {
+                Button {
+                    inspectorPresented = true
+                } label: {
+                    Text("\(vm.backlinks.count) backlink\(vm.backlinks.count == 1 ? "" : "s")")
+                }
+                .buttonStyle(.plain)
+                .help("Show backlinks in the inspector")
+                Text("·")
+            }
+            Text("\(words) word\(words == 1 ? "" : "s")")
+                .monospacedDigit()
+            Spacer()
+        }
+        .font(DesignTokens.Notes.meta)
+        .foregroundStyle(DesignTokens.Palette.textTertiary)
+        .padding(.horizontal, DesignTokens.Notes.editorGutter)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+        .frame(maxWidth: columnMaxWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
     private func toggleFocusMode() {
         if reduceMotion {
             focusMode.toggle()
@@ -297,9 +283,8 @@ struct NoteDetailView: View {
     }
 
     private func exportMarkdown() {
-        // Use the VM's injected TranscriptStore so the export path respects
-        // DI — same store the auto-section observes, and tests can swap in
-        // an in-memory instance.
+        // The VM's injected TranscriptStore keeps export on the same store the
+        // auto-section observes (tests swap in an in-memory one).
         let markdown = NoteMarkdownExporter.export(note: vm.note,
                                                    transcriptStore: vm.transcriptStore)
         ExportManager.saveToFile(
@@ -309,9 +294,8 @@ struct NoteDetailView: View {
         )
     }
 
-    // MARK: - Meta bar + expandable panels
+    // MARK: - Recording panel
 
-    /// Most recent recording session for this note, if any.
     private var latestSession: Session? {
         vm.sessions.max(by: { $0.createdAt < $1.createdAt })
     }
@@ -323,130 +307,18 @@ struct NoteDetailView: View {
         return latestSession
     }
 
-    /// One compact row carrying the Properties and Recording disclosure chips
-    /// plus a quiet "New recording" action — the chrome that used to occupy
-    /// several stacked full-width sections.
-    private var metaBar: some View {
-        HStack(spacing: 0) {
-            metaChip(
-                isOpen: propertiesExpanded,
-                systemImage: "list.bullet.rectangle",
-                label: "Properties",
-                trailing: vm.properties.isEmpty ? nil : "\(vm.properties.count)",
-                action: { toggle($propertiesExpanded) }
-            )
-            .accessibilityLabel("Properties, \(vm.properties.count) set")
-
-            if let session = latestSession {
-                barSeparator
-                Button { toggle($recordingExpanded) } label: {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        chevron(recordingExpanded)
-                        sessionDot(session)
-                        Text("Recording").fontWeight(.semibold)
-                        Text(Self.sessionSubtitle(session))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, DesignTokens.Spacing.md)
-                    .padding(.vertical, DesignTokens.Spacing.sm)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Recording from \(Self.sessionSubtitle(session))")
-            }
-
-            Spacer(minLength: DesignTokens.Spacing.sm)
-
-            barSeparator
-            Button { vm.startRecording(appDelegate: appDelegate) } label: {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    Image(systemName: "record.circle")
-                        .imageScale(.small)
-                        .foregroundStyle(Color.accentColor)
-                    Text("New recording")
-                }
-                .padding(.horizontal, DesignTokens.Spacing.md)
-                .padding(.vertical, DesignTokens.Spacing.sm)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Start a new recording for this note")
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity)
-        .background(DesignTokens.Palette.surfaceSunken,
-                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
-        )
-    }
-
-    private func metaChip(isOpen: Bool, systemImage: String, label: String,
-                          trailing: String?, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                chevron(isOpen)
-                Image(systemName: systemImage).imageScale(.small)
-                Text(label).fontWeight(.semibold)
-                if let trailing {
-                    Text(trailing).foregroundStyle(.tertiary).monospacedDigit()
-                }
-            }
-            .padding(.horizontal, DesignTokens.Spacing.md)
-            .padding(.vertical, DesignTokens.Spacing.sm)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func chevron(_ isOpen: Bool) -> some View {
-        Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-            .imageScale(.small)
-            .foregroundStyle(.tertiary)
-            .frame(width: 9)
-    }
-
-    private var barSeparator: some View {
-        Rectangle()
-            .fill(DesignTokens.Palette.divider)
-            .frame(width: 1, height: 18)
-    }
-
     @ViewBuilder
     private func sessionDot(_ session: Session) -> some View {
         if session.endedAt == nil {
-            Circle().fill(DesignTokens.Palette.recording).frame(width: 7, height: 7)
+            Circle().fill(DesignTokens.Palette.recording).frame(width: 6, height: 6)
         } else {
-            Image(systemName: "checkmark.circle.fill")
-                .imageScale(.small)
-                .foregroundStyle(.green)
+            Image(systemName: "waveform")
+                .font(.system(size: 10, weight: .medium))
         }
     }
 
-    /// Properties editor rendered as a content-sized card (its own header is
-    /// hidden — the meta-bar chip is the label).
-    private var propertiesPanel: some View {
-        NotePropertiesView(
-            properties: $vm.properties,
-            onCommit: { vm.updateProperties($0) },
-            optionSuggestions: vm.propertyOptionSuggestions,
-            showsHeader: false
-        )
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DesignTokens.Palette.surfaceSunken,
-                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
-        )
-        .accessibilityLabel("Note properties")
-    }
-
-    /// Recording summary as a content-sized card (no fixed height). When the
-    /// note has more than one session, a slim switcher chooses which to show.
+    /// Recording summary as a content-sized card. When the note has more than
+    /// one session, a slim switcher chooses which to show.
     private func recordingPanel(_ session: Session) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             if vm.sessions.count > 1 { sessionSwitcher }
@@ -458,7 +330,6 @@ struct NoteDetailView: View {
         }
     }
 
-    /// Horizontal chips to pick which recording the panel shows.
     private var sessionSwitcher: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: DesignTokens.Spacing.xs) {
@@ -467,26 +338,17 @@ struct NoteDetailView: View {
                     Button { selectedSessionId = session.id } label: {
                         HStack(spacing: DesignTokens.Spacing.xs) {
                             sessionDot(session)
-                            Text(Self.sessionSubtitle(session)).font(.caption).lineLimit(1)
+                            Text(Self.sessionSubtitle(session)).lineLimit(1)
                         }
-                        .padding(.horizontal, DesignTokens.Spacing.sm)
-                        .padding(.vertical, DesignTokens.Spacing.xxs)
-                        .background(isSelected ? DesignTokens.Palette.surfaceElevated : .clear,
-                                    in: Capsule())
-                        .overlay(
-                            Capsule().strokeBorder(
-                                isSelected ? Color.accentColor : DesignTokens.Palette.cardBorder,
-                                lineWidth: 1)
-                        )
-                        .foregroundStyle(.primary)
+                        .noteChip(tinted: isSelected)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
         }
     }
 
-    /// Toggles a disclosure with the standard reduce-motion-aware animation.
     private func toggle(_ flag: Binding<Bool>) {
         withAnimation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion)) {
             flag.wrappedValue.toggle()
@@ -501,132 +363,6 @@ struct NoteDetailView: View {
             return "\(date) · \(label)"
         }
         return date
-    }
-}
-
-// MARK: - Backlinks bar
-
-private struct BacklinksBar: View {
-    let backlinks: [Note]
-    @Binding var isExpanded: Bool
-    let onNavigate: (String) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Disclosure toggle
-            Button {
-                withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "link")
-                        .imageScale(.small)
-                    Text("\(backlinks.count) linked note\(backlinks.count == 1 ? "" : "s")")
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .imageScale(.small)
-                        .foregroundStyle(.tertiary)
-                }
-                .font(DesignTokens.Typography.eyebrow)
-                .tracking(0.5)
-                .foregroundStyle(.primary)
-                .padding(.horizontal, DesignTokens.Spacing.xl)
-                .padding(.vertical, DesignTokens.Spacing.sm)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                Divider()
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        ForEach(backlinks) { note in
-                            Button {
-                                onNavigate(note.id)
-                            } label: {
-                                HStack(spacing: DesignTokens.Spacing.xs) {
-                                    Image(systemName: "note.text")
-                                        .imageScale(.small)
-                                    Text(note.title.isEmpty ? "(Untitled)" : note.title)
-                                        .lineLimit(1)
-                                }
-                                .font(.callout)
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal, DesignTokens.Spacing.sm)
-                                .padding(.vertical, DesignTokens.Spacing.xs)
-                                .background(DesignTokens.Palette.surfaceElevated,
-                                            in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                                        .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, DesignTokens.Spacing.xl)
-                    .padding(.vertical, DesignTokens.Spacing.sm)
-                }
-            }
-        }
-        .background(DesignTokens.Palette.surfaceSunken)
-    }
-}
-
-// MARK: - Notebook picker chip
-
-private struct NotebookPicker: View {
-    @Binding var selectedNotebookId: String?
-    @State private var notebooks: [Notebook] = []
-    @State private var notebookCancellable: AnyCancellable?
-
-    var body: some View {
-        Menu {
-            Button {
-                selectedNotebookId = nil
-            } label: {
-                HStack {
-                    Text("Inbox")
-                    if selectedNotebookId == nil { Image(systemName: "checkmark") }
-                }
-            }
-            if !notebooks.isEmpty {
-                Divider()
-                ForEach(notebooks) { nb in
-                    Button {
-                        selectedNotebookId = nb.id
-                    } label: {
-                        HStack {
-                            Text(nb.name)
-                            if selectedNotebookId == nb.id { Image(systemName: "checkmark") }
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "folder")
-                    .imageScale(.small)
-                Text(currentName)
-            }
-            .font(DesignTokens.Typography.eyebrow)
-            .foregroundStyle(.secondary)
-            .tracking(0.5)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .onAppear {
-            notebooks = (try? NoteStore.shared.fetchAllNotebooks()) ?? []
-            notebookCancellable = NoteStore.shared.observeNotebooks()
-                .sink(receiveCompletion: { _ in },
-                      receiveValue: { notebooks = $0 })
-        }
-    }
-
-    private var currentName: String {
-        guard let id = selectedNotebookId else { return "Inbox" }
-        return notebooks.first(where: { $0.id == id })?.name ?? "Notebook"
     }
 }
 

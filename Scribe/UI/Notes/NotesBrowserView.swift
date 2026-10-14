@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Two-pane notes browser: note list on the left, detail on the right.
 /// Used for All Notes / Unfiled / Notebook scopes. For `.all` and `.inbox`
-/// the list pane offers a segmented chip to toggle between the two so those
-/// filters don't need to take up dedicated sidebar rows.
+/// the list header offers All / Unfiled tabs so those filters don't need
+/// dedicated sidebar rows.
 struct NotesBrowserView: View {
     let initialScope: NoteListScope
 
@@ -46,14 +46,13 @@ struct NotesBrowserView: View {
 
     var body: some View {
         HSplitView {
-            VStack(spacing: 0) {
-                if showsScopeChips {
-                    NotesScopeChipBar(activeScope: $activeScope)
-                }
-                NoteListView(scope: activeScope, selectedNoteId: listSelection)
-                    .id(NoteListScopeID(scope: activeScope))
-            }
-            .frame(minWidth: 200, idealWidth: 260, maxWidth: 320)
+            NoteListView(scope: activeScope,
+                         selectedNoteId: listSelection,
+                         scopeChoice: showsScopeChips ? $activeScope : nil)
+                .id(NoteListScopeID(scope: activeScope))
+                .frame(minWidth: DesignTokens.Notes.listMinWidth,
+                       idealWidth: DesignTokens.Notes.listWidth,
+                       maxWidth: DesignTokens.Notes.listMaxWidth)
 
             detailColumn
         }
@@ -88,6 +87,7 @@ struct NotesBrowserView: View {
                        value: currentNote?.id)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(DesignTokens.Palette.ground)
     }
 
     private var cardTransition: AnyTransition {
@@ -149,67 +149,25 @@ struct NotesBrowserView: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
         .padding(.vertical, 6)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
+        .background(DesignTokens.Palette.ground)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DesignTokens.Palette.hairline).frame(height: 1)
+        }
     }
 
     private var emptyState: some View {
         VStack(spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "note.text")
-                .font(.system(size: 32, weight: .light))
-                .foregroundStyle(.quaternary)
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(DesignTokens.Palette.textTertiary.opacity(0.6))
             Text("No Note Selected")
-                .font(DesignTokens.Typography.section)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
             Text("Choose a note from the list.")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 13))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// Segmented control offering "All / Unfiled". Renders only when the parent
-/// originally opened on `.all` or `.inbox` — for notebook views the chip
-/// would be confusing.
-private struct NotesScopeChipBar: View {
-    @Binding var activeScope: NoteListScope
-
-    var body: some View {
-        HStack(spacing: DesignTokens.Spacing.xxs) {
-            chip(title: "All",     isActive: isAll)     { activeScope = .all }
-            chip(title: "Unfiled", isActive: isInbox)   { activeScope = .inbox }
-            Spacer()
-        }
-        .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, 6)
-        .background(DesignTokens.Palette.surfaceElevated)
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-
-    private var isAll: Bool {
-        if case .all = activeScope { return true } else { return false }
-    }
-    private var isInbox: Bool {
-        if case .inbox = activeScope { return true } else { return false }
-    }
-
-    @ViewBuilder
-    private func chip(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
-                .padding(.horizontal, DesignTokens.Spacing.sm)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                        .fill(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 
