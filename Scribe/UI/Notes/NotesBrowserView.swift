@@ -16,7 +16,6 @@ struct NotesBrowserView: View {
     @State private var titlesById: [String: String] = [:]
     @State private var activeScope: NoteListScope
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(scope: NoteListScope) {
         self.initialScope = scope
@@ -74,10 +73,9 @@ struct NotesBrowserView: View {
                 } else if let note = currentNote {
                     NoteDetailView(note: note, onNavigate: { push($0) })
                         .id(note.id)
-                        .transition(.opacity)
                 }
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: currentNote?.id)
+            .transaction { $0.animation = nil }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(DesignTokens.Palette.ground)
