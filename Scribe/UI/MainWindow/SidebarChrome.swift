@@ -1,150 +1,19 @@
 // Scribe/UI/MainWindow/SidebarChrome.swift
 //
-// Modern sidebar chrome: the surface switcher, a reusable hover/selection row
-// highlight, and a precomputed notebook-tree index. Extracted from
-// MainWindowView so the sidebar's look-and-feel lives in one place.
+// Sidebar chrome: the destination row, its label style, section headers and a
+// precomputed notebook-tree index.
 
 import SwiftUI
 
-// MARK: - Surface switcher
-
-/// Capture / Notes / Tasks switcher with an animated selection pill and hover
-/// feedback. Replaces the stock `.pickerStyle(.segmented)` control, which read
-/// as a chunky toolbar segment and — backed by `.bar` material — visually
-/// merged with the window's titlebar. This blends with the sidebar instead and
-/// slides its selection pill between segments.
-struct SidebarSurfaceSwitcher: View {
-    let current: Surface
-    let onSelect: (Surface) -> Void
-
-    @Namespace private var pill
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Surface.allCases) { surface in
-                SidebarSurfaceSegment(
-                    surface: surface,
-                    isSelected: surface == current,
-                    namespace: pill,
-                    action: { onSelect(surface) }
-                )
-            }
-        }
-        .padding(3)
-        .background(
-            Capsule(style: .continuous).fill(DesignTokens.Palette.fill(.hover))
-        )
-        .animation(DesignTokens.Motion.resolve(.snappy, reduceMotion: reduceMotion), value: current)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Surface")
-        .accessibilityHint("Switch between Capture, Notes and Tasks")
-    }
-}
-
-private struct SidebarSurfaceSegment: View {
-    let surface: Surface
-    let isSelected: Bool
-    let namespace: Namespace.ID
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: surface.systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(surface.title)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .lineLimit(1)
-            .padding(.vertical, 5)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity)
-            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-            .background {
-                if isSelected {
-                    Capsule(style: .continuous)
-                        .fill(DesignTokens.Palette.surfaceElevated)
-                        .shadow(color: .black.opacity(DesignTokens.Shadow.hairline.opacity),
-                                radius: DesignTokens.Shadow.hairline.radius,
-                                y: DesignTokens.Shadow.hairline.y)
-                        .matchedGeometryEffect(id: "surfaceSelection", in: namespace)
-                } else if isHovering {
-                    Capsule(style: .continuous)
-                        .fill(DesignTokens.Palette.fill(.hover))
-                }
-            }
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .accessibilityLabel(surface.title)
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-    }
-}
-
-// MARK: - Row highlight (hover + selection)
-
-/// Rounded hover + selection highlight for the custom sidebar rows (the
-/// notebook tree). Gives every row a modern pill that lights up on hover and
-/// fills with the accent tint when its destination is selected — the feedback
-/// the plain-button tree rows were missing.
-private struct SidebarRowHighlight: ViewModifier {
-    var isSelected: Bool
-    @State private var isHovering = false
-    @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(fill)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-            .onHover { hovering in
-                if reduceMotion {
-                    isHovering = hovering
-                } else {
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
-                        isHovering = hovering
-                    }
-                }
-            }
-    }
-
-    private var fill: Color {
-        if isSelected {
-            return DesignTokens.Palette.accentFill(.selected, accent: .accentColor, contrast: contrast)
-        }
-        if isHovering {
-            return DesignTokens.Palette.fill(.hover, contrast: contrast)
-        }
-        return .clear
-    }
-}
-
-extension View {
-    /// Applies the sidebar's modern hover + selection pill to a custom row.
-    func sidebarRowHighlight(isSelected: Bool = false) -> some View {
-        modifier(SidebarRowHighlight(isSelected: isSelected))
-    }
-}
-
 // MARK: - Sidebar row
 
-/// A sidebar destination row with a full-width rounded selection fill + hover
-/// highlight and a fully clickable row.
+/// A sidebar destination row: 30pt tall, a quiet rounded selection fill and a
+/// hover wash, fully clickable.
 ///
 /// Built on an explicit `Button` rather than `List(selection:)`: in this
 /// window's `NavigationSplitView`, `List` row-clicks never engage (neither
 /// `NavigationLink(value:)` nor `.tag()` fire the selection), and native `List`
-/// rows show no hover at all. This replicates the macOS sidebar look — a
-/// rounded, accent-tinted selection that spans the row (minus a small margin),
-/// plus a subtle hover — reliably, and is used for every sidebar row so the
-/// whole sidebar is consistent.
+/// rows show no hover at all.
 struct SidebarRow<Content: View>: View {
     var isSelected: Bool
     /// Leading inset for tree depth — applied to the content, so the highlight
@@ -160,19 +29,18 @@ struct SidebarRow<Content: View>: View {
     var body: some View {
         Button(action: action) {
             content()
-                // White content on the solid accent fill (the native sidebar
-                // selection look) — primary otherwise.
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .labelStyle(SidebarLabelStyle(isSelected: isSelected))
+                .font(DesignTokens.Typography.sidebarRow.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
                 .padding(.leading, indent)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, minHeight: DesignTokens.Metrics.sidebarRowHeight, alignment: .leading)
                 .padding(.horizontal, DesignTokens.Spacing.sm)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
                 .fill(fillColor)
         )
         .onHover { hovering in
@@ -182,18 +50,119 @@ struct SidebarRow<Content: View>: View {
                 withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) { isHovering = hovering }
             }
         }
-        .listRowInsets(EdgeInsets(top: 1, leading: DesignTokens.Spacing.sm,
-                                  bottom: 1, trailing: DesignTokens.Spacing.sm))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .listRowInsets(EdgeInsets(top: 0, leading: DesignTokens.Spacing.sm,
+                                  bottom: 0, trailing: DesignTokens.Spacing.sm))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
 
     private var fillColor: Color {
-        // Solid accent for the selected row (matches the native macOS sidebar
-        // selection), a subtle neutral wash on hover.
-        if isSelected { return .accentColor }
+        if isSelected {
+            return contrast == .increased
+                ? DesignTokens.Palette.fill(.strong, contrast: contrast)
+                : DesignTokens.Palette.selectionFill
+        }
         if isHovering { return DesignTokens.Palette.fill(.hover, contrast: contrast) }
         return .clear
+    }
+}
+
+/// Grey icon that takes the accent only when its row is selected. An icon
+/// that sets its own foreground style (a project colour) keeps it.
+struct SidebarLabelStyle: LabelStyle {
+    var isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            configuration.icon
+                .font(.system(size: 13))
+                .foregroundStyle(isSelected ? DesignTokens.Palette.accent : DesignTokens.Palette.textSecondary)
+                .frame(width: 18)
+            configuration.title
+                .lineLimit(1)
+        }
+    }
+}
+
+struct SidebarCount: View {
+    let value: Int
+
+    var body: some View {
+        if value > 0 {
+            Text(value, format: .number)
+                .font(.system(size: 12))
+                .monospacedDigit()
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+        }
+    }
+}
+
+// MARK: - Section header
+
+/// 11pt semibold tertiary section title. Clicking it collapses the section
+/// when an expansion binding is given; `accessory` sits at the trailing edge.
+struct SidebarSectionHeader<Accessory: View>: View {
+    let title: LocalizedStringKey
+    var isExpanded: Binding<Bool>?
+    @ViewBuilder var accessory: () -> Accessory
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Button {
+                guard let isExpanded else { return }
+                withAnimation(.easeOut(duration: 0.18)) { isExpanded.wrappedValue.toggle() }
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Text(title)
+                        .font(DesignTokens.Typography.sidebarHeader)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    if let isExpanded {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
+                            .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                            .opacity(isHovering || !isExpanded.wrappedValue ? 1 : 0)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded.map { $0.wrappedValue ? "Expanded" : "Collapsed" } ?? "")
+            Spacer(minLength: 0)
+            accessory()
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .opacity(isHovering ? 1 : 0)
+        }
+        .padding(.leading, DesignTokens.Spacing.sm)
+        .padding(.top, DesignTokens.Spacing.sm)
+        .onHover { isHovering = $0 }
+    }
+}
+
+extension SidebarSectionHeader where Accessory == EmptyView {
+    init(title: LocalizedStringKey, isExpanded: Binding<Bool>? = nil) {
+        self.init(title: title, isExpanded: isExpanded) { EmptyView() }
+    }
+}
+
+struct SidebarHeaderButton: View {
+    let systemImage: String
+    let help: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(Text(help))
     }
 }
 
@@ -230,8 +199,8 @@ struct NotebookTreeIndex {
     /// Non-daily notes filed directly in `notebookId`, newest first.
     func notes(in notebookId: String) -> [Note] { notesByNotebook[notebookId] ?? [] }
 
-    /// Whether a notebook has any sub-notebooks or notes (drives the chevron).
+    /// Whether a notebook has sub-notebooks (drives the chevron).
     func hasChildren(_ notebookId: String) -> Bool {
-        !(childNotebooks[notebookId] ?? []).isEmpty || !(notesByNotebook[notebookId] ?? []).isEmpty
+        !(childNotebooks[notebookId] ?? []).isEmpty
     }
 }

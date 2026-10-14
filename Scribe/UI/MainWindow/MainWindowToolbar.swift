@@ -3,10 +3,10 @@ import TipKit
 
 /// The main window's customizable toolbar (`.toolbar(id: MainWindowToolbar.id)`).
 ///
-/// Back, the recording status pill and the Pause/Record transport are shown by
-/// default (the toolbar Scribe always had); Forward, New Note and Command Bar
-/// are available from View › Customize Toolbar…. SwiftUI persists the user's
-/// arrangement under the toolbar id.
+/// Back/Forward share one glass group; the search capsule opens the command
+/// bar; the Record capsule starts a session and becomes Stop (plus Pause and the
+/// status pill) while recording. New Note is available from View › Customize
+/// Toolbar…. SwiftUI persists the user's arrangement under the toolbar id.
 @MainActor
 struct MainWindowToolbar: CustomizableToolbarContent {
     static let id = "scribe.main"
@@ -34,6 +34,7 @@ struct MainWindowToolbar: CustomizableToolbarContent {
             .help("Back (⌘[)")
             .accessibilityLabel("Back")
             .disabled(!canGoBack)
+            .popoverTip(ScribeTips.dictation)
         }
 
         ToolbarItem(id: "forward", placement: .navigation) {
@@ -46,15 +47,14 @@ struct MainWindowToolbar: CustomizableToolbarContent {
             .accessibilityLabel("Forward")
             .disabled(!canGoForward)
         }
-        .defaultCustomization(.hidden)
 
         ToolbarItem(id: "recordingStatus", placement: .navigation) {
-            RecordingStatusPill(status: appState.recordingStatus, clock: appState.recordingClock)
-                .onTapGesture {
-                    if isRecording { onShowLive() }
-                }
-                .popoverTip(ScribeTips.dictation)
+            if isRecording {
+                RecordingStatusPill(status: appState.recordingStatus, clock: appState.recordingClock)
+                    .onTapGesture { onShowLive() }
+            }
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(id: "newNote", placement: .primaryAction) {
             Button {
@@ -66,16 +66,14 @@ struct MainWindowToolbar: CustomizableToolbarContent {
         }
         .defaultCustomization(.hidden)
 
-        ToolbarItem(id: "commandBar", placement: .primaryAction) {
-            Button {
+        ToolbarItem(id: "commandBar", placement: .navigation) {
+            ToolbarSearchCapsule {
                 onCommandBar()
                 ScribeTips.quickSearchUsed()
-            } label: {
-                Label("Search", systemImage: "magnifyingglass")
             }
-            .help("Search and commands (⌘K)")
             .popoverTip(ScribeTips.quickSearch)
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(id: "pauseResume", placement: .primaryAction) {
             if isRecording {
@@ -90,18 +88,71 @@ struct MainWindowToolbar: CustomizableToolbarContent {
         }
 
         ToolbarItem(id: "record", placement: .primaryAction) {
-            Button {
+            ToolbarRecordCapsule(isRecording: isRecording) {
                 ScribeTips.recordUsed()
                 onToggleRecording()
-            } label: {
-                Label(
-                    isRecording ? "Stop" : "Record",
-                    systemImage: isRecording ? "stop.circle.fill" : "record.circle"
-                )
-                .foregroundStyle(isRecording ? DesignTokens.Palette.recording : .primary)
             }
-            .help(isRecording ? "Stop the current session" : "Start a new recording")
             .popoverTip(ScribeTips.record)
         }
+        .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+private struct ToolbarSearchCapsule: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                Text("Search or jump to…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                Text("⌘K")
+                    .padding(.leading, DesignTokens.Spacing.lg)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: DesignTokens.Metrics.toolbarCapsuleHeight)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .scribeFloatingGlass(in: Capsule(), interactive: true)
+        .help("Search and commands (⌘K)")
+        .accessibilityLabel("Search or jump to")
+    }
+}
+
+private struct ToolbarRecordCapsule: View {
+    let isRecording: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if isRecording {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(DesignTokens.Palette.recording)
+                        .frame(width: 9, height: 9)
+                } else {
+                    Circle()
+                        .fill(DesignTokens.Palette.recording)
+                        .frame(width: 9, height: 9)
+                }
+                Text(isRecording ? "Stop" : "Record")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: DesignTokens.Metrics.toolbarCapsuleHeight)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .scribeFloatingGlass(in: Capsule(), interactive: true)
+        .help(isRecording ? "Stop the current session" : "Start a new recording")
+        .accessibilityLabel(isRecording ? "Stop" : "Record")
     }
 }

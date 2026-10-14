@@ -102,56 +102,84 @@ struct TranscriptArchiveView: View {
                     message: "Press Record in the toolbar (or ⇧⌘R from anywhere) and your meetings will collect here."
                 )
             } else {
-                List {
-                    ForEach(vm.groups, id: \.title) { group in
-                        Section(group.title) {
-                            ForEach(group.sessions) { session in
-                                Button { onNavigate(session.id) } label: {
-                                    SessionArchiveRow(session: session)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        QuietListHeader(title: "Recordings", count: countLabel)
+                            .padding(.bottom, DesignTokens.QuietList.sectionSpacing)
+                        ForEach(vm.groups, id: \.title) { group in
+                            Section {
+                                ForEach(group.sessions) { session in
+                                    SessionArchiveRow(session: session) { onNavigate(session.id) }
                                 }
-                                .buttonStyle(.plain)
+                            } header: {
+                                HStack(spacing: DesignTokens.Spacing.sm) {
+                                    Text(group.title)
+                                    Text("\(group.sessions.count)").monospacedDigit()
+                                }
+                                .quietListSectionHeader()
+                                .padding(.horizontal, DesignTokens.Spacing.sm)
+                                .padding(.top, DesignTokens.QuietList.sectionSpacing)
+                                .padding(.bottom, DesignTokens.Spacing.xs)
+                                .accessibilityAddTraits(.isHeader)
                             }
                         }
                     }
+                    .padding(.horizontal, DesignTokens.QuietList.gutter)
+                    .padding(.vertical, DesignTokens.Spacing.xl)
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .listStyle(.inset)
             }
         }
+        .background(DesignTokens.Palette.ground)
         .navigationTitle("Recordings")
         .searchable(text: $vm.query, prompt: "Search recordings")
         .onAppear { vm.start() }
         .onDisappear { vm.stop() }
+    }
+
+    private var countLabel: String {
+        let total = vm.groups.reduce(0) { $0 + $1.sessions.count }
+        return total == 1 ? "1 recording" : "\(total) recordings"
     }
 }
 
 /// One row in the recordings archive: title, relative date, duration.
 private struct SessionArchiveRow: View {
     let session: Session
+    let action: () -> Void
+    @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
-            Image(systemName: "waveform")
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+        Button(action: action) {
+            HStack(spacing: DesignTokens.Spacing.md) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .frame(width: 16)
                 Text(session.title.isEmpty ? "Untitled recording" : session.title)
-                    .font(DesignTokens.Typography.body)
+                    .font(DesignTokens.QuietList.rowTitleFont)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .lineLimit(1)
+                Spacer(minLength: DesignTokens.Spacing.md)
+                MeetingOriginBadge(sessionId: session.id)
                 HStack(spacing: DesignTokens.Spacing.sm) {
-                    Text(session.createdAt, format: .dateTime.month().day().hour().minute())
                     if let duration = durationLabel {
-                        Text("·")
                         Text(duration)
                     }
-                    MeetingOriginBadge(sessionId: session.id)
+                    Text(session.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DesignTokens.QuietList.rowMetaFont)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .lineLimit(1)
             }
-            Spacer()
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .frame(minHeight: DesignTokens.QuietList.rowHeight)
+            .quietListRowBackground(selected: false, hovered: hovered)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, DesignTokens.Spacing.xxs)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(session.title.isEmpty ? "Untitled recording" : session.title)
         .accessibilityHint("Opens this recording's transcript")

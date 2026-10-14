@@ -25,6 +25,47 @@ enum AudioSessionError: LocalizedError {
     }
 }
 
+// MARK: - RecordingTransitionGate
+
+/// Serializes the awaiting recording transitions (start, resume). While one
+/// is suspended on the mic control queue, a second start/resume is refused,
+/// and a pause is recorded so the resume can undo itself when it lands.
+struct RecordingTransitionGate: Sendable, Equatable {
+    enum Transition: Sendable, Equatable {
+        case starting
+        case resuming
+    }
+
+    private(set) var inFlight: Transition?
+    private(set) var pauseRequested = false
+
+    /// Returns `false` when another transition is already in flight.
+    mutating func begin(_ transition: Transition) -> Bool {
+        guard inFlight == nil else { return false }
+        inFlight = transition
+        pauseRequested = false
+        return true
+    }
+
+    /// Returns `true` when the pause was absorbed by an in-flight resume.
+    mutating func deferPauseIfResuming() -> Bool {
+        guard inFlight == .resuming else { return false }
+        pauseRequested = true
+        return true
+    }
+
+    /// Ends the in-flight transition and returns whether a pause arrived
+    /// during it.
+    @discardableResult
+    mutating func end() -> Bool {
+        defer {
+            inFlight = nil
+            pauseRequested = false
+        }
+        return pauseRequested
+    }
+}
+
 // MARK: - AudioSessionManager
 
 /// Coordinates microphone and system audio capture, feeding buffers to the transcription engine.
@@ -51,7 +92,8 @@ final class AudioSessionManager: ObservableObject {
 
     // MARK: - Capture Engines
 
-    let micCapture = MicrophoneCapture()
+    /// The mic is reconfigured on its own serial queue, never on the main actor.
+    private let mic: MicSessionController
     /// Core Audio process tap, with ScreenCaptureKit as the fallback.
     let systemCapture = SystemAudioRouter()
 
@@ -89,7 +131,13 @@ final class AudioSessionManager: ObservableObject {
     /// to pad gaps with silence, and maps transcript timestamps. Reset at
     /// every ``startRecording(micDeviceID:captureSystemAudio:)``; kept after
     /// stop so late transcription results can still be mapped.
-    private let aligner = AudioStreamAligner()
+    private let aligner: AudioStreamAligner
+
+    init() {
+        let aligner = AudioStreamAligner()
+        self.aligner = aligner
+        self.mic = MicSessionController(aligner: aligner)
+    }
 
     /// Feeds captured buffers from the capture threads to the main actor, in
     /// order. Open from start to stop (pauses just stop the flow).
@@ -109,6 +157,8 @@ final class AudioSessionManager: ObservableObject {
     /// True while ``stopRecording()`` is tearing down, so nothing restarts
     /// capture in the meantime.
     private var isTearingDown = false
+
+    private var transitions = RecordingTransitionGate()
 
     /// UserDefaults key of the "Echo cancellation" setting (registered
     /// default: on).
@@ -152,7 +202,8 @@ final class AudioSessionManager: ObservableObject {
     ///     Pass `nil` to use the value of ``shouldCaptureSystemAudio`` (defaults to `true`),
     ///     allowing callers to toggle behavior via the property before starting.
     func startRecording(micDeviceID: AudioDeviceID? = nil, captureSystemAudio: Bool? = nil) async throws {
-        guard !isRecording, !isTearingDown else { return }
+        guard !isRecording, !isTearingDown, transitions.begin(.starting) else { return }
+        defer { transitions.end() }
 
         let captureSystemAudio = captureSystemAudio ?? shouldCaptureSystemAudio
         shouldCaptureSystemAudio = captureSystemAudio
@@ -172,12 +223,7 @@ final class AudioSessionManager: ObservableObject {
             }
         }
 
-        // Echo cancellation for the mic (applied on the next startCapture).
         let echoSetting = UserDefaults.standard.object(forKey: Self.echoCancellationKey) as? Bool ?? true
-        micCapture.voiceProcessing = Self.shouldUseVoiceProcessing(
-            setting: echoSetting,
-            captureSystemAudio: captureSystemAudio
-        )
 
         // Surface an unexpectedly-stopped system-audio stream (e.g. revoked
         // Screen Recording grant) instead of letting remote capture die
@@ -188,21 +234,23 @@ final class AudioSessionManager: ObservableObject {
         // track; its next buffer measures it.
         systemCapture.onCaptureWillRestart = Self.makeCaptureRestartForwarder(aligner)
 
-        // Configure microphone capture.
-        if let deviceID = micDeviceID {
-            micCapture.selectDevice(id: deviceID)
-        }
-
-        installMicForwarder()
-
-        // Forward the raw per-buffer peak (render thread) into the lock-boxed
-        // holder; the main-actor `levelTimer` drains + smooths it for the UI.
-        micCapture.onLevel = Self.makeMicLevelForwarder(rawLevelBox)
-
-        // Fresh session: forget the device captured last time so automatic
-        // detection considers all in-use mics afresh (otherwise re-recording
-        // with the same call mic would exclude it and fall back to default).
-        micCapture.resetCaptureBaseline()
+        guard let continuation = bufferContinuation else { return }
+        let micConfiguration = MicSessionController.StartConfiguration(
+            voiceProcessing: Self.shouldUseVoiceProcessing(
+                setting: echoSetting,
+                captureSystemAudio: captureSystemAudio
+            ),
+            pinnedDevice: micDeviceID,
+            onAudioBuffer: Self.makeTrackForwarder(
+                track: .mic,
+                recorder: audioRecorder,
+                aligner: aligner,
+                levelBox: nil,
+                continuation: continuation
+            ),
+            // The main-actor `levelTimer` drains and smooths the raw peaks.
+            onLevel: Self.makeMicLevelForwarder(rawLevelBox)
+        )
 
         // The session clock starts now; each track's first buffer measures
         // how long its capture took to come up.
@@ -210,22 +258,17 @@ final class AudioSessionManager: ObservableObject {
         aligner.beginRun(atHostSeconds: Self.hostSecondsNow())
 
         do {
-            try micCapture.startCapture()
+            try await mic.start(micConfiguration)
         } catch {
+            await mic.stop()
             throw AudioSessionError.micCaptureFailure(underlying: error)
         }
-
-        // Start following the active input mode live: in automatic mode track
-        // whichever mic a call app is using; in system-default mode track the OS
-        // default. Started after capture so our own device is the baseline that
-        // active-mic detection excludes.
-        startObservingMicForCurrentMode()
 
         // Configure system audio capture.
         if captureSystemAudio {
             let hasPermission = await systemCapture.checkPermission()
             guard hasPermission else {
-                abortMicCapture()
+                await mic.stop()
                 throw AudioSessionError.systemAudioPermissionDenied
             }
 
@@ -234,7 +277,7 @@ final class AudioSessionManager: ObservableObject {
             do {
                 try await enqueueSystemCaptureStart().value
             } catch {
-                abortMicCapture()
+                await mic.stop()
                 throw AudioSessionError.systemCaptureFailure(underlying: error)
             }
         }
@@ -250,22 +293,13 @@ final class AudioSessionManager: ObservableObject {
         startLevelTimer()
     }
 
-    /// Undoes the mic side of a failed start.
-    private func abortMicCapture() {
-        micCapture.stopObservingDefaultInputDevice()
-        micCapture.stopObservingActiveInputDevice()
-        micCapture.stopCapture()
-    }
-
     /// Stops recording completely and tears down all capture resources.
     func stopRecording() async {
         guard isRecording, !isTearingDown else { return }
         isTearingDown = true
         defer { isTearingDown = false }
 
-        micCapture.stopObservingDefaultInputDevice()
-        micCapture.stopObservingActiveInputDevice()
-        micCapture.stopCapture()
+        await mic.stop()
         // Waits for any start/stop still in flight (e.g. a pause's stop).
         await enqueueSystemCaptureStop().value
         if !isPaused {
@@ -290,9 +324,12 @@ final class AudioSessionManager: ObservableObject {
 
     /// Pauses recording without ending the session. Capture taps are removed but the session stays alive.
     func pauseRecording() {
-        guard isRecording, !isPaused, !isTearingDown else { return }
+        guard isRecording, !isTearingDown else { return }
+        // A resume still awaiting the mic re-pauses as soon as it lands.
+        if transitions.deferPauseIfResuming() { return }
+        guard !isPaused else { return }
 
-        micCapture.stopCapture()
+        mic.pause()
         // Pause should feel instant, so the async system-capture stop isn't
         // awaited here — but it is queued, so a quick resume's start waits
         // for it instead of racing it. (A no-op when system audio is off.)
@@ -309,102 +346,14 @@ final class AudioSessionManager: ObservableObject {
         isPaused = true
     }
 
-    /// How the microphone input device is chosen.
-    enum MicSelection: Equatable {
-        /// Follow the mic a call/conferencing app is actively using — the one
-        /// the user is really speaking into. Falls back to the system default
-        /// when nothing else is in use.
-        case automatic
-        /// Follow the system default input device live.
-        case systemDefault
-        /// A specific pinned device.
-        case device(AudioDeviceID)
-    }
+    typealias MicSelection = MicInputSelection
 
-    /// Applies a microphone selection. If a session is in progress the mic tap
-    /// is restarted for the new selection and the appropriate live-follow
-    /// observer is (re)installed — so the user can change how the mic is chosen
-    /// mid-call without losing the session.
+    /// Applies a microphone selection. During a session the mic is rebound to
+    /// the new selection and the matching live-follow observer installed, so
+    /// the user can change how the mic is chosen mid-call without losing the
+    /// session. Runs on the mic's control queue, after anything already queued.
     func setMicSelection(_ selection: MicSelection) {
-        switch selection {
-        case .automatic:
-            micCapture.selectedDeviceID = nil
-            micCapture.autoDetectActiveInput = true
-        case .systemDefault:
-            micCapture.selectedDeviceID = nil
-            micCapture.autoDetectActiveInput = false
-        case .device(let id):
-            micCapture.selectDevice(id: id)
-            micCapture.autoDetectActiveInput = false
-        }
-
-        guard isRecording, !isPaused else { return }
-        // onAudioBuffer is a stored property on micCapture so the forwarding
-        // callback survives the restart.
-        restartMicCapture(reason: "selection changed")
-        startObservingMicForCurrentMode()
-    }
-
-    /// Installs the live-follow observer that matches the current mic mode:
-    /// nothing for a pinned device, the in-use-mic watcher for automatic, the
-    /// default-device watcher for system-default. Tears down any previous
-    /// observer first so it's safe to call on every selection/recording change.
-    private func startObservingMicForCurrentMode() {
-        micCapture.stopObservingDefaultInputDevice()
-        micCapture.stopObservingActiveInputDevice()
-
-        if micCapture.selectedDeviceID != nil {
-            return // pinned — nothing to follow
-        }
-
-        if micCapture.autoDetectActiveInput {
-            micCapture.onActiveInputDeviceChanged = { [weak self] in
-                Task { @MainActor [weak self] in self?.followActiveInputDeviceChange() }
-            }
-            micCapture.startObservingActiveInputDevice()
-        } else {
-            micCapture.onDefaultInputDeviceChanged = { [weak self] in
-                Task { @MainActor [weak self] in self?.followDefaultInputDeviceChange() }
-            }
-            micCapture.startObservingDefaultInputDevice()
-        }
-    }
-
-    /// Reacts to the mic a call app is using changing (automatic mode), e.g. a
-    /// Teams call starting on a different mic than the system default, or the
-    /// call app switching mics mid-session. Switches capture to it live.
-    private func followActiveInputDeviceChange() {
-        guard isRecording, !isPaused,
-              micCapture.selectedDeviceID == nil, micCapture.autoDetectActiveInput else { return }
-        // Only switch when a *different* in-use mic is now available; staying
-        // put when nothing new is in use avoids churn when a call ends.
-        guard let target = micCapture.activeInputDeviceID(),
-              target != micCapture.currentCaptureDeviceID else { return }
-        restartMicCapture(reason: "active input device changed")
-    }
-
-    /// Reacts to a change of the system default input device while following the
-    /// default (system-default mode). Restarts the mic tap so the newly-selected
-    /// input takes effect live, mid-session.
-    private func followDefaultInputDeviceChange() {
-        guard isRecording, !isPaused,
-              micCapture.selectedDeviceID == nil, !micCapture.autoDetectActiveInput else { return }
-        restartMicCapture(reason: "system default input device changed")
-    }
-
-    /// Tears down and restarts the mic tap in place, preserving the forwarding
-    /// callbacks (they're stored properties on `micCapture`).
-    private func restartMicCapture(reason: String) {
-        Log.audio.info("Restarting mic capture — \(reason, privacy: .public).")
-        micCapture.stopCapture()
-        // The restart leaves a short hole in the mic track; its next buffer
-        // measures it so the recording is padded and stays aligned.
-        aligner.trackWillStart(.mic)
-        do {
-            try micCapture.startCapture()
-        } catch {
-            Log.audio.error("Failed to restart mic capture: \(error.localizedDescription, privacy: .private)")
-        }
+        mic.setSelection(selection)
     }
 
     /// Turns system-audio capture on or off mid-session without interrupting
@@ -442,9 +391,10 @@ final class AudioSessionManager: ObservableObject {
         }
     }
 
-    /// Resumes a paused recording.
+    /// Resumes a paused recording. A pause requested while this is still
+    /// awaiting capture wins: the session stays paused.
     func resumeRecording() async throws {
-        guard isRecording, isPaused, !isTearingDown else { return }
+        guard isRecording, isPaused, !isTearingDown, transitions.begin(.resuming) else { return }
 
         // The session clock runs again from now; both tracks' first buffers
         // measure their restart delay, which the recorder pads with silence.
@@ -452,8 +402,9 @@ final class AudioSessionManager: ObservableObject {
         aligner.beginRun(atHostSeconds: Self.hostSecondsNow())
 
         do {
-            try micCapture.startCapture()
+            try await mic.resume()
         } catch {
+            transitions.end()
             aligner.endRun(atHostSeconds: Self.hostSecondsNow())
             throw AudioSessionError.micCaptureFailure(underlying: error)
         }
@@ -463,7 +414,7 @@ final class AudioSessionManager: ObservableObject {
         // and surface the problem via the banner rather than tearing the whole
         // session back down — otherwise the user is stuck unable to resume at
         // all. Mirrors the mic-only fallback elsewhere in the pipeline.
-        if shouldCaptureSystemAudio {
+        if shouldCaptureSystemAudio, isRecording, !isTearingDown, !transitions.pauseRequested {
             // Re-installed so a stream first enabled while paused feeds this
             // session's recorder and hand-off rather than stale ones.
             installSystemForwarder()
@@ -474,11 +425,22 @@ final class AudioSessionManager: ObservableObject {
                 Log.audio.error("Failed to restart system audio on resume: \(error.localizedDescription, privacy: .private)")
                 onSystemError?(AudioSessionError.systemCaptureFailure(underlying: error))
             }
-            // Recording may have been stopped while the stream was starting;
-            // stopRecording has already torn everything down (its queued stop
-            // runs after this start), so don't restart the timers or flip
-            // `isPaused` on a finished session.
-            guard isRecording, !isTearingDown else { return }
+        }
+
+        let pauseRequested = transitions.end()
+
+        // Recording may have been stopped meanwhile; stopRecording has torn
+        // everything down, so don't restart the timers or flip `isPaused`.
+        guard isRecording, !isTearingDown else {
+            aligner.endRun(atHostSeconds: Self.hostSecondsNow())
+            return
+        }
+
+        if pauseRequested {
+            mic.pause()
+            enqueueSystemCaptureStop()
+            aligner.endRun(atHostSeconds: Self.hostSecondsNow())
+            return
         }
 
         recordingStartTime = runStart
@@ -563,20 +525,6 @@ final class AudioSessionManager: ObservableObject {
         }
     }
 
-    /// Points the mic tap at this session's recorder, aligner and hand-off.
-    /// The forwarder is a stored property on `micCapture`, so it survives
-    /// mid-session restarts.
-    private func installMicForwarder() {
-        guard let continuation = bufferContinuation else { return }
-        micCapture.onAudioBuffer = Self.makeTrackForwarder(
-            track: .mic,
-            recorder: audioRecorder,
-            aligner: aligner,
-            levelBox: nil,
-            continuation: continuation
-        )
-    }
-
     /// Points system capture at this session's recorder, aligner, level
     /// meter and hand-off.
     private func installSystemForwarder() {
@@ -602,7 +550,7 @@ final class AudioSessionManager: ObservableObject {
         aligner: AudioStreamAligner,
         levelBox: RawLevelBox?,
         continuation: AsyncStream<CapturedAudioBuffer>.Continuation
-    ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         let isMic = track == .mic
         let source: CapturedAudioBuffer.Source = isMic ? .mic : .system
         return { buffer, time in
@@ -628,7 +576,7 @@ final class AudioSessionManager: ObservableObject {
     }
 
     /// Mic level callback (render thread) → lock-boxed raw peak.
-    nonisolated private static func makeMicLevelForwarder(_ levelBox: RawLevelBox) -> (Float) -> Void {
+    nonisolated private static func makeMicLevelForwarder(_ levelBox: RawLevelBox) -> @Sendable (Float) -> Void {
         { peak in levelBox.recordMic(peak) }
     }
 
@@ -690,12 +638,13 @@ final class AudioSessionManager: ObservableObject {
 
     /// Returns the available microphone input devices.
     func availableMicrophones() -> [(id: AudioDeviceID, name: String)] {
-        micCapture.availableInputDevices()
+        MicrophoneCapture.inputDevices()
     }
 
     // MARK: - Duration Timer
 
     private func startDurationTimer() {
+        durationTimer?.invalidate()
         durationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, let start = self.recordingStartTime else { return }

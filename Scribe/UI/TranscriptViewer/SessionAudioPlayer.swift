@@ -302,16 +302,18 @@ struct SessionAudioPlayerBar: View {
         HStack(spacing: DesignTokens.Spacing.md) {
             Button(action: { player.togglePlayPause() }) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(DesignTokens.Palette.quietFill))
+                    .contentShape(Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .accessibilityLabel(player.isPlaying ? "Pause recording" : "Play recording")
 
             Text(PlaybackTimeline.format(scrubPosition ?? clock.time))
-                .font(DesignTokens.Typography.timestamp)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
 
             Slider(
                 value: Binding(
@@ -335,20 +337,20 @@ struct SessionAudioPlayerBar: View {
             .accessibilityLabel("Playback position")
 
             Text(PlaybackTimeline.format(player.duration))
-                .font(DesignTokens.Typography.timestamp)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
 
             Button(PlaybackTimeline.rateLabel(player.rate)) { player.cycleRate() }
-                .buttonStyle(.borderless)
-                .font(.caption.monospacedDigit())
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
                 .frame(minWidth: 32)
                 .help("Playback speed")
                 .accessibilityLabel("Playback speed \(PlaybackTimeline.rateLabel(player.rate))")
         }
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .padding(.vertical, DesignTokens.Spacing.sm)
-        .background(DesignTokens.Palette.surfaceSunken,
-                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        .padding(.leading, DesignTokens.Spacing.xs + 2)
+        .padding(.trailing, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.xs + 2)
+        .quietListRaised(radius: DesignTokens.Radius.pill)
     }
 }

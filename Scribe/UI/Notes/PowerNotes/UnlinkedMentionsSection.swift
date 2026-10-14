@@ -126,42 +126,38 @@ struct NotePowerInspectorSections: View {
     @StateObject private var mentions = UnlinkedMentionsModel(store: .shared)
 
     var body: some View {
-        Section {
+        NoteInspectorSection("Unlinked Mentions") {
+            Button {
+                mentions.reload()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Search again")
+            .accessibilityLabel("Refresh unlinked mentions")
+        } content: {
             if mentions.isLoading && mentions.groups.isEmpty {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if mentions.groups.isEmpty {
-                Text("No unlinked mentions")
-                    .foregroundStyle(.secondary)
+                NoteInspectorPlaceholder("No unlinked mentions")
             } else {
-                ForEach(mentions.groups) { group in
-                    groupView(group)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                    ForEach(mentions.groups) { group in
+                        groupView(group)
+                    }
                 }
-            }
-        } header: {
-            HStack {
-                Text("Unlinked Mentions")
-                Spacer()
-                Button {
-                    mentions.reload()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("Search again")
-                .accessibilityLabel("Refresh unlinked mentions")
             }
         }
 
-        Section("History") {
-            Button {
+        NoteInspectorSection("History") {
+            NoteInspectorRow(systemImage: "clock.arrow.circlepath", title: "Version History\u{2026}") {
                 vm.flushPendingSave()
                 VersionHistoryWindowController.shared.show(noteId: vm.note.id, title: vm.note.title)
-            } label: {
-                Label("Version History\u{2026}", systemImage: "clock.arrow.circlepath")
             }
-            .buttonStyle(.borderless)
         }
         .onAppear { mentions.load(noteId: vm.note.id, title: vm.note.title) }
         .onChange(of: vm.note.id) { _, _ in mentions.load(noteId: vm.note.id, title: vm.note.title) }
@@ -177,11 +173,13 @@ struct NotePowerInspectorSections: View {
     @ViewBuilder
     private func groupView(_ group: UnlinkedMentionGroup) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Button {
                     onNavigate(group.noteId)
                 } label: {
-                    Label(group.noteTitle.isEmpty ? "Untitled" : group.noteTitle, systemImage: "doc.text")
+                    Text(group.noteTitle.isEmpty ? "Untitled" : group.noteTitle)
+                        .font(DesignTokens.Notes.inspectorBody.weight(.medium))
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .lineLimit(1)
                 }
                 .buttonStyle(.plain)
@@ -191,29 +189,30 @@ struct NotePowerInspectorSections: View {
                         mentions.linkAll(in: group)
                         refreshBacklinks()
                     }
-                        .buttonStyle(.borderless)
-                        .font(.caption)
-                        .help("Link every mention in this note")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.accent)
+                    .help("Link every mention in this note")
                 }
             }
             ForEach(group.mentions) { mention in
                 HStack(alignment: .firstTextBaseline) {
                     Text(mention.context)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
                         .lineLimit(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button("Link") {
                         mentions.link(mention, in: group)
                         refreshBacklinks()
                     }
-                        .buttonStyle(.borderless)
-                        .font(.caption)
-                        .help("Turn \u{201C}\(mention.matchedText)\u{201D} into a link to this note")
-                        .accessibilityLabel("Link mention on line \(mention.line)")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.accent)
+                    .help("Turn \u{201C}\(mention.matchedText)\u{201D} into a link to this note")
+                    .accessibilityLabel("Link mention on line \(mention.line)")
                 }
             }
         }
-        .padding(.vertical, 2)
     }
 }

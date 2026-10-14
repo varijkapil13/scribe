@@ -28,6 +28,8 @@ targets:
         excludes:
           - "Resources/Editor"
           - "Resources/Editor/**"
+          - "Resources/Fonts"
+          - "Resources/Fonts/**"
       # Folder reference (blue folder) added to the resources build phase:
       # preserves the Editor/ subtree — crucially Editor/chunks/ — inside the
       # app bundle, so WebMarkdownEditor resolves index.html via
@@ -39,6 +41,10 @@ targets:
       # ignored, which is why Editor was only ever bundled flattened by the
       # recursive entry above.)
       - path: Scribe/Resources/Editor
+        type: folder
+        buildPhase: resources
+      # Bundled Newsreader serif (OFL), registered via ATSApplicationFontsPath.
+      - path: Scribe/Resources/Fonts
         type: folder
         buildPhase: resources
     dependencies:

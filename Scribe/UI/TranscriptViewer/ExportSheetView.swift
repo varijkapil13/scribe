@@ -11,7 +11,6 @@ struct ExportSheetView: View {
 
     @Environment(\.dismiss) var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
 
     let session: Session
     let segments: [Segment]
@@ -24,27 +23,27 @@ struct ExportSheetView: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Export Transcript")
-                    .font(.system(.title3, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                 Text(session.title.isEmpty ? "Untitled Session" : session.title)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
                     .lineLimit(1)
             }
 
             formatPicker
 
-            // Preview area — content surface, deliberately solid (never glass).
             ScrollView {
                 Text(preview)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                     .textSelection(.enabled)
             }
             .frame(maxHeight: 280)
-            .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-            .readerCardBorder(contrast)
+            .quietListRaised(radius: DesignTokens.Radius.md)
             .accessibilityLabel("Export preview")
             .accessibilityValue(preview)
 
@@ -109,7 +108,7 @@ struct ExportSheetView: View {
     private var formatPicker: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             Text("Format")
-                .eyebrowStyle()
+                .quietListSectionHeader()
                 .accessibilityHidden(true)
 
             Picker("Export format", selection: $selectedFormat) {
@@ -118,8 +117,8 @@ struct ExportSheetView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(format.rawValue)
                             Text(formatBlurb(format))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
                         }
                     } icon: {
                         Image(systemName: formatIcon(format))

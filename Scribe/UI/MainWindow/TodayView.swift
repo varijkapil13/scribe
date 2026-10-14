@@ -1,68 +1,40 @@
 // Scribe/UI/MainWindow/TodayView.swift
-import Combine
 import SwiftUI
 
-// `DayPlanningModel` lives in DayPlanningModel.swift so it stays in the SwiftPM
-// test target while this view file is excluded from it (see Package.swift).
-
-/// Unified "Today" destination: the selected day's daily note on the left,
-/// the same day's tasks on the right rail. Replaces the separate "Today's
-/// Note" and Tasks-"Today" sidebar entries — both used to be one click away
-/// from the same date but on different surfaces, requiring two visits when
-/// the user just wanted to plan the day.
+/// Unified "Today" destination: the selected day's daily note, with a quiet
+/// agenda column (next meeting, tasks due, overdue summary) on the right. The
+/// full task list lives under the Tasks destinations.
 ///
-/// Layout direction: an *asymmetric* horizontal split (note ~60%, tasks rail
-/// ~40%) rather than a 50/50 vertical split. The note is the primary canvas
-/// you write into; the tasks rail is a glanceable companion. Both panes
-/// remain user-resizable.
-///
-/// The selected date lives in the shared ``DayPlanningModel`` (injected via the
-/// environment) and is read by both panes — when the user navigates days via the
-/// date strip in the note header, the rail re-filters tasks to that day
-/// automatically, and the Task Calendar opens on the same day.
+/// The selected date lives in the shared ``DayPlanningModel`` so the Task
+/// Calendar opens on the same day.
 struct TodayView: View {
     var onNavigate: (String) -> Void
 
-    /// Shared day model, injected by `MainWindowView` so the Today home and the
-    /// Task Calendar always plan against the same selected day.
     @Environment(DayPlanningModel.self) private var dayPlanning
 
-    /// On first open the `HSplitView` lays out its panes at a compressed width
-    /// and then resolves toward the `idealWidth` split — and SwiftUI *animates*
-    /// that resolution, so the note pane and task rail visibly slide sideways
-    /// (the day strip appearing to grow from 5→7 days) for a beat before
-    /// settling. Freeze animations for that first layout pass so the split
-    /// snaps straight to its resting widths; user-driven divider drags (which
-    /// only happen after `hasAppeared`) still animate normally.
-    @State private var hasAppeared = false
-
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             DailyNoteView(selectedDate: selectedDateBinding, onNavigate: onNavigate)
-                .frame(minWidth: 380, idealWidth: 600)
-                .layoutPriority(2)
+                .environment(\.noteEditorOptionsInToolbar, false)
+                .frame(minWidth: 380, maxWidth: .infinity)
+                .layoutPriority(1)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(noteAccessibilityLabel)
 
-            TodayTasksRail(selectedDate: dayPlanning.selectedDate)
-                .frame(minWidth: 280, idealWidth: 360, maxWidth: 520)
-                .layoutPriority(1)
+            Rectangle()
+                .fill(DesignTokens.Palette.hairline)
+                .frame(width: 1)
+                .accessibilityHidden(true)
+
+            TodayAgendaView(selectedDate: dayPlanning.selectedDate)
+                .frame(width: DesignTokens.Today.agendaWidth)
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel(tasksAccessibilityLabel)
+                .accessibilityLabel(agendaAccessibilityLabel)
         }
-        .transaction { txn in
-            if !hasAppeared { txn.animation = nil }
-        }
-        .onAppear {
-            // Flip on the next runloop tick so the very first layout pass — the
-            // one that would otherwise animate the split into place — is excluded.
-            DispatchQueue.main.async { hasAppeared = true }
-        }
+        .background(DesignTokens.Palette.ground)
     }
 
-    /// Adapts the shared model's read-only `selectedDate` to the two-way binding
-    /// `DailyNoteView` expects: writes route through `select(_:)` (which
-    /// normalises + de-dupes) rather than mutating the date directly.
+    /// Writes route through `select(_:)`, which normalises and de-dupes.
     private var selectedDateBinding: Binding<Date> {
         Binding(
             get: { dayPlanning.selectedDate },
@@ -78,10 +50,10 @@ struct TodayView: View {
             : "Daily note for \(Self.longFormatter.string(from: selectedDate))"
     }
 
-    private var tasksAccessibilityLabel: String {
+    private var agendaAccessibilityLabel: String {
         Calendar.current.isDateInToday(selectedDate)
-            ? "Today's tasks"
-            : "Tasks for \(Self.longFormatter.string(from: selectedDate))"
+            ? "Today's agenda"
+            : "Agenda for \(Self.longFormatter.string(from: selectedDate))"
     }
 
     private static let longFormatter: DateFormatter = {
@@ -90,136 +62,4 @@ struct TodayView: View {
         f.timeStyle = .none
         return f
     }()
-}
-
-// MARK: - Tasks rail
-
-/// Right-hand rail that hosts the selected day's tasks. Wraps
-/// ``TaskListView`` with an editorial header so the rail reads as a focused,
-/// glanceable companion to the note pane — not a second 50/50 surface
-/// competing for visual weight. Re-filters reactively as the parent's
-/// selected date changes.
-private struct TodayTasksRail: View {
-    let selectedDate: Date
-
-    @StateObject private var progress = TodayProgressViewModel()
-
-    /// `.today` keeps overdue tasks visible alongside today's; non-today
-    /// dates use the strict same-day `.dueOn` window. Routed through the shared
-    /// pure helper so the Today rail and any other day-scoped surface agree.
-    private var filter: TaskStore.Filter {
-        DayPlanningModel.taskFilter(for: selectedDate)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            Divider()
-
-            TaskListView(filter: filter)
-                .id(filter)
-        }
-        .onAppear { progress.start(filter: filter) }
-        .onDisappear { progress.stop() }
-        .onChange(of: filter) { _, newFilter in
-            progress.start(filter: newFilter)
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
-            Text(eyebrow)
-                .eyebrowStyle()
-                .accessibilityAddTraits(.isHeader)
-
-            Text(progress.summary)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(.easeOut(duration: DesignTokens.Motion.fast),
-                           value: progress.incompleteCount)
-                .accessibilityLabel(progress.accessibilitySummary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .padding(.top, DesignTokens.Spacing.md)
-        .padding(.bottom, DesignTokens.Spacing.sm)
-    }
-
-    private var eyebrow: String {
-        let cal = Calendar.current
-        if cal.isDateInToday(selectedDate)     { return "TODAY'S TASKS" }
-        if cal.isDateInYesterday(selectedDate) { return "YESTERDAY'S TASKS" }
-        if cal.isDateInTomorrow(selectedDate)  { return "TOMORROW'S TASKS" }
-        return Self.shortFormatter.string(from: selectedDate).uppercased() + " · TASKS"
-    }
-
-    private static let shortFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEE, MMM d"
-        return f
-    }()
-}
-
-// MARK: - Lightweight progress observer
-
-/// Minimal observer that exposes the count of incomplete tasks for the
-/// currently-shown filter, plus an overdue split. Kept independent from
-/// ``TaskListViewModel`` so the rail header can update without touching the
-/// embedded list's internal state. Resubscribes when the filter changes
-/// (e.g. when the user navigates to a different day).
-@MainActor
-private final class TodayProgressViewModel: ObservableObject {
-    @Published private(set) var incompleteCount: Int = 0
-    @Published private(set) var overdueCount: Int = 0
-    @Published private(set) var filterIsToday: Bool = true
-
-    private let store = TaskStore()
-    private var cancellable: AnyCancellable?
-
-    func start(filter: TaskStore.Filter) {
-        cancellable?.cancel()
-        filterIsToday = (filter == .today)
-        let isToday = filterIsToday
-        cancellable = store.observeTasks(filter: filter)
-            .sink(
-                receiveCompletion: { _ in },
-                receiveValue: { [weak self] tasks in
-                    guard let self else { return }
-                    let startOfToday = Calendar.current.startOfDay(for: Date())
-                    let overdue = isToday
-                        ? tasks.filter { ($0.dueAt ?? .distantFuture) < startOfToday }.count
-                        : 0
-                    self.incompleteCount = tasks.count
-                    self.overdueCount = overdue
-                }
-            )
-    }
-
-    func stop() {
-        cancellable?.cancel()
-        cancellable = nil
-    }
-
-    /// Compact visual summary, e.g. "3 to do · 1 overdue" or "All clear".
-    var summary: String {
-        if incompleteCount == 0 {
-            return filterIsToday ? "All clear" : "Nothing scheduled"
-        }
-        let base = "\(incompleteCount) to do"
-        return overdueCount > 0 ? "\(base) · \(overdueCount) overdue" : base
-    }
-
-    /// Verbose form for screen readers — full words, no glyphs.
-    var accessibilitySummary: String {
-        if incompleteCount == 0 {
-            return filterIsToday ? "No tasks for today" : "No tasks scheduled"
-        }
-        let tasks = incompleteCount == 1 ? "1 task" : "\(incompleteCount) tasks"
-        if overdueCount == 0 { return "\(tasks) to do" }
-        let overdue = overdueCount == 1 ? "1 overdue" : "\(overdueCount) overdue"
-        return "\(tasks) to do, \(overdue)"
-    }
 }

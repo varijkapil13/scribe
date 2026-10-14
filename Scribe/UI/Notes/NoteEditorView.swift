@@ -17,8 +17,8 @@ struct NoteEditorView: View {
     var editorModel: WebEditorModel? = nil
 
     // Per-note + default typography / measure preferences.
-    @AppStorage(NotePageWidth.storageKey) private var pageWidthRaw: String = NotePageWidth.full.rawValue
-    @AppStorage(NoteTypeface.defaultStorageKey) private var defaultTypefaceRaw: String = NoteTypeface.system.rawValue
+    @AppStorage(NotePageWidth.storageKey) private var pageWidthRaw: String = NotePageWidth.regular.rawValue
+    @AppStorage(NoteTypeface.defaultStorageKey) private var defaultTypefaceRaw: String = NoteTypeface.defaultTypeface.rawValue
     /// The persisted per-note typeface override (empty = follow default).
     @State private var perNoteTypefaceRaw: String = ""
 
@@ -30,6 +30,7 @@ struct NoteEditorView: View {
     private var plantUMLRemoteEnabled: Bool = PlantUMLRenderingPreference.defaultValue
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.noteEditorOptionsInToolbar) private var optionsInToolbar
 
     /// Known note titles, refreshed when the editor appears / the note changes,
     /// so the web editor can style `[[wiki links]]` as resolved vs broken.
@@ -41,21 +42,19 @@ struct NoteEditorView: View {
     @State private var ownEditorModel = WebEditorModel()
 
     private var pageWidth: NotePageWidth {
-        NotePageWidth(rawValue: pageWidthRaw) ?? .full
+        NotePageWidth(rawValue: pageWidthRaw) ?? .regular
     }
 
     private var typeface: NoteTypeface {
         if let perNote = NoteTypeface(rawValue: perNoteTypefaceRaw) {
             return perNote
         }
-        return NoteTypeface(rawValue: defaultTypefaceRaw) ?? .system
+        return NoteTypeface(rawValue: defaultTypefaceRaw) ?? .defaultTypeface
     }
 
-    /// Body font size handed to the web editor. The CodeMirror prose theme owns
-    /// the typeface itself (a system prose stack); we only sync the size so the
-    /// page-width / typeface menu's size intent is honored.
-    private var bodyFontSize: CGFloat {
-        typeface.baseFont(size: 17).pointSize
+    private var typography: WebEditorTypography {
+        WebEditorTypography(face: typeface.rawValue,
+                            measure: pageWidth.capsWidth ? Int(pageWidth.measure) : 0)
     }
 
     // NOTE: the live note surface is now the CodeMirror 6 WebView editor
@@ -79,7 +78,8 @@ struct NoteEditorView: View {
                 WebMarkdownEditor(
                     text: $text,
                     colorScheme: colorScheme,
-                    fontSize: bodyFontSize,
+                    fontSize: typeface.editorFontSize,
+                    typography: typography,
                     knownTitles: knownTitles,
                     onWikiLink: { anchor in onNavigate(anchor) },
                     plantUMLRemoteEnabled: plantUMLRemoteEnabled,
@@ -91,17 +91,12 @@ struct NoteEditorView: View {
                     },
                     model: editorModel ?? ownEditorModel
                 )
-                // Full width by default. The finite presets (Regular/Wide)
-                // centre the text column at the chosen reading measure
-                // (Craft-style); `.full` applies no cap so the editor spans the
-                // whole available width. The web editor's own prose column is
-                // uncapped (maxWidth:none), so width is driven entirely here.
-                .frame(maxWidth: pageWidth.capsWidth ? pageWidth.measure + 48 : .infinity)
-                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+        .scrollEdgeEffectHidden(true, for: .top)
         .focusedSceneValue(\.scribeEditorCommands, commandBridge)
         .scribeFocusMenuToolbar(
+            isEnabled: optionsInToolbar,
             pageWidthRaw: $pageWidthRaw,
             perNoteTypefaceRaw: $perNoteTypefaceRaw,
             defaultTypefaceRaw: $defaultTypefaceRaw,
@@ -173,24 +168,33 @@ final class EditorCompletionCache {
 
 // MARK: - View-menu / overflow hook
 
+extension EnvironmentValues {
+    /// Whether an editor puts its Editor Options ("Aa") menu in the window
+    /// toolbar. Hosts that embed a note beside other content turn it off.
+    @Entry var noteEditorOptionsInToolbar: Bool = true
+}
+
 private extension View {
     /// Surfaces the page-width + typeface choices in the editor's overflow menu.
     /// A View-menu shortcut to flip page width lives on the spine (see
     /// integration hooks); this is the discoverable in-editor entry point.
     func scribeFocusMenuToolbar(
+        isEnabled: Bool,
         pageWidthRaw: Binding<String>,
         perNoteTypefaceRaw: Binding<String>,
         defaultTypefaceRaw: Binding<String>,
         persistentToolbar: Binding<Bool>
     ) -> some View {
         self.toolbar {
-            ToolbarItem(placement: .secondaryAction) {
-                NoteEditorOverflowMenu(
-                    pageWidthRaw: pageWidthRaw,
-                    perNoteTypefaceRaw: perNoteTypefaceRaw,
-                    defaultTypefaceRaw: defaultTypefaceRaw,
-                    persistentToolbar: persistentToolbar
-                )
+            if isEnabled {
+                ToolbarItem(placement: .secondaryAction) {
+                    NoteEditorOverflowMenu(
+                        pageWidthRaw: pageWidthRaw,
+                        perNoteTypefaceRaw: perNoteTypefaceRaw,
+                        defaultTypefaceRaw: defaultTypefaceRaw,
+                        persistentToolbar: persistentToolbar
+                    )
+                }
             }
         }
     }
@@ -202,8 +206,8 @@ private struct NoteEditorOverflowMenu: View {
     @Binding var defaultTypefaceRaw: String
     @Binding var persistentToolbar: Bool
 
-    private var pageWidth: NotePageWidth { NotePageWidth(rawValue: pageWidthRaw) ?? .full }
-    private var defaultTypeface: NoteTypeface { NoteTypeface(rawValue: defaultTypefaceRaw) ?? .system }
+    private var pageWidth: NotePageWidth { NotePageWidth(rawValue: pageWidthRaw) ?? .regular }
+    private var defaultTypeface: NoteTypeface { NoteTypeface(rawValue: defaultTypefaceRaw) ?? .defaultTypeface }
 
     var body: some View {
         Menu {

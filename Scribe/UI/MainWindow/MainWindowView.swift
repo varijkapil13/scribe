@@ -1,7 +1,7 @@
 import SwiftUI
 import TipKit
 
-// `MainSelection`, `NotesFilter`, and `Surface` live in MainSelection.swift so
+// `MainSelection` and `NotesFilter` live in MainSelection.swift so
 // they stay in the SwiftPM test target while this view file is excluded from it
 // (see the EDITOR EXCLUSION BOUNDARY note in Package.swift).
 
@@ -25,10 +25,9 @@ struct MainWindowView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var projectEditorMode: ProjectEditorMode?
     @State private var projectPendingDelete: Project?
-    @State private var tasksExpanded: Bool = true
     @State private var projectsExpanded: Bool = true
     @State private var notesExpanded: Bool = true
-    @State private var notebooksExpanded: Bool = true
+    @State private var meetingsExpanded: Bool = true
     @State private var notesTagsExpanded: Bool = false
     @State private var unifiedTags: [String] = []
     @State private var notebooks: [Notebook] = []
@@ -66,7 +65,7 @@ struct MainWindowView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
+                .navigationSplitViewColumnWidth(min: 220, ideal: DesignTokens.Metrics.sidebarWidth, max: 360)
         } detail: {
             detail
                 .environment(dayPlanning)
@@ -271,96 +270,15 @@ struct MainWindowView: View {
     private var sidebar: some View {
         List {
             if searchText.isEmpty {
-                let surface = nav.current.surface
-
-                // MARK: Capture surface
-                if surface == .capture {
-                if recording.isRecording {
-                    Section {
-                        SidebarRow(isSelected: nav.current == .live,
-                                   action: { nav.navigate(to: .live) }) {
-                            LiveSidebarRow(
-                                isPaused: recording.isPaused,
-                                clock: appState.recordingClock
-                            )
-                        }
-                    } header: {
-                        Text("Now")
-                            .eyebrowStyle()
-                    }
-                }
-
                 Section {
                     sidebarLink(.today, "Today", systemImage: "sun.max", badge: taskCounts.today)
-                    sidebarLink(.recordings, "Recordings", systemImage: "waveform")
-                    sidebarLink(.ask, "Ask Scribe", systemImage: "bubble.left.and.text.bubble.right")
-                    sidebarLink(.people, "People", systemImage: "person.2")
-                }
-                }  // end Capture surface
-
-                // MARK: Tasks surface
-                if surface == .tasks {
-                Section {
-                    if tasksExpanded {
-                        ForEach(TaskSidebarItem.unifiedSidebarFilters) { item in
-                            sidebarLink(.tasks(item.filter), LocalizedStringKey(item.title),
-                                        systemImage: item.systemImage,
-                                        badge: taskBadge(for: item.filter))
-                        }
-                        sidebarLink(.taskCalendar, "Calendar", systemImage: "calendar")
-                    }
-                } header: {
-                    CollapsibleSectionHeader(title: "Tasks", isExpanded: $tasksExpanded)
+                    sidebarLink(.tasks(.inbox), "Inbox", systemImage: "tray", badge: taskCounts.inbox)
+                    sidebarLink(.tasks(.upcoming), "Upcoming", systemImage: "calendar", badge: taskCounts.upcoming)
                 }
 
-                Section {
-                    if projectsExpanded {
-                        ForEach(projectsViewModel.projects) { project in
-                            SidebarRow(isSelected: nav.current == .tasks(.project(project.id)),
-                                       action: { nav.navigate(to: .tasks(.project(project.id))) }) {
-                                ProjectSidebarRow(project: project)
-                            }
-                            .contextMenu {
-                                Button {
-                                    projectEditorMode = .edit(project)
-                                } label: {
-                                    Label("Edit…", systemImage: "pencil")
-                                }
-                                ProjectAreaMenu(project: project, areas: projectsViewModel.areas) {
-                                    projectsViewModel.assignArea($0, toProject: project.id)
-                                }
-                                Button(role: .destructive) {
-                                    projectPendingDelete = project
-                                } label: {
-                                    Label("Delete project", systemImage: "trash")
-                                }
-                            }
-                            .dropDestination(for: TaskDragPayload.self) { items, _ in
-                                for item in items {
-                                    projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
-                                }
-                                return !items.isEmpty
-                            }
-                        }
-                        .onMove { source, destination in
-                            projectsViewModel.reorder(from: source, to: destination)
-                        }
-                    }
-                } header: {
-                    HStack(alignment: .center) {
-                        CollapsibleSectionHeader(title: "Projects", isExpanded: $projectsExpanded)
-                        Spacer()
-                        Button {
-                            projectEditorMode = .create
-                        } label: {
-                            Image(systemName: "plus.circle")
-                                .frame(width: 22, height: 22)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("New project")
-                    }
-                }
+                notesSection
+                meetingsSection
+                projectsSection
 
                 TaskAreasSidebarSection(
                     viewModel: projectsViewModel,
@@ -368,93 +286,6 @@ struct MainWindowView: View {
                     onSelect: { nav.navigate(to: .tasks(.area($0))) },
                     onDeleted: { if nav.current == .tasks(.area($0)) { nav.navigate(to: .tasks(.inbox)) } }
                 )
-                }  // end Tasks surface
-
-                // MARK: Notes surface
-                if surface == .notes {
-                Section {
-                    if notesExpanded {
-                        sidebarLink(.notes(.all), "All Notes", systemImage: "doc.on.doc")
-                        sidebarLink(.notes(.graph), "Graph", systemImage: "circle.hexagongrid")
-                        sidebarLink(.bases, "Bases", systemImage: "tablecells")
-                    }
-                } header: {
-                    HStack(alignment: .center) {
-                        CollapsibleSectionHeader(title: "Notes", isExpanded: $notesExpanded)
-                        Spacer()
-                        Button {
-                            let note = try? NoteStore.shared.createNote(title: "", body: "")
-                            if let note { nav.navigate(to: .note(note.id)) }
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                                .frame(width: 22, height: 22)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("New note (⌘N)")
-                    }
-                }
-
-                Section {
-                    if notebooksExpanded {
-                        NotebookTreeView(
-                            parentId: nil,
-                            index: notebookTreeIndex,
-                            selection: treeSelection,
-                            expansion: notebookExpansion
-                        )
-                        // The tree is one List cell (a VStack); inset it to the
-                        // same 8pt margin the other sidebar rows use.
-                        .listRowInsets(EdgeInsets(top: 2, leading: DesignTokens.Spacing.sm,
-                                                  bottom: 2, trailing: DesignTokens.Spacing.sm))
-                        .listRowSeparator(.hidden)
-
-                        if isCreatingTopNotebook {
-                            InlineNameField(
-                                text: $topNotebookDraftName,
-                                placeholder: "New Notebook",
-                                systemImage: "folder"
-                            ) {
-                                let name = topNotebookDraftName.trimmingCharacters(in: .whitespaces)
-                                if !name.isEmpty {
-                                    _ = try? NoteStore.shared.createNotebook(name: name)
-                                }
-                                isCreatingTopNotebook = false
-                                topNotebookDraftName = ""
-                            } onCancel: {
-                                isCreatingTopNotebook = false
-                                topNotebookDraftName = ""
-                            }
-                        }
-                    }
-                } header: {
-                    HStack(alignment: .center) {
-                        CollapsibleSectionHeader(title: "Notebooks", isExpanded: $notebooksExpanded)
-                        Spacer()
-                        Button {
-                            notebooksExpanded = true
-                            isCreatingTopNotebook = true
-                            topNotebookDraftName = ""
-                        } label: {
-                            Image(systemName: "plus.circle")
-                                .frame(width: 22, height: 22)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("New notebook")
-                    }
-                }
-
-                Section {
-                    if notesTagsExpanded {
-                        ForEach(unifiedTags, id: \.self) { tag in
-                            sidebarLink(.notes(.tag(tag)), verbatim: tag, systemImage: "tag")
-                        }
-                    }
-                } header: {
-                    CollapsibleSectionHeader(title: "Tags", isExpanded: $notesTagsExpanded)
-                }
-                }  // end Notes surface
             } else {
                 Section {
                     let results = sidebarSearchResults
@@ -468,23 +299,23 @@ struct MainWindowView: View {
                                        action: { nav.navigate(to: .note(note.id)) }) {
                                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                                     Text(note.title.isEmpty ? "Untitled" : note.title)
-                                        .font(DesignTokens.Typography.body)
-                                        .fontWeight(.medium)
                                         .lineLimit(1)
                                     Text(note.updatedAt, style: .relative)
                                         .font(.caption)
-                                        .foregroundStyle(.tertiary)
+                                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                                 }
+                                .padding(.vertical, DesignTokens.Spacing.xs)
                             }
                         }
                     }
                 } header: {
-                    Text("Notes")
-                        .eyebrowStyle()
+                    SidebarSectionHeader(title: "Notes")
                 }
             }
         }
-        .searchable(text: $searchText, placement: .sidebar, prompt: "Search…")
+        .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, DesignTokens.Metrics.sidebarRowHeight)
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Filter notes")
         .navigationTitle("Scribe")
         .confirmationDialog(
             projectPendingDelete.map { "Delete “\($0.name)”?" } ?? "Delete project?",
@@ -506,68 +337,215 @@ struct MainWindowView: View {
         } message: {
             Text("The project will be deleted. Its tasks won’t be deleted — they’ll move to your Inbox.")
         }
-        // Edge bars (not painted insets): they join the system scroll-edge
+        // An edge bar (not a painted inset) joins the system scroll-edge
         // effect, so the sidebar's own material shows through.
-        .scribeEdgeBar(.top) {
-            surfaceSwitcher
-        }
         .scribeEdgeBar(.bottom) {
             sidebarFooter
         }
     }
 
-    /// Arc-style top-level surface switcher. Reflects the active selection's
-    /// surface and jumps to that surface's default destination (⌘1/2/3 mirror
-    /// this via the Go menu). Tapping the already-active surface is a no-op so
-    /// it doesn't reset an open note/task back to the default.
-    private var surfaceSwitcher: some View {
-        SidebarSurfaceSwitcher(current: nav.current.surface) { newSurface in
-            if newSurface != nav.current.surface {
-                nav.navigate(to: newSurface.defaultSelection)
+    @ViewBuilder
+    private var notesSection: some View {
+        Section {
+            if notesExpanded {
+                sidebarLink(.notes(.all), "All Notes", systemImage: "doc.on.doc")
+                sidebarLink(.notes(.daily), "Daily Notes", systemImage: "calendar.day.timeline.left")
+
+                NotebookTreeView(
+                    parentId: nil,
+                    index: notebookTreeIndex,
+                    selection: treeSelection,
+                    expansion: notebookExpansion
+                )
+                // The tree is one List cell (a VStack); inset it to the same
+                // margin the other sidebar rows use.
+                .listRowInsets(EdgeInsets(top: 0, leading: DesignTokens.Spacing.sm,
+                                          bottom: 0, trailing: DesignTokens.Spacing.sm))
+                .listRowSeparator(.hidden)
+
+                if isCreatingTopNotebook {
+                    InlineNameField(
+                        text: $topNotebookDraftName,
+                        placeholder: "New Notebook",
+                        systemImage: "folder"
+                    ) {
+                        let name = topNotebookDraftName.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty {
+                            _ = try? NoteStore.shared.createNotebook(name: name)
+                        }
+                        isCreatingTopNotebook = false
+                        topNotebookDraftName = ""
+                    } onCancel: {
+                        isCreatingTopNotebook = false
+                        topNotebookDraftName = ""
+                    }
+                }
+
+                if !unifiedTags.isEmpty {
+                    SidebarRow(isSelected: false, action: {
+                        withAnimation(.easeOut(duration: 0.18)) { notesTagsExpanded.toggle() }
+                    }) {
+                        HStack(spacing: DesignTokens.Spacing.xs) {
+                            Label("Tags", systemImage: "tag")
+                            Spacer(minLength: DesignTokens.Spacing.xs)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                                .rotationEffect(.degrees(notesTagsExpanded ? 90 : 0))
+                        }
+                    }
+                    .accessibilityValue(notesTagsExpanded ? "Expanded" : "Collapsed")
+                    if notesTagsExpanded {
+                        ForEach(unifiedTags, id: \.self) { tag in
+                            sidebarLink(.notes(.tag(tag)), verbatim: tag, systemImage: "number", indent: DesignTokens.Spacing.lg)
+                        }
+                    }
+                }
+
+                sidebarLink(.bases, "Bases", systemImage: "tablecells")
+                sidebarLink(.notes(.graph), "Graph", systemImage: "circle.hexagongrid")
+            }
+        } header: {
+            SidebarSectionHeader(title: "Notes", isExpanded: $notesExpanded) {
+                Menu {
+                    Button("New Note") {
+                        NotificationCenter.default.post(name: .scribeNewNote, object: nil)
+                    }
+                    Button("New Notebook") {
+                        notesExpanded = true
+                        isCreatingTopNotebook = true
+                        topNotebookDraftName = ""
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 20, height: 20)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("New note or notebook")
+                .accessibilityLabel("New note or notebook")
             }
         }
-        .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.top, DesignTokens.Spacing.sm)
-        .padding(.bottom, DesignTokens.Spacing.xs)
-        .frame(maxWidth: .infinity)
     }
 
-    /// Footer icon strip for rarely-used destinations. Avoids dedicating
-    /// entire sidebar sections to views opened a few times per week.
+    @ViewBuilder
+    private var meetingsSection: some View {
+        Section {
+            if meetingsExpanded {
+                if recording.isRecording {
+                    SidebarRow(isSelected: nav.current == .live,
+                               action: { nav.navigate(to: .live) }) {
+                        LiveSidebarRow(
+                            isPaused: recording.isPaused,
+                            clock: appState.recordingClock
+                        )
+                    }
+                }
+                sidebarLink(.recordings, "Recordings", systemImage: "waveform")
+                sidebarLink(.people, "People", systemImage: "person.2")
+                sidebarLink(.ask, "Ask Scribe", systemImage: "bubble.left.and.text.bubble.right")
+            }
+        } header: {
+            SidebarSectionHeader(title: "Meetings", isExpanded: $meetingsExpanded)
+        }
+    }
+
+    @ViewBuilder
+    private var projectsSection: some View {
+        Section {
+            if projectsExpanded {
+                ForEach(projectsViewModel.projects) { project in
+                    SidebarRow(isSelected: nav.current == .tasks(.project(project.id)),
+                               action: { nav.navigate(to: .tasks(.project(project.id))) }) {
+                        HStack(spacing: DesignTokens.Spacing.sm) {
+                            ProjectSidebarRow(project: project)
+                            Spacer(minLength: DesignTokens.Spacing.xs)
+                            SidebarCount(value: taskCounts.openByProject[project.id] ?? 0)
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            projectEditorMode = .edit(project)
+                        } label: {
+                            Label("Edit…", systemImage: "pencil")
+                        }
+                        ProjectAreaMenu(project: project, areas: projectsViewModel.areas) {
+                            projectsViewModel.assignArea($0, toProject: project.id)
+                        }
+                        Button(role: .destructive) {
+                            projectPendingDelete = project
+                        } label: {
+                            Label("Delete project", systemImage: "trash")
+                        }
+                    }
+                    .dropDestination(for: TaskDragPayload.self) { items, _ in
+                        for item in items {
+                            projectsViewModel.moveTask(taskId: item.id, toProject: project.id)
+                        }
+                        return !items.isEmpty
+                    }
+                }
+                .onMove { source, destination in
+                    projectsViewModel.reorder(from: source, to: destination)
+                }
+
+                sidebarLink(.taskCalendar, "Calendar", systemImage: "calendar.badge.clock")
+                sidebarLink(.tasks(.someday), "Someday", systemImage: "archivebox")
+            }
+        } header: {
+            SidebarSectionHeader(title: "Projects", isExpanded: $projectsExpanded) {
+                SidebarHeaderButton(systemImage: "plus", help: "New project") {
+                    projectEditorMode = .create
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var sidebarFooter: some View {
         HStack(spacing: 0) {
+            Button {
+                NotificationCenter.default.post(name: .openScribeSettings,
+                                                object: SettingsPane.general)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .labelStyle(SidebarLabelStyle(isSelected: false))
+                    .font(DesignTokens.Typography.sidebarRow)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    .frame(height: DesignTokens.Metrics.sidebarRowHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Settings (⌘,)")
+            Spacer()
             footerIcon(systemImage: "checkmark.circle",
                        help: "Completed tasks",
                        isActive: nav.current == .tasks(.completed)) {
                 nav.navigate(to: .tasks(.completed))
             }
-            Spacer()
-            footerIcon(systemImage: "gearshape",
-                       help: "Settings (⌘,)",
-                       isActive: false) {
-                NotificationCenter.default.post(name: .openScribeSettings,
-                                                object: SettingsPane.general)
-            }
         }
-        .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DesignTokens.Spacing.lg)
+        .padding(.vertical, DesignTokens.Spacing.xs)
     }
 
     @ViewBuilder
     private func footerIcon(systemImage: String,
-                            help: String,
+                            help: LocalizedStringKey,
                             isActive: Bool,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(isActive ? DesignTokens.Palette.accent : DesignTokens.Palette.textSecondary)
                 .frame(width: 28, height: 24)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(Text(help))
     }
 
     // Synchronous, during the navigation update: an async fetch renders an
@@ -583,16 +561,6 @@ struct MainWindowView: View {
         let noteTags = (try? NoteStore.shared.allNoteTags()) ?? []
         let taskTags = (try? TaskStore.shared.allTags()) ?? []
         unifiedTags = Array(Set(noteTags + taskTags)).sorted()
-    }
-
-    /// Sidebar count badge for a smart-filter row (0 is hidden by SwiftUI).
-    private func taskBadge(for filter: TaskStore.Filter) -> Int {
-        switch filter {
-        case .inbox:    return taskCounts.inbox
-        case .upcoming: return taskCounts.upcoming
-        case .today:    return taskCounts.today
-        default:        return 0
-        }
     }
 
     private func scheduleTagReload() {
@@ -612,40 +580,32 @@ struct MainWindowView: View {
         }
     }
 
-    /// A standard sidebar destination row (icon + title + optional count badge),
-    /// rendered with `SidebarRow` so it's reliably clickable with a full-width
-    /// selection + hover highlight.
-    ///
-    /// This overload takes a localized title (literal call sites are
-    /// extracted into Localizable.xcstrings).
     private func sidebarLink(_ destination: MainSelection,
                              _ title: LocalizedStringKey,
                              systemImage: String,
                              badge: Int = 0) -> some View {
-        sidebarLink(destination, label: Label(title, systemImage: systemImage), badge: badge)
+        sidebarLink(destination, label: Label(title, systemImage: systemImage), badge: badge, indent: 0)
     }
 
     /// Sidebar row whose title is user data (a tag) — shown verbatim.
     private func sidebarLink(_ destination: MainSelection,
                              verbatim title: String,
-                             systemImage: String) -> some View {
-        sidebarLink(destination, label: Label(title, systemImage: systemImage), badge: 0)
+                             systemImage: String,
+                             indent: CGFloat = 0) -> some View {
+        sidebarLink(destination, label: Label(title, systemImage: systemImage), badge: 0, indent: indent)
     }
 
     private func sidebarLink<RowLabel: View>(_ destination: MainSelection,
                                              label: RowLabel,
-                                             badge: Int) -> some View {
+                                             badge: Int,
+                                             indent: CGFloat) -> some View {
         SidebarRow(isSelected: nav.current == destination,
+                   indent: indent,
                    action: { nav.navigate(to: destination) }) {
             HStack(spacing: DesignTokens.Spacing.sm) {
                 label
-                if badge > 0 {
-                    Spacer(minLength: DesignTokens.Spacing.xs)
-                    Text("\(badge)")
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
+                Spacer(minLength: DesignTokens.Spacing.xs)
+                SidebarCount(value: badge)
             }
         }
     }
@@ -882,30 +842,6 @@ private struct WelcomeView: View {
 // `KeyCapGroup` moved to UI/DesignSystem/KeyCapGroup.swift (kept in the SwiftPM
 // target; see Package.swift exclusion note).
 
-// MARK: - Collapsible section header
-
-private struct CollapsibleSectionHeader: View {
-    let title: LocalizedStringKey
-    @Binding var isExpanded: Bool
-
-    var body: some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
-        } label: {
-            HStack(spacing: 4) {
-                Text(title)
-                    .eyebrowStyle()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .animation(.easeOut(duration: 0.18), value: isExpanded)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - Task sidebar items
 
 /// At-a-glance sidebar counts derived from the active (incomplete,
@@ -915,6 +851,7 @@ struct SidebarTaskCounts: Equatable {
     var today = 0      // due today or overdue
     var overdue = 0
     var upcoming = 0   // next 7 days, excluding today
+    var openByProject: [String: Int] = [:]
 
     init() {}
 
@@ -923,6 +860,9 @@ struct SidebarTaskCounts: Equatable {
         let startTomorrow = calendar.date(byAdding: .day, value: 1, to: startToday)!
         let endUpcoming = calendar.date(byAdding: .day, value: 7, to: startTomorrow)!
         for task in tasks {
+            if let projectId = task.projectId, !task.isCompleted, !task.isCancelled {
+                openByProject[projectId, default: 0] += 1
+            }
             if TaskPlanningRules.isInInbox(task) { inbox += 1 }
             if TaskPlanningRules.isInToday(task, now: now, calendar: calendar) { today += 1 }
             if let due = task.dueAt {
@@ -930,39 +870,6 @@ struct SidebarTaskCounts: Equatable {
                 if due >= startTomorrow && due < endUpcoming { upcoming += 1 }
             }
         }
-    }
-}
-
-/// Smart filters shown under the "Tasks" sidebar header: Inbox, Today, Upcoming, All, Completed.
-struct TaskSidebarItem: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let systemImage: String
-    let filter: TaskStore.Filter
-
-    static let smartFilters: [TaskSidebarItem] = [
-        .init(id: "inbox",    title: "Inbox",    systemImage: "tray",            filter: .inbox),
-        .init(id: "today",    title: "Today",    systemImage: "sun.max",         filter: .today),
-        .init(id: "upcoming", title: "Upcoming", systemImage: "calendar",        filter: .upcoming),
-        .init(id: "someday",  title: "Someday",  systemImage: "archivebox",      filter: .someday),
-        .init(id: "all",      title: "All",      systemImage: "list.bullet",     filter: .all),
-        .init(id: "completed", title: "Completed", systemImage: "checkmark.circle", filter: .completed)
-    ]
-
-    /// Subset shown in the sidebar after Slice E — "Completed" moved to the
-    /// footer icon strip, "All" stays in the body view as a filter chip.
-    static let sidebarFilters: [TaskSidebarItem] = smartFilters.filter { item in
-        switch item.filter {
-        case .completed, .all: return false
-        default: return true
-        }
-    }
-
-    /// After Slice G the unified "Today" destination replaces the per-section
-    /// Today filter; sidebar lists Inbox + Upcoming under Tasks.
-    static let unifiedSidebarFilters: [TaskSidebarItem] = sidebarFilters.filter { item in
-        if case .today = item.filter { return false }
-        return true
     }
 }
 

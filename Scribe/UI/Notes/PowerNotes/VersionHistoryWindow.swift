@@ -28,7 +28,7 @@ final class VersionHistoryWindowController: NSObject, NSWindowDelegate {
         )
         window.title = "Version History \u{2014} \(title.isEmpty ? "Untitled" : title)"
         window.isReleasedWhenClosed = false
-        window.contentViewController = NSHostingController(rootView: VersionHistoryView(model: model))
+        window.contentViewController = NSHostingController(rootView: VersionHistoryView(model: model).tint(DesignTokens.Palette.accent))
         window.delegate = self
         window.center()
         window.setFrameAutosaveName("ScribeVersionHistory")

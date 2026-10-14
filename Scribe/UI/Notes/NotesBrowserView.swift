@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Two-pane notes browser: note list on the left, detail on the right.
 /// Used for All Notes / Unfiled / Notebook scopes. For `.all` and `.inbox`
-/// the list pane offers a segmented chip to toggle between the two so those
-/// filters don't need to take up dedicated sidebar rows.
+/// the list header offers All / Unfiled tabs so those filters don't need
+/// dedicated sidebar rows.
 struct NotesBrowserView: View {
     let initialScope: NoteListScope
 
@@ -13,13 +13,10 @@ struct NotesBrowserView: View {
     /// card; the breadcrumb + Back pop it. `navPath.last` is the displayed note.
     @State private var navPath: [String] = []
     @State private var currentNote: Note?
+    @AppStorage("notes.listWidth") private var listWidth: Double = DesignTokens.Notes.listWidth
     @State private var titlesById: [String: String] = [:]
-    /// Direction of the last navigation, so the card transition slides the
-    /// right way (push → in from trailing; pop → in from leading).
-    @State private var goingBack = false
     @State private var activeScope: NoteListScope
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(scope: NoteListScope) {
         self.initialScope = scope
@@ -38,25 +35,27 @@ struct NotesBrowserView: View {
         Binding(
             get: { navPath.first },
             set: { newValue in
-                goingBack = false
                 navPath = newValue.map { [$0] } ?? []
             }
         )
     }
 
     var body: some View {
-        HSplitView {
-            VStack(spacing: 0) {
-                if showsScopeChips {
-                    NotesScopeChipBar(activeScope: $activeScope)
-                }
-                NoteListView(scope: activeScope, selectedNoteId: listSelection)
-                    .id(NoteListScopeID(scope: activeScope))
-            }
-            .frame(minWidth: 200, idealWidth: 260, maxWidth: 320)
+        // Not HSplitView: its AppKit divider runs up through the toolbar.
+        HStack(spacing: 0) {
+            NoteListView(scope: activeScope,
+                         selectedNoteId: listSelection,
+                         scopeChoice: showsScopeChips ? $activeScope : nil)
+                .id(NoteListScopeID(scope: activeScope))
+                .frame(width: clampedListWidth)
+
+            ResizableColumnDivider(width: $listWidth,
+                                   range: DesignTokens.Notes.listMinWidth...DesignTokens.Notes.listMaxWidth)
 
             detailColumn
         }
+        .navigationTitle(currentNote.map { $0.title.isEmpty ? "Untitled" : $0.title } ?? "Notes")
+        .toolbar(removing: .title)
         .task(id: navPath.last) {
             guard let id = navPath.last else { currentNote = nil; return }
             let note = try? NoteStore.shared.fetchNote(id: id)
@@ -67,6 +66,10 @@ struct NotesBrowserView: View {
         }
     }
 
+    private var clampedListWidth: CGFloat {
+        min(max(listWidth, DesignTokens.Notes.listMinWidth), DesignTokens.Notes.listMaxWidth)
+    }
+
     @ViewBuilder
     private var detailColumn: some View {
         VStack(spacing: 0) {
@@ -74,47 +77,33 @@ struct NotesBrowserView: View {
                 breadcrumbBar
             }
             Group {
-                if let note = currentNote, note.id == navPath.last {
+                if navPath.isEmpty {
+                    emptyState
+                } else if let note = currentNote {
                     NoteDetailView(note: note, onNavigate: { push($0) })
                         .id(note.id)
-                        .transition(cardTransition)
-                } else if navPath.isEmpty {
-                    emptyState
-                } else {
-                    Color.clear  // brief gap while the next card loads
                 }
             }
-            .animation(DesignTokens.Motion.resolve(DesignTokens.Motion.gentle, reduceMotion: reduceMotion),
-                       value: currentNote?.id)
+            .transaction { $0.animation = nil }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-
-    private var cardTransition: AnyTransition {
-        guard !reduceMotion else { return .opacity }
-        return .asymmetric(
-            insertion: .move(edge: goingBack ? .leading : .trailing).combined(with: .opacity),
-            removal:   .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity)
-        )
+        .background(DesignTokens.Palette.ground)
     }
 
     // MARK: - Navigation
 
     private func push(_ noteId: String) {
         guard noteId != navPath.last else { return }
-        goingBack = false
         navPath.append(noteId)
     }
 
     private func pop() {
         guard navPath.count > 1 else { return }
-        goingBack = true
         navPath.removeLast()
     }
 
     private func popTo(index: Int) {
         guard index < navPath.count - 1 else { return }
-        goingBack = true
         navPath = Array(navPath.prefix(index + 1))
     }
 
@@ -149,67 +138,25 @@ struct NotesBrowserView: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
         .padding(.vertical, 6)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
+        .background(DesignTokens.Palette.ground)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DesignTokens.Palette.hairline).frame(height: 1)
+        }
     }
 
     private var emptyState: some View {
         VStack(spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "note.text")
-                .font(.system(size: 32, weight: .light))
-                .foregroundStyle(.quaternary)
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(DesignTokens.Palette.textTertiary.opacity(0.6))
             Text("No Note Selected")
-                .font(DesignTokens.Typography.section)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
             Text("Choose a note from the list.")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 13))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// Segmented control offering "All / Unfiled". Renders only when the parent
-/// originally opened on `.all` or `.inbox` — for notebook views the chip
-/// would be confusing.
-private struct NotesScopeChipBar: View {
-    @Binding var activeScope: NoteListScope
-
-    var body: some View {
-        HStack(spacing: DesignTokens.Spacing.xxs) {
-            chip(title: "All",     isActive: isAll)     { activeScope = .all }
-            chip(title: "Unfiled", isActive: isInbox)   { activeScope = .inbox }
-            Spacer()
-        }
-        .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, 6)
-        .background(DesignTokens.Palette.surfaceElevated)
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-
-    private var isAll: Bool {
-        if case .all = activeScope { return true } else { return false }
-    }
-    private var isInbox: Bool {
-        if case .inbox = activeScope { return true } else { return false }
-    }
-
-    @ViewBuilder
-    private func chip(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
-                .padding(.horizontal, DesignTokens.Spacing.sm)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                        .fill(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -233,5 +180,37 @@ private struct NoteListScopeID: Hashable {
         case (.notebook(let a), .notebook(let b)): return a == b
         default: return false
         }
+    }
+}
+
+
+private struct ResizableColumnDivider: View {
+    @Binding var width: Double
+    let range: ClosedRange<CGFloat>
+    @State private var dragStartWidth: Double?
+
+    var body: some View {
+        Rectangle()
+            .fill(DesignTokens.Palette.hairline)
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { value in
+                                let start = dragStartWidth ?? width
+                                dragStartWidth = start
+                                let proposed = CGFloat(start) + value.translation.width
+                                width = Double(min(max(proposed, range.lowerBound), range.upperBound))
+                            }
+                            .onEnded { _ in dragStartWidth = nil }
+                    )
+            }
+            .accessibilityHidden(true)
     }
 }

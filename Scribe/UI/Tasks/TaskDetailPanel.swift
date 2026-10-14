@@ -60,26 +60,25 @@ struct TaskDetailPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+                    propertiesBlock
                     notesBlock
-                    Divider().padding(.horizontal, DesignTokens.Spacing.lg)
                     subtasksBlock
-                    Divider().padding(.horizontal, DesignTokens.Spacing.lg)
-                    scheduleBlock
-                    Divider().padding(.horizontal, DesignTokens.Spacing.lg)
-                    organizationBlock
                     if let sessionId = viewModel.sourceSessionId {
-                        Divider().padding(.horizontal, DesignTokens.Spacing.lg)
                         sourceBlock(sessionId: sessionId, title: viewModel.sourceSessionTitle)
                     }
                 }
+                .padding(.horizontal, DesignTokens.Spacing.lg)
+                .padding(.top, DesignTokens.Spacing.xs)
+                .padding(.bottom, DesignTokens.Spacing.xl)
             }
-            Divider()
+            Rectangle()
+                .fill(DesignTokens.Palette.cardBorder(contrast))
+                .frame(height: 1)
             footer
         }
-        .scribeGlass(.hud, in: Rectangle())
+        .background(DesignTokens.Palette.raised)
         .modifier(TaskHandoffModifier(taskId: task.id, title: viewModel.title))
         .onChange(of: viewModel.lastSavedAt) { _, newValue in
             guard newValue != nil else { return }
@@ -139,10 +138,10 @@ struct TaskDetailPanel: View {
             HStack(spacing: DesignTokens.Spacing.xxs) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                 Text("Saved")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
             }
             .transition(.opacity)
             .accessibilityHidden(true) // announced via AccessibilityNotification
@@ -161,17 +160,17 @@ struct TaskDetailPanel: View {
                     Text(breadcrumbProjectName)
                     Image(systemName: "chevron.right")
                         .imageScale(.small)
-                        .foregroundStyle(.tertiary)
                     Text(viewModel.title.isEmpty ? "Untitled" : viewModel.title)
                         .lineLimit(1)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Location: \(breadcrumbProjectName), \(viewModel.title.isEmpty ? "Untitled" : viewModel.title)")
 
                 TextField("Title", text: $viewModel.title, axis: .vertical)
-                    .font(.system(.title3, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .textFieldStyle(.plain)
                     .lineLimit(1...4)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,7 +180,7 @@ struct TaskDetailPanel: View {
                 if let validation = viewModel.validationError {
                     Text(validation)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DesignTokens.Palette.overdue)
                         .accessibilityLabel("Title error: \(validation)")
                 }
             }
@@ -191,16 +190,18 @@ struct TaskDetailPanel: View {
             Button(action: dismissSavingChanges) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
                     .frame(width: 20, height: 20)
-                    .background(Circle().fill(DesignTokens.Palette.fill(.selected, contrast: contrast)))
+                    .background(Circle().fill(DesignTokens.Palette.quietFill))
             }
             .buttonStyle(.plain)
             .help("Close")
             .accessibilityLabel("Close")
             .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(DesignTokens.Spacing.lg)
+        .padding(.horizontal, DesignTokens.Spacing.lg)
+        .padding(.top, DesignTokens.Spacing.lg)
+        .padding(.bottom, DesignTokens.Spacing.md)
     }
 
     /// Breadcrumb root for the task: its project's name, or "Inbox" when the
@@ -216,10 +217,7 @@ struct TaskDetailPanel: View {
 
     private var notesBlock: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            Text("Notes")
-                .font(.system(.caption, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.bottom, DesignTokens.Spacing.xxs)
+            sectionHeader("Notes")
 
             // Task notes are a short free-text field, so a plain SwiftUI
             // TextEditor is the right fit (a full WebMarkdownEditor would be
@@ -229,7 +227,7 @@ struct TaskDetailPanel: View {
             ZStack(alignment: .topLeading) {
                 if viewModel.notes.isEmpty {
                     Text("Add notes…")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 8)
                         .allowsHitTesting(false)
@@ -240,79 +238,102 @@ struct TaskDetailPanel: View {
                     .padding(2)
             }
             .frame(minHeight: 120)
-            .background(DesignTokens.Palette.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
+                    .fill(DesignTokens.Palette.ground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.row, style: .continuous)
+                    .strokeBorder(DesignTokens.Palette.cardBorder(contrast), lineWidth: 1)
+            )
         }
-        .padding(DesignTokens.Spacing.lg)
     }
 
     // MARK: - Subtasks / checklist
 
     private var subtasksBlock: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            Text("Checklist")
-                .font(.system(.caption, weight: .semibold))
-                .foregroundStyle(.secondary)
+            sectionHeader("Checklist")
             SubtaskChecklistView(taskId: task.id)
         }
-        .padding(DesignTokens.Spacing.lg)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .quietListSectionHeader()
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: - Properties
+
+    private var propertiesBlock: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            sectionHeader("Properties")
+            Grid(alignment: .leadingFirstTextBaseline,
+                 horizontalSpacing: DesignTokens.Spacing.md,
+                 verticalSpacing: DesignTokens.Spacing.sm) {
+                organizationRows
+                scheduleRows
+                planningRows
+                tagsRow
+            }
+        }
     }
 
     // MARK: - Schedule
 
-    private var scheduleBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            panelRow(icon: "calendar", label: "Due date") {
-                Button { showDueDatePicker.toggle() } label: {
-                    HStack(spacing: DesignTokens.Spacing.xs) {
-                        Text(dueDateLabel)
-                            .foregroundStyle(viewModel.dueAt != nil ? .primary : .secondary)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.callout)
+    @ViewBuilder
+    private var scheduleRows: some View {
+        panelRow(label: "Due") {
+            Button { showDueDatePicker.toggle() } label: {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Text(dueDateLabel)
+                        .foregroundStyle(viewModel.dueAt != nil ? DesignTokens.Palette.textPrimary : DesignTokens.Palette.textTertiary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                 }
-                .buttonStyle(.bordered)
+                .font(Self.valueFont)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Due date: \(dueDateLabel)")
+            .popover(isPresented: $showDueDatePicker, arrowEdge: .trailing) {
+                InlineDatePickerView(selectedDate: $viewModel.dueAt)
+                    .padding(DesignTokens.Spacing.xs)
+            }
+        }
+
+        if viewModel.dueAt != nil {
+            panelRow(label: "Time") {
+                DatePicker(
+                    "",
+                    selection: Binding(
+                        get: { viewModel.dueAt ?? Date() },
+                        set: { viewModel.dueAt = $0 }
+                    ),
+                    displayedComponents: [.hourAndMinute]
+                )
+                .labelsHidden()
                 .controlSize(.small)
-                .accessibilityLabel("Due date: \(dueDateLabel)")
-                .popover(isPresented: $showDueDatePicker, arrowEdge: .trailing) {
-                    InlineDatePickerView(selectedDate: $viewModel.dueAt)
-                        .padding(DesignTokens.Spacing.xs)
-                }
             }
+        }
 
-            if viewModel.dueAt != nil {
-                Divider().padding(.leading, 40)
-                panelRow(icon: "clock", label: "Time") {
-                    DatePicker(
-                        "",
-                        selection: Binding(
-                            get: { viewModel.dueAt ?? Date() },
-                            set: { viewModel.dueAt = $0 }
-                        ),
-                        displayedComponents: [.hourAndMinute]
-                    )
-                    .labelsHidden()
-                    .controlSize(.small)
-                }
-            }
-
-            Divider().padding(.leading, 40)
-            panelRow(icon: "bell", label: "Reminder") {
+        panelRow(label: "Reminder") {
+            HStack(spacing: DesignTokens.Spacing.xs) {
                 if hasReminder {
                     Button { showReminderPicker.toggle() } label: {
                         HStack(spacing: DesignTokens.Spacing.xs) {
                             Text(reminderLabel)
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(DesignTokens.Palette.textPrimary)
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
                         }
-                        .font(.callout)
+                        .font(Self.valueFont)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Reminder: \(reminderLabel)")
                     .popover(isPresented: $showReminderPicker, arrowEdge: .trailing) {
                         InlineDatePickerView(selectedDate: $viewModel.remindAt)
@@ -325,32 +346,31 @@ struct TaskDetailPanel: View {
                         hasReminder = false
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Clear reminder")
                 } else {
-                    Button("Set") {
+                    Button("None") {
                         viewModel.remindAt = lastRemindDate ?? viewModel.dueAt ?? Calendar.current.startOfDay(for: Date())
                         hasReminder = true
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
+                    .font(Self.valueFont)
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .help("Set a reminder")
+                    .accessibilityLabel("Set reminder")
                 }
             }
-
-            planningRows
         }
-        .padding(.vertical, DesignTokens.Spacing.xs)
     }
 
     // MARK: - Planning (start date, when-bucket, duration, repeat)
 
     @ViewBuilder
     private var planningRows: some View {
-        Divider().padding(.leading, 40)
-        panelRow(icon: "moon.stars", label: "When") {
+        panelRow(label: "When") {
             Picker("", selection: Binding(
                 get: { viewModel.scheduleBucket },
                 set: { viewModel.setScheduleBucket($0) }
@@ -359,27 +379,24 @@ struct TaskDetailPanel: View {
                     Label(bucket.title, systemImage: bucket.systemImage).tag(bucket)
                 }
             }
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(maxWidth: 140)
+            .quietPropertyPicker()
             .accessibilityLabel("When")
         }
 
-        Divider().padding(.leading, 40)
-        panelRow(icon: "calendar.badge.clock", label: "Start") {
+        panelRow(label: "Start") {
             HStack(spacing: DesignTokens.Spacing.xs) {
                 Button { showStartPicker.toggle() } label: {
                     HStack(spacing: DesignTokens.Spacing.xs) {
                         Text(startDateLabel)
-                            .foregroundStyle(viewModel.startAt != nil ? .primary : .secondary)
+                            .foregroundStyle(viewModel.startAt != nil ? DesignTokens.Palette.textPrimary : DesignTokens.Palette.textTertiary)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                     }
-                    .font(.callout)
+                    .font(Self.valueFont)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.plain)
                 .help("Hide this task from Today until this day")
                 .accessibilityLabel("Start date: \(startDateLabel)")
                 .popover(isPresented: $showStartPicker, arrowEdge: .trailing) {
@@ -397,7 +414,7 @@ struct TaskDetailPanel: View {
                 if viewModel.startAt != nil {
                     Button { viewModel.startAt = nil } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
@@ -406,8 +423,7 @@ struct TaskDetailPanel: View {
             }
         }
 
-        Divider().padding(.leading, 40)
-        panelRow(icon: "hourglass", label: "Duration") {
+        panelRow(label: "Duration") {
             Menu {
                 ForEach(Self.durationPresets, id: \.self) { minutes in
                     Button(TaskDurationFormat.short(minutes)) { viewModel.estimatedMinutes = minutes }
@@ -416,7 +432,8 @@ struct TaskDetailPanel: View {
                 Button("None") { viewModel.estimatedMinutes = nil }
             } label: {
                 Text(viewModel.estimatedMinutes.map(TaskDurationFormat.short) ?? "None")
-                    .font(.callout)
+                    .font(Self.valueFont)
+                    .foregroundStyle(viewModel.estimatedMinutes != nil ? DesignTokens.Palette.textPrimary : DesignTokens.Palette.textTertiary)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -424,11 +441,10 @@ struct TaskDetailPanel: View {
         }
 
         if let summary = recurrenceSummary {
-            Divider().padding(.leading, 40)
-            panelRow(icon: "repeat", label: "Repeat") {
+            panelRow(label: "Repeat") {
                 Text(summary)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(Self.valueFont)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .lineLimit(2)
             }
         }
@@ -452,136 +468,132 @@ struct TaskDetailPanel: View {
 
     // MARK: - Organization
 
-    private var organizationBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            panelRow(icon: "flag", label: "Priority") {
-                Picker("", selection: $viewModel.priority) {
-                    Text("None").tag(TodoTask.Priority?.none)
-                    ForEach(TodoTask.Priority.allCases, id: \.self) { p in
-                        Text(p.rawValue).tag(Optional(p))
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(maxWidth: 120)
-                .accessibilityLabel("Priority")
-            }
-
-            Divider().padding(.leading, 40)
-            panelRow(icon: "folder", label: "Project") {
-                Picker("", selection: Binding(
-                    get: { viewModel.projectId },
-                    set: { viewModel.selectProject($0) }
-                )) {
-                    Text("Inbox").tag(String?.none)
-                    ForEach(viewModel.availableProjects) { project in
-                        Text(project.name).tag(Optional(project.id))
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(maxWidth: 140)
-                .accessibilityLabel("Project")
-            }
-
-            if !viewModel.availableHeadings.isEmpty {
-                Divider().padding(.leading, 40)
-                panelRow(icon: "list.bullet.indent", label: "Heading") {
-                    Picker("", selection: $viewModel.headingId) {
-                        Text("None").tag(String?.none)
-                        ForEach(viewModel.availableHeadings) { heading in
-                            Text(heading.title).tag(Optional(heading.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(maxWidth: 140)
-                    .accessibilityLabel("Heading")
+    @ViewBuilder
+    private var organizationRows: some View {
+        panelRow(label: "Priority") {
+            Picker("", selection: $viewModel.priority) {
+                Text("None").tag(TodoTask.Priority?.none)
+                ForEach(TodoTask.Priority.allCases, id: \.self) { p in
+                    Text(p.rawValue).tag(Optional(p))
                 }
             }
+            .quietPropertyPicker()
+            .accessibilityLabel("Priority")
+        }
 
-            if !viewModel.availableAreas.isEmpty {
-                Divider().padding(.leading, 40)
-                panelRow(icon: "square.stack.3d.up", label: "Area") {
-                    if viewModel.projectId != nil {
-                        // A project task lives in its project's area.
-                        Text(areaName(viewModel.effectiveAreaId) ?? "None")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .help("Set by the task's project")
-                    } else {
-                        Picker("", selection: $viewModel.areaId) {
-                            Text("None").tag(String?.none)
-                            ForEach(viewModel.availableAreas) { area in
-                                Text(area.name).tag(Optional(area.id))
-                            }
-                        }
-                        .labelsHidden()
-                        .controlSize(.small)
-                        .frame(maxWidth: 140)
-                        .accessibilityLabel("Area")
-                    }
+        panelRow(label: "Project") {
+            Picker("", selection: Binding(
+                get: { viewModel.projectId },
+                set: { viewModel.selectProject($0) }
+            )) {
+                Text("Inbox").tag(String?.none)
+                ForEach(viewModel.availableProjects) { project in
+                    Text(project.name).tag(Optional(project.id))
                 }
             }
+            .quietPropertyPicker()
+            .accessibilityLabel("Project")
+        }
 
-            Divider().padding(.leading, 40)
-            panelRow(icon: "tag", label: "Tags") {
-                TagTokenField(
-                    tags: viewModel.tags,
-                    suggestions: { viewModel.tagSuggestions(matching: $0) },
-                    onAdd: { viewModel.addTag($0) },
-                    onRemove: { viewModel.removeTag($0) }
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+        if !viewModel.availableHeadings.isEmpty {
+            panelRow(label: "Heading") {
+                Picker("", selection: $viewModel.headingId) {
+                    Text("None").tag(String?.none)
+                    ForEach(viewModel.availableHeadings) { heading in
+                        Text(heading.title).tag(Optional(heading.id))
+                    }
+                }
+                .quietPropertyPicker()
+                .accessibilityLabel("Heading")
             }
         }
-        .padding(.vertical, DesignTokens.Spacing.xs)
+
+        if !viewModel.availableAreas.isEmpty {
+            panelRow(label: "Area") {
+                if viewModel.projectId != nil {
+                    // A project task lives in its project's area.
+                    Text(areaName(viewModel.effectiveAreaId) ?? "None")
+                        .font(Self.valueFont)
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
+                        .help("Set by the task's project")
+                } else {
+                    Picker("", selection: $viewModel.areaId) {
+                        Text("None").tag(String?.none)
+                        ForEach(viewModel.availableAreas) { area in
+                            Text(area.name).tag(Optional(area.id))
+                        }
+                    }
+                    .quietPropertyPicker()
+                    .accessibilityLabel("Area")
+                }
+            }
+        }
+
+    }
+
+    private var tagsRow: some View {
+        panelRow(label: "Tags") {
+            TagTokenField(
+                tags: viewModel.tags,
+                suggestions: { viewModel.tagSuggestions(matching: $0) },
+                onAdd: { viewModel.addTag($0) },
+                onRemove: { viewModel.removeTag($0) }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: - Source
 
-    @ViewBuilder
     private func sourceBlock(sessionId: String, title: String?) -> some View {
-        panelRow(icon: "waveform.badge.mic", label: "From") {
-            if let title {
-                if let onOpenRecording {
-                    // The source recording still exists and we have a navigation
-                    // context: offer a button that opens its transcript.
-                    Button {
-                        viewModel.flush()
-                        onOpenRecording(sessionId)
-                    } label: {
-                        HStack(spacing: DesignTokens.Spacing.xs) {
-                            Text(title)
-                                .lineLimit(1)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.callout)
-                    }
-                    .buttonStyle(.link)
-                    .help("Open the source recording")
-                    .accessibilityLabel("Open source recording: \(title)")
-                } else {
-                    // No navigation host (inspector sheets): read-only label.
-                    Text(title)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            } else {
-                // The source recording was deleted: keep the provenance visible
-                // but make clear it can no longer be opened.
-                Text("Recording deleted")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .italic()
-                    .lineLimit(1)
-                    .accessibilityLabel("Source recording was deleted")
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            sectionHeader("Mentioned in")
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .accessibilityHidden(true)
+                sourceLink(sessionId: sessionId, title: title)
             }
         }
-        .padding(.vertical, DesignTokens.Spacing.xs)
+    }
+
+    @ViewBuilder
+    private func sourceLink(sessionId: String, title: String?) -> some View {
+        if let title {
+            if let onOpenRecording {
+                // The source recording still exists and we have a navigation
+                // context: offer a button that opens its transcript.
+                Button {
+                    viewModel.flush()
+                    onOpenRecording(sessionId)
+                } label: {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        Text(title)
+                            .lineLimit(1)
+                    }
+                    .font(Self.valueFont)
+                }
+                .buttonStyle(.link)
+                .help("Open the source recording")
+                .accessibilityLabel("Open source recording: \(title)")
+            } else {
+                // No navigation host (inspector sheets): read-only label.
+                Text(title)
+                    .font(Self.valueFont)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .lineLimit(1)
+            }
+        } else {
+            // The source recording was deleted: keep the provenance visible
+            // but make clear it can no longer be opened.
+            Text("Recording deleted")
+                .font(Self.valueFont)
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .italic()
+                .lineLimit(1)
+                .accessibilityLabel("Source recording was deleted")
+        }
     }
 
     // MARK: - Footer
@@ -595,6 +607,7 @@ struct TaskDetailPanel: View {
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .foregroundStyle(DesignTokens.Palette.textSecondary)
             .help("Duplicate task")
             .accessibilityLabel("Duplicate task")
 
@@ -605,16 +618,16 @@ struct TaskDetailPanel: View {
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(.red)
+            .foregroundStyle(DesignTokens.Palette.textSecondary)
             .help("Delete task")
             .accessibilityLabel("Delete task")
 
             Spacer()
 
-            Button("Close") {
+            Button("Done") {
                 dismissSavingChanges()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .controlSize(.small)
             .keyboardShortcut(.return, modifiers: [.command])
         }
@@ -624,27 +637,21 @@ struct TaskDetailPanel: View {
 
     // MARK: - Row helper
 
+    private static let valueFont = Font.system(size: 13)
+
     private func panelRow<T: View>(
-        icon: String,
         label: String,
         @ViewBuilder value: () -> T
     ) -> some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-            Image(systemName: icon)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-
+        GridRow {
             Text(label)
-                .font(.system(.callout))
-                .foregroundStyle(.secondary)
-                .frame(width: 68, alignment: .leading)
-
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .gridColumnAlignment(.leading)
+                .frame(minWidth: 64, minHeight: 22, alignment: .leading)
             value()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, DesignTokens.Spacing.lg)
-        .padding(.vertical, DesignTokens.Spacing.sm)
     }
 
     // MARK: - Helpers
@@ -683,5 +690,14 @@ struct TaskInspectorSheet: View {
     var body: some View {
         TaskDetailPanel(task: task, onDismiss: onDismiss)
             .frame(width: 400, height: 580)
+    }
+}
+
+private extension View {
+    func quietPropertyPicker() -> some View {
+        labelsHidden()
+            .pickerStyle(.menu)
+            .buttonStyle(.borderless)
+            .fixedSize()
     }
 }

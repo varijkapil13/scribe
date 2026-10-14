@@ -56,7 +56,7 @@ struct SettingsRootView: View {
     private func rows(for group: SettingsPaneGroup) -> some View {
         ForEach(group.panes) { pane in
             Label(pane.title, systemImage: pane.systemImage)
-                .tag(Optional(pane))
+                .tag(pane)
         }
     }
 }

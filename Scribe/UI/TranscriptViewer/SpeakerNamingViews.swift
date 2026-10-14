@@ -31,10 +31,11 @@ struct SpeakerNamesSheet: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Speakers")
-                    .font(.system(.title3, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
                 Text("Names apply to this transcript, its exports and post-meeting hooks.")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
             }
 
             Form {
@@ -55,8 +56,8 @@ struct SpeakerNamesSheet: View {
             .formStyle(.grouped)
 
             Text("Scribe can't yet tell several remote people apart automatically. To split them, select segments and use Assign Speaker.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
@@ -191,7 +192,8 @@ struct AddToVocabularySheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
             Text("Add to Vocabulary")
-                .font(.system(.title3, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                 Picker("Tapping a word fills", selection: $fillTarget) {
@@ -217,8 +219,8 @@ struct AddToVocabularySheet: View {
             .formStyle(.grouped)
 
             Text("The spelling is suggested to the transcriber. If you also fill \"Heard as\", that phrase is replaced in future transcripts and dictation.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {

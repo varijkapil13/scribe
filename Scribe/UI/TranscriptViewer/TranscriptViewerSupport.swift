@@ -193,8 +193,8 @@ struct GenerationSkeleton: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(title)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
             }
 
             ShimmerPlaceholder(lineWidths: lineWidths)
@@ -202,7 +202,7 @@ struct GenerationSkeleton: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .fill(DesignTokens.Palette.surfaceElevated)
+                        .fill(DesignTokens.Palette.raised)
                 )
                 .readerCardBorder(contrast)
         }
@@ -222,22 +222,19 @@ struct GenerationSkeleton: View {
 struct IntelligenceUnavailableView: View {
     let reason: String
 
-    @Environment(\.colorSchemeContrast) private var contrast
-
     var body: some View {
         VStack(spacing: DesignTokens.Spacing.md) {
             Image(systemName: "sparkles.slash")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(.secondary)
-                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
 
             VStack(spacing: DesignTokens.Spacing.xs) {
                 Text("Apple Intelligence unavailable")
-                    .font(.system(.title3, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                 Text(reason)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
                     .textSelection(.enabled)

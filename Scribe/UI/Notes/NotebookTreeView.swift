@@ -28,10 +28,9 @@ final class NotebookExpansion {
 
 // MARK: - Root entry point
 
-/// Renders the notebook hierarchy from `parentId` (nil = roots) using a
-/// precomputed `NotebookTreeIndex`. Rows use the shared `SidebarRow` so folders
-/// and notes look and behave exactly like the rest of the sidebar (full-width
-/// selection + hover, whole-row click). Expansion is persisted and animates.
+/// Renders the notebook folder hierarchy from `parentId` (nil = roots) using a
+/// precomputed `NotebookTreeIndex`. Notes are not listed: selecting a folder
+/// opens its note list. Expansion is persisted and animates.
 struct NotebookTreeView: View {
     let parentId: String?
     let index: NotebookTreeIndex
@@ -118,10 +117,6 @@ private struct NotebookTreeRow: View {
                         expansion: expansion
                     )
 
-                    ForEach(childNotes) { note in
-                        NoteLeafRow(note: note, selection: $selection, depth: depth + 1)
-                    }
-
                     if isCreatingNote {
                         InlineNameField(
                             text: $noteTitle,
@@ -166,17 +161,24 @@ private struct NotebookTreeRow: View {
 
     // MARK: - Folder label row
 
+    private var isSelected: Bool { selection == .notes(.notebook(notebook.id)) }
+
     private var folderRow: some View {
-        SidebarRow(isSelected: false, indent: indent, action: { toggleExpansion() }) {
+        SidebarRow(isSelected: isSelected, indent: indent, action: { selection = .notes(.notebook(notebook.id)) }) {
             HStack(spacing: DesignTokens.Spacing.xs) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .opacity(hasChildren ? 1 : 0)
-                    .frame(width: 12)
-                Label(notebook.name, systemImage: isExpanded ? "folder.fill" : "folder")
-                    .lineLimit(1)
+                Button(action: toggleExpansion) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 14, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(hasChildren ? 1 : 0)
+                .disabled(!hasChildren)
+                .accessibilityLabel(isExpanded ? "Collapse \(notebook.name)" : "Expand \(notebook.name)")
+                Label(notebook.name, systemImage: "folder")
                     .truncationMode(.tail)
             }
         }
@@ -187,7 +189,9 @@ private struct NotebookTreeRow: View {
             titleVisibility: .visible
         ) {
             Button("Delete Folder", role: .destructive) {
-                if case .note(let id) = selection,
+                if isSelected {
+                    selection = .notes(.all)
+                } else if case .note(let id) = selection,
                    childNotes.contains(where: { $0.id == id }) {
                     selection = .notes(.all)
                 }
@@ -247,72 +251,5 @@ private struct NotebookTreeRow: View {
         guard count > 0 else { return "This empty folder will be deleted." }
         let plural = count == 1 ? "note" : "notes"
         return "The folder will be deleted. Its \(count) \(plural) won’t be deleted — they’ll move to your Inbox."
-    }
-}
-
-// MARK: - Note leaf row
-
-struct NoteLeafRow: View {
-    let note: Note
-    @Binding var selection: MainSelection?
-    var depth: Int = 0
-
-    @State private var showDeleteConfirm = false
-    @State private var sessionCount = 0
-    @Environment(\.undoManager) private var undoManager
-
-    private var isSelected: Bool {
-        if case .note(let id) = selection { return id == note.id }
-        return false
-    }
-
-    /// Indent so a note's icon aligns just past its folder's disclosure chevron.
-    private var indent: CGFloat { CGFloat(depth) * DesignTokens.Spacing.lg + DesignTokens.Spacing.sm }
-
-    var body: some View {
-        SidebarRow(isSelected: isSelected, indent: indent, action: { selection = .note(note.id) }) {
-            Label(note.title.isEmpty ? "Untitled" : note.title, systemImage: "doc.text")
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .contextMenu {
-            Button {
-                selection = .note(note.id)
-            } label: {
-                Label("Open", systemImage: "arrow.up.right.square")
-            }
-            OpenNoteInNewWindowButton(noteId: note.id)
-            NoteLinkMenuItems(noteId: note.id)
-            Divider()
-            Button(role: .destructive) {
-                // Deleting a note cascades to its recordings; confirm first
-                // and tell the user how many will go with it.
-                sessionCount = (try? NoteStore.shared.sessionCount(forNoteId: note.id)) ?? 0
-                showDeleteConfirm = true
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-        .confirmationDialog(
-            "Delete “\(note.title.isEmpty ? "Untitled" : note.title)”?",
-            isPresented: $showDeleteConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                if isSelected { selection = .notes(.all) }
-                try? NoteUndo.deleteNote(id: note.id, store: .shared, undoManager: undoManager)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(deleteMessage)
-        }
-    }
-
-    private var deleteMessage: String {
-        if sessionCount > 0 {
-            let plural = sessionCount == 1 ? "recording" : "recordings"
-            return "This note and its \(sessionCount) \(plural) — including transcripts, summaries, and action items — will be permanently deleted. Tasks you created from it are kept."
-        }
-        return "This note will be permanently deleted."
     }
 }

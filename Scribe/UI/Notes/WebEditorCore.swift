@@ -62,6 +62,16 @@ enum WebEditorAssets {
         indexURL?.deletingLastPathComponent()
     }
 
+    /// The bundled `Fonts/` folder (macOS only), served to the page under
+    /// `editor/fonts/` so editor.css can load Newsreader same-origin.
+    static var fontsDir: URL? {
+        guard let dir = Bundle.main.resourceURL?.appendingPathComponent("Fonts", isDirectory: true),
+              FileManager.default.fileExists(atPath: dir.path) else { return nil }
+        return dir
+    }
+
+    static let fontsPathPrefix = "/fonts/"
+
     /// Loads the editor page into `webView`. Returns false (and loads
     /// nothing) when the assets are missing from the bundle — e.g. under
     /// `swift test`, where the editor degrades to an empty view.
@@ -99,9 +109,11 @@ final class EditorAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     /// Absolute URL of the bundled `Editor/` directory. Requests are resolved
     /// underneath it; paths escaping it are refused.
     private let rootDir: URL?
+    private let fontsDir: URL?
 
-    init(rootDir: URL?) {
+    init(rootDir: URL?, fontsDir: URL? = WebEditorAssets.fontsDir) {
         self.rootDir = rootDir
+        self.fontsDir = fontsDir
         super.init()
     }
 
@@ -110,9 +122,8 @@ final class EditorAssetSchemeHandler: NSObject, WKURLSchemeHandler {
             serveVaultAttachment(url, task: urlSchemeTask)
             return
         }
-        guard let rootDir,
-              let url = urlSchemeTask.request.url,
-              let fileURL = Self.resolve(url, under: rootDir),
+        guard let url = urlSchemeTask.request.url,
+              let fileURL = resolveAsset(url),
               let data = try? Data(contentsOf: fileURL) else {
             if let requested = urlSchemeTask.request.url?.absoluteString {
                 log.error("EditorAssetSchemeHandler: no asset for \(requested, privacy: .public)")
@@ -169,10 +180,20 @@ final class EditorAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didFinish()
     }
 
-    /// Maps a request URL to a file under `root`, defaulting to `index.html`
+    private func resolveAsset(_ url: URL) -> URL? {
+        let prefix = WebEditorAssets.fontsPathPrefix
+        if url.path.hasPrefix(prefix) {
+            guard let fontsDir else { return nil }
+            return Self.resolve(String(url.path.dropFirst(prefix.count)), under: fontsDir)
+        }
+        guard let rootDir else { return nil }
+        return Self.resolve(url.path, under: rootDir)
+    }
+
+    /// Maps a request path to a file under `root`, defaulting to `index.html`
     /// for the bare host. Refuses any path that escapes `root` (traversal).
-    private static func resolve(_ url: URL, under root: URL) -> URL? {
-        var path = url.path
+    private static func resolve(_ requestPath: String, under root: URL) -> URL? {
+        var path = requestPath
         if path.hasPrefix("/") { path.removeFirst() }
         if path.isEmpty { path = "index.html" }
 
@@ -264,6 +285,15 @@ struct EditorImportedFile: Sendable {
     }
 }
 
+// MARK: - Typography
+
+/// Body typeface (`NoteTypeface.rawValue`) and text-column width in points
+/// (0 = fill the editor) for the web editor.
+struct WebEditorTypography: Equatable, Sendable {
+    var face: String
+    var measure: Int
+}
+
 // MARK: - Coordinator
 
 /// The native peer of one CodeMirror editor page: receives its messages,
@@ -289,6 +319,7 @@ final class WebEditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigation
     private var lastSentText: String?
     private var lastSentTheme: ColorScheme?
     private var lastSentFontSize: CGFloat?
+    private var lastSentTypography: WebEditorTypography?
     private var lastSentTitles: [String]?
     /// PlantUML remote-render flag the page currently knows (the injected
     /// document-start value, then any live pushes).
@@ -298,6 +329,7 @@ final class WebEditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigation
     var pendingText: String?
     var pendingTheme: ColorScheme?
     var pendingFontSize: CGFloat?
+    var pendingTypography: WebEditorTypography?
     var pendingTitles: [String]?
     var pendingPlantUMLRemote: Bool?
 
@@ -338,6 +370,10 @@ final class WebEditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigation
             if let size = pendingFontSize {
                 pushFontSize(size)
                 pendingFontSize = nil
+            }
+            if let typography = pendingTypography {
+                pushTypography(typography)
+                pendingTypography = nil
             }
             if let titles = pendingTitles {
                 pushKnownTitles(titles)
@@ -560,6 +596,12 @@ final class WebEditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigation
         pushFontSize(size)
     }
 
+    func setTypography(_ typography: WebEditorTypography) {
+        guard isReady else { pendingTypography = typography; return }
+        guard typography != lastSentTypography else { return }
+        pushTypography(typography)
+    }
+
     func setKnownTitles(_ titles: [String]) {
         guard isReady else { pendingTitles = titles; return }
         guard titles != lastSentTitles else { return }
@@ -602,6 +644,15 @@ final class WebEditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigation
         lastSentTheme = scheme
         let mode = scheme == .dark ? "dark" : "light"
         webView?.evaluateJavaScript("window.scribeSetTheme(\"\(mode)\");", completionHandler: nil)
+    }
+
+    private func pushTypography(_ typography: WebEditorTypography) {
+        lastSentTypography = typography
+        let face = Self.jsonStringLiteral(typography.face)
+        webView?.evaluateJavaScript(
+            "window.scribeSetTypography({face: \(face), measure: \(typography.measure)});",
+            completionHandler: nil
+        )
     }
 
     private func pushFontSize(_ size: CGFloat) {

@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Renders a single transcript segment as a chat-style row: speaker chip + timestamp
-/// on one line, the transcribed text below with a tinted vertical accent bar on the
-/// leading edge. The accent colour matches the speaker (`You` vs `Remote`).
+/// One transcript segment: speaker name and timestamp on a quiet meta line, the
+/// text below in the reading serif. The playing segment lifts onto a raised card.
 struct SegmentView: View {
 
     let segment: Segment
@@ -21,56 +20,51 @@ struct SegmentView: View {
     @State private var showAddToVocabulary = false
 
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.scribeAccent) private var accent
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             if isSelecting {
                 Button(action: { onToggleSelection?() }) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 18))
-                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                        .symbolRenderingMode(.hierarchical)
+                        .font(.system(size: 16))
+                        .foregroundStyle(isSelected ? accent : DesignTokens.Palette.textTertiary)
                 }
                 .buttonStyle(.plain)
-                .padding(.top, DesignTokens.Spacing.xs)
+                .padding(.top, 2)
                 .accessibilityLabel(isSelected ? "Deselect segment" : "Select segment")
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
 
-            // Vertical accent bar keyed to the speaker.
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(Color.speakerTint(for: effectiveSpeakerKey))
-                .frame(width: 3)
-                .frame(maxHeight: .infinity)
-                .opacity(0.85)
-
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    // Non-color speaker cue: a glyph supplements the tinted chip
-                    // for users running Differentiate Without Color.
-                    if differentiateWithoutColor {
-                        Image(systemName: SpeakerGlyph.symbol(for: effectiveSpeakerKey))
-                            .font(.system(.caption2, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    SpeakerChip(speaker: effectiveSpeakerKey, name: speakerName)
+                HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+                    speakerMarker
+                    Text(speakerDisplayName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
+                        .lineLimit(1)
                     timestamp
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
 
                 Text(segment.text)
-                    .font(DesignTokens.Typography.body)
-                    .foregroundStyle(.primary)
+                    .font(DesignTokens.Typography.reading)
+                    .lineSpacing(5)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, DesignTokens.Spacing.xs)
+            .padding(.vertical, DesignTokens.Spacing.sm)
         }
-        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.horizontal, DesignTokens.Spacing.md)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                .fill(isCurrent ? Color.accentColor.opacity(0.10) : Color.clear)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(rowFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(DesignTokens.Palette.hairline, lineWidth: 1)
+                .opacity(isCurrent ? 1 : 0)
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(speakerDisplayName) at \(segment.formattedTimestamp): \(segment.text)")
@@ -79,6 +73,28 @@ struct SegmentView: View {
         }
         .sheet(isPresented: $showAddToVocabulary) {
             AddToVocabularySheet(segmentText: segment.text)
+        }
+    }
+
+    private var rowFill: Color {
+        if isCurrent { return DesignTokens.Palette.raised }
+        if isSelecting && isSelected { return DesignTokens.Palette.selectionFill }
+        return .clear
+    }
+
+    @ViewBuilder
+    private var speakerMarker: some View {
+        if differentiateWithoutColor {
+            Image(systemName: SpeakerGlyph.symbol(for: effectiveSpeakerKey))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                .accessibilityHidden(true)
+        } else {
+            Circle()
+                .fill(Color.speakerTint(for: effectiveSpeakerKey).opacity(0.7))
+                .frame(width: 6, height: 6)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                .accessibilityHidden(true)
         }
     }
 
@@ -92,16 +108,16 @@ struct SegmentView: View {
         if let onTimestampTap {
             Button(action: onTimestampTap) {
                 Text(segment.formattedTimestamp)
-                    .font(DesignTokens.Typography.timestamp)
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
             }
             .buttonStyle(.plain)
             .help("Play from here")
             .accessibilityLabel("Play from \(segment.formattedTimestamp)")
         } else {
             Text(segment.formattedTimestamp)
-                .font(DesignTokens.Typography.timestamp)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
     }
 

@@ -9,19 +9,21 @@ struct AskView: View {
 
     @StateObject private var viewModel = AskViewModel()
     @FocusState private var inputFocused: Bool
+    @Environment(\.scribeAccent) private var accent
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Rectangle()
+                .fill(DesignTokens.Palette.hairline)
+                .frame(height: 1)
             if !viewModel.availability.isAvailable {
                 unavailableBanner
             }
             conversation
-            Divider()
             inputBar
         }
-        .background(DesignTokens.Palette.surface)
+        .background(DesignTokens.Palette.ground)
         .onAppear {
             viewModel.onAppear()
             inputFocused = true
@@ -41,27 +43,30 @@ struct AskView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
-                Text("Ask Scribe")
-                    .font(DesignTokens.Typography.title2)
-                Text("Questions across your meetings, summaries and notes. Answered on this Mac.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            scopeMenu
-            if !viewModel.messages.isEmpty {
-                Button {
-                    viewModel.clear()
-                } label: {
-                    Label("Clear", systemImage: "trash")
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+            QuietListHeader(title: "Ask Scribe") {
+                HStack(spacing: DesignTokens.Spacing.md) {
+                    scopeMenu
+                    if !viewModel.messages.isEmpty {
+                        Button {
+                            viewModel.clear()
+                        } label: {
+                            Label("Clear", systemImage: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Clear the conversation")
+                    }
                 }
-                .help("Clear the conversation")
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
             }
+            Text("Questions across your meetings, summaries and notes. Answered on this Mac.")
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
-        .padding(.horizontal, DesignTokens.Spacing.xl)
-        .padding(.vertical, DesignTokens.Spacing.lg)
+        .padding(.horizontal, DesignTokens.QuietList.gutter + DesignTokens.Spacing.xs)
+        .padding(.top, DesignTokens.Spacing.xl)
+        .padding(.bottom, DesignTokens.Spacing.md)
     }
 
     private var scopeMenu: some View {
@@ -94,6 +99,7 @@ struct AskView: View {
         } label: {
             Label(viewModel.scope.label, systemImage: "scope")
         }
+        .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Limit which meetings the answer draws from")
         .accessibilityLabel("Scope: \(viewModel.scope.label)")
@@ -102,16 +108,20 @@ struct AskView: View {
     private var unavailableBanner: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "sparkles")
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textTertiary)
             Text(unavailableText)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, DesignTokens.Spacing.xl)
+        .padding(.horizontal, DesignTokens.QuietList.gutter + DesignTokens.Spacing.xs)
         .padding(.vertical, DesignTokens.Spacing.sm)
-        .background(DesignTokens.Palette.surfaceSunken)
+        .background(DesignTokens.Palette.quietFill)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DesignTokens.Palette.hairline).frame(height: 1)
+        }
     }
 
     private var unavailableText: String {
@@ -125,7 +135,7 @@ struct AskView: View {
     private var conversation: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
                     if viewModel.messages.isEmpty {
                         emptyState
                     }
@@ -159,17 +169,17 @@ struct AskView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
             Text("Try asking")
-                .eyebrowStyle()
+                .quietListSectionHeader()
             ForEach(Self.examples, id: \.self) { example in
                 Button {
                     viewModel.draft = example
                     inputFocused = true
                 } label: {
-                    Label(example, systemImage: "text.bubble")
-                        .font(.callout)
+                    Text(example)
+                        .font(.system(size: 13))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(accent)
             }
         }
         .padding(.top, DesignTokens.Spacing.xl)
@@ -186,7 +196,8 @@ struct AskView: View {
     private var inputBar: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             TextField("Ask about your meetings…", text: $viewModel.draft)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
                 .focused($inputFocused)
                 .onSubmit { viewModel.send() }
                 .disabled(viewModel.isAnswering)
@@ -200,14 +211,20 @@ struct AskView: View {
                     .font(.system(size: 20))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(viewModel.canSend ? Color.accentColor : Color.secondary)
+            .foregroundStyle(viewModel.canSend ? accent : DesignTokens.Palette.textTertiary)
             .disabled(!viewModel.canSend)
             .keyboardShortcut(.return, modifiers: [.command])
             .help("Send (⌘↩)")
             .accessibilityLabel("Send question")
         }
+        .padding(.leading, DesignTokens.Spacing.lg)
+        .padding(.trailing, DesignTokens.Spacing.xs + 2)
+        .padding(.vertical, DesignTokens.Spacing.xs + 2)
+        .quietListRaised(radius: DesignTokens.Radius.pill)
+        .frame(maxWidth: 820)
         .padding(.horizontal, DesignTokens.Spacing.xl)
-        .padding(.vertical, DesignTokens.Spacing.md)
+        .padding(.top, DesignTokens.Spacing.sm)
+        .padding(.bottom, DesignTokens.Spacing.lg)
     }
 }
 
@@ -226,15 +243,17 @@ private struct AskMessageView: View {
                 Spacer(minLength: DesignTokens.Spacing.xxxl)
                 VStack(alignment: .trailing, spacing: DesignTokens.Spacing.xxs) {
                     Text(message.text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .textSelection(.enabled)
                         .padding(.horizontal, DesignTokens.Spacing.md)
                         .padding(.vertical, DesignTokens.Spacing.sm)
-                        .background(Color.accentColor.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+                        .background(DesignTokens.Palette.quietFill,
+                                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.lg, style: .continuous))
                     if let scope = message.scopeLabel {
                         Text(scope)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                     }
                 }
             }
@@ -250,10 +269,14 @@ private struct AskMessageView: View {
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     ProgressView().controlSize(.small)
                     Text("Searching your meetings…")
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
                 }
             } else {
                 Text(AskCitationLink.attributed(message.text, messageId: message.id))
+                    .font(DesignTokens.Typography.reading(size: 15, relativeTo: .body))
+                    .lineSpacing(4)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .environment(\.openURL, OpenURLAction { url in
@@ -266,34 +289,31 @@ private struct AskMessageView: View {
 
                 if let notice = message.notice {
                     Label(notice, systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                 }
 
                 if !message.snippets.isEmpty {
                     DisclosureGroup(isExpanded: $showSources) {
-                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        VStack(alignment: .leading, spacing: 1) {
                             ForEach(message.snippets) { snippet in
                                 AskSnippetRow(snippet: snippet) { onOpenSnippet(snippet) }
                             }
                         }
                         .padding(.top, DesignTokens.Spacing.xs)
                     } label: {
-                        Text("Sources (\(message.snippets.count))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: DesignTokens.Spacing.sm) {
+                            Text("Sources")
+                            Text("\(message.snippets.count)").monospacedDigit()
+                        }
+                        .quietListSectionHeader()
                     }
                 }
             }
         }
-        .padding(DesignTokens.Spacing.md)
+        .padding(DesignTokens.Spacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DesignTokens.Palette.surfaceElevated,
-                    in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(DesignTokens.Palette.cardBorder, lineWidth: 1)
-        )
+        .quietListRaised()
         .onAppear {
             // Without a written answer, the sources ARE the answer.
             if !message.usedModel && !message.snippets.isEmpty { showSources = true }
@@ -304,37 +324,47 @@ private struct AskMessageView: View {
 private struct AskSnippetRow: View {
     let snippet: RetrievedSnippet
     let onOpen: () -> Void
+    @State private var hovered = false
 
     var body: some View {
         Button(action: onOpen) {
             HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
                 Image(systemName: icon)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
                     .frame(width: 16)
+                    .padding(.top, 2)
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
-                    HStack(spacing: DesignTokens.Spacing.xs) {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
                         Text(snippet.citationTitle)
-                            .font(.caption.weight(.semibold))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Palette.textSecondary)
+                            .lineLimit(1)
                         Text(snippet.date, style: .date)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .font(DesignTokens.QuietList.rowMetaFont)
+                            .foregroundStyle(DesignTokens.Palette.textTertiary)
                         if let speaker = snippet.speaker, !speaker.isEmpty {
-                            Text("· \(speaker)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                            Text(speaker)
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesignTokens.Palette.textTertiary)
+                                .lineLimit(1)
                         }
                     }
                     Text(snippet.text)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
                         .lineLimit(4)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
             }
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.vertical, DesignTokens.Spacing.sm)
+            .quietListRowBackground(selected: false, hovered: hovered)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovered = $0 }
         .help(snippet.kind == .note ? "Open note" : "Open meeting")
     }
 

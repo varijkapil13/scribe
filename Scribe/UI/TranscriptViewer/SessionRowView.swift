@@ -2,66 +2,37 @@ import SwiftUI
 
 /// Row view for displaying a session summary in the transcript list sidebar.
 ///
-/// Layout: two-line card with the title on the first line and metadata
-/// (relative date · duration) on the second, with tag chips wrapping below.
+/// Layout: title on the first line, grey metadata (date, duration, tags) on the second.
 struct SessionRowView: View {
 
     let session: Session
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
             Text(session.title.isEmpty ? "Untitled Session" : session.title)
-                .font(.system(.body, weight: .semibold))
+                .font(DesignTokens.QuietList.rowTitleFont.weight(.medium))
                 .lineLimit(1)
-                .foregroundStyle(.primary)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
 
-            HStack(spacing: DesignTokens.Spacing.xs) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
                 Text(relativeDate)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
                 if let duration = session.durationSeconds, duration > 0 {
-                    Text("·")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-
-                    Label(formattedDuration(duration), systemImage: "waveform")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .labelStyle(.titleAndIcon)
+                    Text(formattedDuration(duration))
                 }
 
                 if let language = session.language?.uppercased(), !language.isEmpty, language != "AUTO" {
-                    Text("·")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
                     Text(language)
-                        .font(.system(.caption2, weight: .semibold))
-                        .tracking(0.5)
-                        .foregroundStyle(.tertiary)
                 }
-            }
 
-            if !session.tags.isEmpty {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    ForEach(session.tags.prefix(3), id: \.self) { tag in
-                        Text(tag)
-                            .font(.caption2)
-                            .padding(.horizontal, DesignTokens.Spacing.sm)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(Color.secondary.opacity(0.12))
-                            )
-                    }
-                    if session.tags.count > 3 {
-                        Text("+\(session.tags.count - 3)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                if !session.tags.isEmpty {
+                    Text(session.tags.prefix(3).map { "#\($0)" }.joined(separator: " ")
+                         + (session.tags.count > 3 ? " +\(session.tags.count - 3)" : ""))
+                        .lineLimit(1)
                 }
-                .padding(.top, DesignTokens.Spacing.xxs)
             }
+            .font(DesignTokens.QuietList.rowMetaFont)
+            .foregroundStyle(DesignTokens.Palette.textTertiary)
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
     }

@@ -140,7 +140,7 @@ final class QuickCaptureController: NSObject, NSWindowDelegate {
         panel.onCancel = { [weak self] in self?.hide() }
 
         let hosting = NSHostingController(
-            rootView: QuickCaptureView(model: model, dictation: model.dictation)
+            rootView: QuickCaptureView(model: model, dictation: model.dictation).tint(DesignTokens.Palette.accent)
         )
         // The window follows the SwiftUI content's size (chips, more lines).
         hosting.sizingOptions = [.preferredContentSize]
@@ -212,7 +212,7 @@ final class QuickCaptureToast {
     func show(message: String, near anchor: NSRect?) {
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let hosting = NSHostingView(rootView: QuickCaptureToastView(message: message))
+        let hosting = NSHostingView(rootView: QuickCaptureToastView(message: message).tint(DesignTokens.Palette.accent))
         panel.contentView = hosting
         let size = hosting.fittingSize
         panel.setContentSize(size)

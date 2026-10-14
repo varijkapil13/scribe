@@ -26,6 +26,8 @@
 //   native -> JS:  window.scribeSetDoc(text)    replace the whole document
 //                  window.scribeSetTheme("light"|"dark")
 //                  window.scribeSetFontSize(px) optional body font-size override
+//                  window.scribeSetTypography({face, measure}) body typeface
+//                                   ("serif"|"system"|"mono") + column width (px, 0 = full)
 //                  window.scribeSetPlantUMLRemote(bool) allow plantuml.com rendering
 //                  window.scribeFocus()         focus the editor
 //                  window.scribeCommand(name, arg)  format (commands.js),
@@ -122,56 +124,92 @@ let currentDark = matchMediaDark();
 const proseBase = EditorView.theme({
   "&": { height: "100%" },
   ".cm-scroller": {
-    fontFamily:
-      '-apple-system, "SF Pro Text", "Helvetica Neue", "Segoe UI", system-ui, sans-serif',
-    lineHeight: "1.7",
+    fontFamily: "var(--scribe-body-font)",
+    lineHeight: "1.65",
     overflow: "auto",
+    // Centres the text column at --scribe-measure while the scrollbar stays at
+    // the window edge; the side gutter is the floor.
+    paddingInline:
+      "max(var(--scribe-gutter), calc((100% - var(--scribe-measure)) / 2))",
   },
   ".cm-content": {
-    // Full available width — no centered fixed-width column. The side padding
-    // keeps a small gutter so prose isn't flush against the window edge; the
-    // editor otherwise fills the whole host width.
-    maxWidth: "none",
-    padding: "2.5rem 1.75rem 6rem",
+    padding: "0.75rem 0 8rem",
     caretColor: "var(--scribe-caret)",
   },
   ".cm-line": { padding: "0 0" },
   // The only gutter is the fold gutter (folding.js), styled there.
   "&.cm-focused": { outline: "none" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--scribe-caret)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--scribe-caret)", borderLeftWidth: "2px" },
 });
 
 function makeFontSize(px) {
   return EditorView.theme({ "&": { fontSize: `${px}px` } });
 }
 
+// Mirrors DesignTokens.Palette (Swift) so the page matches the native chrome.
+const PALETTE = {
+  light: {
+    ground: "#FBFBFA",
+    raised: "#FFFFFF",
+    text: "#1D1D1F",
+    secondary: "#6E6E73",
+    tertiary: "#8E8E93",
+    hairline: "#EDECE8",
+    quiet: "#F3F3F1",
+    accent: "#2F5BD3",
+    accentSoft: "rgba(47,91,211,0.10)",
+    selection: "rgba(47,91,211,0.16)",
+    unresolved: "#B5483A",
+    unresolvedSoft: "rgba(181,72,58,0.08)",
+    quoteBar: "#DAD9D4",
+    menuBorder: "rgba(0,0,0,0.10)",
+  },
+  dark: {
+    ground: "#1B1B1A",
+    raised: "#262625",
+    text: "#F2F2F0",
+    secondary: "#A1A1A6",
+    tertiary: "#7C7C80",
+    hairline: "#2E2E2C",
+    quiet: "#2A2A28",
+    accent: "#7B97F2",
+    accentSoft: "rgba(123,151,242,0.16)",
+    selection: "rgba(123,151,242,0.30)",
+    unresolved: "#E08A7E",
+    unresolvedSoft: "rgba(224,138,126,0.14)",
+    quoteBar: "#3C3C3A",
+    menuBorder: "rgba(255,255,255,0.10)",
+  },
+};
+
 function makeTheme(dark) {
+  const p = dark ? PALETTE.dark : PALETTE.light;
   return EditorView.theme(
     {
       "&": {
-        color: dark ? "#e6e6e6" : "#1d1d1f",
-        backgroundColor: dark ? "#1e1e1e" : "#ffffff",
-        "--scribe-caret": dark ? "#e6e6e6" : "#1d1d1f",
-        "--scribe-muted": dark ? "#8a8a8e" : "#9a9aa0",
-        "--scribe-accent": dark ? "#7ab0ff" : "#0a66d0",
-        "--scribe-accent-soft": dark ? "rgba(122,176,255,0.16)" : "rgba(10,102,208,0.10)",
-        "--scribe-unresolved": dark ? "#d98b8b" : "#c0392b",
-        "--scribe-unresolved-soft": dark ? "rgba(217,139,139,0.14)" : "rgba(192,57,43,0.08)",
-        "--scribe-quote-bar": dark ? "#4a4a52" : "#d8d8de",
-        "--scribe-quote-bg": dark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)",
-        "--scribe-code-bg": dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)",
-        "--scribe-panel-bg": dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)",
-        "--scribe-panel-border": dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)",
-        "--scribe-hr": dark ? "#3a3a3f" : "#dcdce2",
-        "--scribe-menu-bg": dark ? "#2b2b30" : "#ffffff",
-        "--scribe-menu-border": dark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)",
-        "--scribe-menu-sel": dark ? "rgba(122,176,255,0.22)" : "rgba(10,102,208,0.12)",
+        color: p.text,
+        backgroundColor: "transparent",
+        "--scribe-text": p.text,
+        "--scribe-secondary": p.secondary,
+        "--scribe-caret": p.accent,
+        "--scribe-muted": p.tertiary,
+        "--scribe-accent": p.accent,
+        "--scribe-accent-soft": p.accentSoft,
+        "--scribe-unresolved": p.unresolved,
+        "--scribe-unresolved-soft": p.unresolvedSoft,
+        "--scribe-quote-bar": p.quoteBar,
+        "--scribe-quote-bg": "transparent",
+        "--scribe-code-bg": p.quiet,
+        "--scribe-panel-bg": p.quiet,
+        "--scribe-panel-border": p.hairline,
+        "--scribe-hr": p.hairline,
+        "--scribe-menu-bg": p.raised,
+        "--scribe-menu-border": p.menuBorder,
+        "--scribe-menu-sel": p.accentSoft,
       },
-      ".cm-selectionBackground, ::selection": {
-        backgroundColor: dark ? "#3a4a63" : "#b9d4f9",
-      },
+      ".cm-selectionBackground, ::selection": { backgroundColor: p.selection },
       "&.cm-focused .cm-selectionBackground, &.cm-focused ::selection": {
-        backgroundColor: dark ? "#3a4a63" : "#b9d4f9",
+        backgroundColor: p.selection,
       },
       ".cm-activeLine": { backgroundColor: "transparent" },
     },
@@ -179,24 +217,21 @@ function makeTheme(dark) {
   );
 }
 
+// Heading sizes live on the line classes in editor.css; sizing the token too
+// would compound the em.
 function makeHighlight(dark) {
-  const heading = dark ? "#f2f2f7" : "#000000";
-  const accent = dark ? "#7ab0ff" : "#0a66d0";
-  const muted = dark ? "#8a8a8e" : "#9a9aa0";
-  const codeColor = dark ? "#d6b3ff" : "#7a3ed6";
+  const p = dark ? PALETTE.dark : PALETTE.light;
   return HighlightStyle.define([
-    { tag: t.heading1, fontSize: "1.7em", fontWeight: "700", color: heading },
-    { tag: t.heading2, fontSize: "1.4em", fontWeight: "700", color: heading },
-    { tag: t.heading3, fontSize: "1.2em", fontWeight: "600", color: heading },
-    { tag: [t.heading4, t.heading5, t.heading6], fontWeight: "600", color: heading },
-    { tag: t.strong, fontWeight: "700" },
+    { tag: [t.heading1, t.heading2, t.heading3, t.heading4, t.heading5, t.heading6], color: p.text },
+    { tag: t.heading, fontWeight: "600" },
+    { tag: t.strong, fontWeight: "650" },
     { tag: t.emphasis, fontStyle: "italic" },
     { tag: t.strikethrough, textDecoration: "line-through" },
-    { tag: [t.link, t.url], color: accent, textDecoration: "underline" },
-    { tag: t.monospace, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: codeColor },
-    { tag: t.quote, color: muted, fontStyle: "italic" },
-    { tag: [t.processingInstruction, t.meta], color: muted },
-    { tag: t.list, color: accent },
+    { tag: [t.link, t.url], color: p.accent },
+    { tag: t.monospace, fontFamily: "var(--scribe-mono-font)", fontSize: "0.88em", color: p.text },
+    { tag: t.quote, color: p.secondary },
+    { tag: [t.processingInstruction, t.meta, t.labelName], color: p.tertiary },
+    { tag: t.comment, color: p.tertiary },
   ]);
 }
 
@@ -562,6 +597,12 @@ function buildDecorations(view) {
 
           case "FencedCode": {
             maybeDecorateFence(state, deco, node, rangeActive, consumed);
+            if (!isConsumed(nFrom)) decorateBlockLines(state, deco, nFrom, nTo, "cm-sl-codeblock");
+            break;
+          }
+
+          case "Table": {
+            decorateBlockLines(state, deco, nFrom, nTo, "cm-sl-table");
             break;
           }
 
@@ -580,6 +621,23 @@ function buildDecorations(view) {
   const builder = new RangeSetBuilder();
   for (const d of deco) builder.add(d.from, d.to, d.value);
   return builder.finish();
+}
+
+function decorateBlockLines(state, deco, from, to, cls) {
+  const first = state.doc.lineAt(from).number;
+  const last = state.doc.lineAt(Math.max(from, to - 1)).number;
+  for (let n = first; n <= last; n++) {
+    const line = state.doc.line(n);
+    let classes = cls;
+    if (n === first) classes += ` ${cls}-first`;
+    if (n === last) classes += ` ${cls}-last`;
+    deco.push({
+      from: line.from,
+      to: line.from,
+      value: Decoration.line({ class: classes }),
+      sortSide: -10,
+    });
+  }
 }
 
 function applyInline(state, deco, from, to, cls, markerLen, hide) {
@@ -618,6 +676,12 @@ function decorateListItem(view, state, deco, node, lineActive) {
   const taskMatch = lineText.match(/^(\s*)([-*+])\s+\[([ xX])\]\s/);
   if (taskMatch && markFrom >= 0) {
     const checked = taskMatch[3].toLowerCase() === "x";
+    deco.push({
+      from: line.from,
+      to: line.from,
+      value: Decoration.line({ class: checked ? "cm-sl-taskline cm-sl-taskline-done" : "cm-sl-taskline" }),
+      sortSide: -10,
+    });
     const openBracket = line.from + lineText.indexOf("[");
     const innerPos = openBracket + 1;
     if (!lineActive(line.from)) {
@@ -1027,7 +1091,7 @@ const state = EditorState.create({
     EditorView.lineWrapping,
     knownTitlesField,
     proseBase,
-    fontSizeCompartment.of(makeFontSize(17)),
+    fontSizeCompartment.of(makeFontSize(18)),
     themeCompartment.of(makeTheme(startDark)),
     highlightCompartment.of(syntaxHighlighting(makeHighlight(startDark))),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -1098,6 +1162,25 @@ window.scribeSetFontSize = function (px) {
   view.dispatch({
     effects: fontSizeCompartment.reconfigure(makeFontSize(size)),
   });
+};
+
+const FACES = {
+  serif: '"Newsreader", Georgia, "Times New Roman", serif',
+  system: '-apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif',
+  mono: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+};
+
+window.scribeSetTypography = function (opts) {
+  const root = document.documentElement.style;
+  const face = FACES[opts && opts.face] || FACES.serif;
+  root.setProperty("--scribe-body-font", face);
+  const measure = Number(opts && opts.measure);
+  if (Number.isFinite(measure) && measure > 0) {
+    root.setProperty("--scribe-measure", `${measure}px`);
+  } else {
+    root.removeProperty("--scribe-measure");
+  }
+  view.requestMeasure();
 };
 
 // Native pushes the "Render PlantUML diagrams with plantuml.com" Settings

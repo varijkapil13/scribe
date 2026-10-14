@@ -2,9 +2,8 @@
 import Combine
 import SwiftUI
 
-/// Daily-note destination. Renders a 7-day strip at the top for adjacent-day
-/// navigation; a popover mini-calendar covers jumps farther afield. The full
-/// note editor fills the rest of the pane — no permanent calendar sidebar.
+/// Daily-note destination: a date header with a day switcher (and a month
+/// calendar popover) above the day's note, in a centred reading column.
 struct DailyNoteView: View {
     enum DailyState {
         case existing(Note)
@@ -40,7 +39,7 @@ struct DailyNoteView: View {
     @MainActor private static var lastTaskSummaries: [String: DaySummary] = [:]
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             DailyNoteHeader(
                 selectedDate: $selectedDate,
                 datesWithNotes: datesWithNotes,
@@ -52,8 +51,9 @@ struct DailyNoteView: View {
                     }
                 }
             )
-
-            Divider()
+            .padding(.horizontal, DesignTokens.Today.noteColumnGutter)
+            .padding(.top, DesignTokens.Today.topPadding)
+            .padding(.bottom, DesignTokens.Spacing.sm)
 
             Group {
                 switch state {
@@ -70,7 +70,10 @@ struct DailyNoteView: View {
                     .id(date)
                 }
             }
+            .environment(\.noteDetailShowsDocumentHeader, false)
         }
+        .frame(maxWidth: DesignTokens.Today.noteColumnMaxWidth + 2 * DesignTokens.Today.noteColumnGutter)
+        .frame(maxWidth: .infinity)
         .onChange(of: selectedDate) { _, newValue in
             showDay(newValue)
         }
@@ -140,6 +143,12 @@ struct DailyNoteView: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Whether a note detail draws its own breadcrumb and title. Hosts that
+    /// show the note under their own header (the Today date) turn it off.
+    @Entry var noteDetailShowsDocumentHeader: Bool = true
+}
+
 /// Self-contained host for callers that don't need to observe the selected
 /// date externally (e.g. the legacy `NotesFilter.today` / `.daily` routes in
 /// the sidebar). Owns its own state; defaults to today.
@@ -154,23 +163,15 @@ struct StandaloneDailyNoteView: View {
 
 // MARK: - Header
 
-/// Title + adaptive calendar surface + calendar trigger. The bottom region
-/// flips between two layouts driven by ``isCalendarExpanded`` (persisted via
-/// `@AppStorage`):
-///   • **Collapsed** — a horizontal 7-day strip showing the days adjacent to
-///     `selectedDate`. Compact, glanceable.
-///   • **Expanded** — a multi-row month grid centred on `displayedMonth`,
-///     with prev/next month navigation. Full-visibility view without
-///     leaving Today.
-/// The calendar icon in the header toggles between modes; tinted accent
-/// when expanded so the active state is unambiguous.
+/// Weekday above a large serif date, with a compact ‹ Today › switcher and a
+/// month-calendar popover on the right.
 private struct DailyNoteHeader: View {
     @Binding var selectedDate: Date
     let datesWithNotes: Set<String>
     let taskSummariesByDay: [String: DailyNoteView.DaySummary]
     let onShift: (Int) -> Void
 
-    @AppStorage("scribe.today.calendarExpanded") private var isCalendarExpanded: Bool = false
+    @State private var isCalendarShown = false
     @State private var displayedMonth: Date
 
     private let calendar = Calendar.current
@@ -186,12 +187,6 @@ private struct DailyNoteHeader: View {
         _displayedMonth = State(initialValue: Calendar.current.startOfMonth(for: selectedDate.wrappedValue))
     }
 
-    private static let titleFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEEE, MMM d"
-        return f
-    }()
-
     private static let keyFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -199,159 +194,115 @@ private struct DailyNoteHeader: View {
         return f
     }()
 
+    private var isToday: Bool { calendar.isDateInToday(selectedDate) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                Text(titleText)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
+        HStack(alignment: .bottom, spacing: DesignTokens.Spacing.lg) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+                Text(selectedDate.formatted(.dateTime.weekday(.wide)))
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+                Text(dateText)
+                    .font(DesignTokens.Typography.display(size: DesignTokens.Today.dateSize, weight: .medium))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
 
-                Spacer()
+            Spacer(minLength: 0)
 
-                Button { onShift(-1) } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .keyboardShortcut(.leftArrow, modifiers: [])
-                .help("Previous day")
+            daySwitcher
+                .padding(.bottom, 6)
+        }
+        .onChange(of: selectedDate) { _, newDate in
+            displayedMonth = calendar.startOfMonth(for: newDate)
+        }
+    }
 
-                Button { onShift(1) } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .keyboardShortcut(.rightArrow, modifiers: [])
-                .help("Next day")
+    private var dateText: String {
+        let sameYear = calendar.isDate(selectedDate, equalTo: Date(), toGranularity: .year)
+        return sameYear
+            ? selectedDate.formatted(.dateTime.day().month(.wide))
+            : selectedDate.formatted(.dateTime.day().month(.wide).year())
+    }
+
+    // MARK: - Day switcher
+
+    private var daySwitcher: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            HStack(spacing: 0) {
+                switcherIcon("chevron.left", help: "Previous day") { onShift(-1) }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
 
                 Button { selectedDate = calendar.startOfDay(for: Date()) } label: {
                     Text("Today")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(isToday ? DesignTokens.Palette.textTertiary : DesignTokens.Palette.textPrimary)
                         .padding(.horizontal, DesignTokens.Spacing.sm)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                                .fill(DesignTokens.Palette.fill(.hover))
-                        )
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Jump to today")
 
-                Button {
-                    withAnimation(.easeInOut(duration: DesignTokens.Motion.standard)) {
-                        isCalendarExpanded.toggle()
-                        // Reset the month view to the selected date's month
-                        // each time the user expands — otherwise scrolling
-                        // months back, collapsing, then re-expanding leaves
-                        // the user disoriented far from their selection.
-                        if isCalendarExpanded {
-                            displayedMonth = calendar.startOfMonth(for: selectedDate)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(isCalendarExpanded ? Color.accentColor : .secondary)
-                .help(isCalendarExpanded ? "Hide calendar" : "Show calendar")
-                .accessibilityLabel(isCalendarExpanded ? "Hide month calendar" : "Show month calendar")
-                .accessibilityAddTraits(isCalendarExpanded ? .isSelected : [])
+                switcherIcon("chevron.right", help: "Next day") { onShift(1) }
+                    .keyboardShortcut(.rightArrow, modifiers: [])
             }
+            .padding(.horizontal, 2)
+            .background(Capsule().fill(DesignTokens.Palette.quietFill))
 
-            if isCalendarExpanded {
+            switcherIcon("calendar", help: "Show calendar") {
+                displayedMonth = calendar.startOfMonth(for: selectedDate)
+                isCalendarShown.toggle()
+            }
+            .background(Capsule().fill(DesignTokens.Palette.quietFill))
+            .accessibilityLabel("Show month calendar")
+            .popover(isPresented: $isCalendarShown, arrowEdge: .bottom) {
                 monthGrid
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            } else {
-                weekStrip
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .padding(.top, DesignTokens.Spacing.sm)
-        .padding(.bottom, DesignTokens.Spacing.xs)
-        .onChange(of: selectedDate) { _, newDate in
-            // Keep the visible month aligned with the selection so navigating
-            // via prev/next chevrons or the date strip doesn't strand the
-            // expanded grid on a different month.
-            let target = calendar.startOfMonth(for: newDate)
-            if target != displayedMonth {
-                withAnimation(.easeInOut(duration: DesignTokens.Motion.fast)) {
-                    displayedMonth = target
-                }
+                    .padding(DesignTokens.Spacing.md)
+                    .frame(width: 300)
             }
         }
     }
 
-    // MARK: - Collapsed week strip
-
-    private var weekStrip: some View {
-        HStack(spacing: 2) {
-            ForEach(adjacentDays(), id: \.timeIntervalSince1970) { date in
-                DayPill(
-                    date: date,
-                    isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
-                    isToday: calendar.isDateInToday(date),
-                    hasNote: datesWithNotes.contains(Self.keyFormatter.string(from: date)),
-                    onTap: { selectedDate = calendar.startOfDay(for: date) }
-                )
-            }
+    private func switcherIcon(_ systemName: String, help: LocalizedStringKey, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .frame(width: 26, height: 24)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(Text(help))
     }
 
-    // MARK: - Expanded month grid
+    // MARK: - Month grid
 
     private var monthGrid: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             HStack(spacing: DesignTokens.Spacing.sm) {
                 Text(displayedMonth, format: .dateTime.month(.wide).year())
-                    .font(DesignTokens.Typography.eyebrow)
-                    .tracking(0.6)
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
-                Button { shiftMonth(-1) } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Previous month")
-                .accessibilityLabel("Previous month")
-
-                Button { shiftMonth(1) } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Next month")
-                .accessibilityLabel("Next month")
+                switcherIcon("chevron.left", help: "Previous month") { shiftMonth(-1) }
+                switcherIcon("chevron.right", help: "Next month") { shiftMonth(1) }
             }
-            .padding(.top, DesignTokens.Spacing.xxs)
+            .padding(.bottom, DesignTokens.Spacing.xxs)
 
             HStack(spacing: 2) {
                 ForEach(weekdaySymbols, id: \.self) { symbol in
                     Text(symbol)
                         .font(.system(size: 9, weight: .semibold))
                         .tracking(0.4)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(DesignTokens.Palette.textTertiary)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -369,7 +320,10 @@ private struct DailyNoteHeader: View {
                             isToday: calendar.isDateInToday(date),
                             hasNote: datesWithNotes.contains(key),
                             summary: taskSummariesByDay[key],
-                            onTap: { selectedDate = calendar.startOfDay(for: date) }
+                            onTap: {
+                                selectedDate = calendar.startOfDay(for: date)
+                                isCalendarShown = false
+                            }
                         )
                     } else {
                         Color.clear.frame(height: 42)
@@ -397,109 +351,11 @@ private struct DailyNoteHeader: View {
     private var monthCells: [Date?] {
         CalendarMonthGrid.cells(forMonth: displayedMonth, calendar: calendar, padTrailing: false)
     }
-
-    private var titleText: String {
-        if calendar.isDateInToday(selectedDate) {
-            return "Today · \(Self.titleFormatter.string(from: selectedDate))"
-        }
-        if calendar.isDateInYesterday(selectedDate) {
-            return "Yesterday · \(Self.titleFormatter.string(from: selectedDate))"
-        }
-        if calendar.isDateInTomorrow(selectedDate) {
-            return "Tomorrow · \(Self.titleFormatter.string(from: selectedDate))"
-        }
-        return Self.titleFormatter.string(from: selectedDate)
-    }
-
-    private func adjacentDays() -> [Date] {
-        let day = calendar.startOfDay(for: selectedDate)
-        return (-3...3).compactMap { offset in
-            calendar.date(byAdding: .day, value: offset, to: day)
-        }
-    }
 }
 
-private struct DayPill: View {
-    let date: Date
-    let isSelected: Bool
-    let isToday: Bool
-    let hasNote: Bool
-    let onTap: () -> Void
-
-    private let calendar = Calendar.current
-
-    private static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEE"
-        return f
-    }()
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 0) {
-                Text(Self.weekdayFormatter.string(from: date).uppercased())
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(0.4)
-                    .foregroundStyle(weekdayTint)
-                Text("\(calendar.component(.day, from: date))")
-                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(numberTint)
-                if hasNote && !isSelected {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 3, height: 3)
-                        .padding(.top, 1)
-                } else if isSelected {
-                    Circle()
-                        .fill(Color.white.opacity(0.85))
-                        .frame(width: 3, height: 3)
-                        .padding(.top, 1)
-                } else {
-                    Color.clear.frame(width: 3, height: 4)
-                }
-            }
-            .padding(.vertical, DesignTokens.Spacing.xs)
-            .frame(maxWidth: .infinity, minHeight: 38)
-            .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                    .strokeBorder(borderTint, lineWidth: isToday && !isSelected ? 1 : 0)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var background: some View {
-        if isSelected {
-            Color.accentColor
-        } else {
-            Color.clear
-        }
-    }
-
-    private var weekdayTint: Color {
-        isSelected ? .white.opacity(0.85) : Color.secondary.opacity(0.6)
-    }
-
-    private var numberTint: Color {
-        if isSelected { return .white }
-        if isToday { return Color.accentColor }
-        return .primary
-    }
-
-    private var borderTint: Color {
-        Color.accentColor.opacity(0.4)
-    }
-}
-
-/// Compact day cell used inside the expanded month grid. Echoes the load
+/// Compact day cell used inside the month-calendar popover. Echoes the load
 /// signals from ``TaskCalendarView`` — priority-tinted task count badge plus
-/// a note indicator — at inline scale. Selection follows ``DayPill``'s accent
-/// fill so the two surfaces feel like one design language.
+/// a note indicator — at inline scale.
 ///
 /// Layout: day number on top, a single info row underneath holding the note
 /// dot (if any) and the task-count capsule (if any). When neither exists the
@@ -651,9 +507,9 @@ private struct MonthDayCell: View {
 
 // MARK: - Draft daily note editor
 
-/// Shown when a date has no note yet. Displays the auto-generated title and
-/// an empty body editor. On first non-empty keystroke the note is persisted
-/// and the parent transitions to the full NoteDetailView.
+/// Shown when a date has no note yet: an empty body editor under the date
+/// header. On first non-empty keystroke the note is persisted and the parent
+/// transitions to the full NoteDetailView.
 private struct DraftDailyNoteView: View {
     let date: Date
     let onCreated: (Note) -> Void
@@ -662,46 +518,31 @@ private struct DraftDailyNoteView: View {
     @State private var bodyText: String = ""
     @State private var hasCreated: Bool = false
 
-    private static let titleFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .long
-        f.timeStyle = .none
-        return f
-    }()
-
-    private var noteTitle: String {
-        "Daily Note \u{2013} \(Self.titleFormatter.string(from: date))"
+    private var placeholder: String {
+        Calendar.current.isDateInToday(date)
+            ? String(localized: "Start writing — today's note is created when you type.")
+            : String(localized: "Start writing — this day's note is created when you type.")
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                Text(noteTitle)
-                    .font(DesignTokens.Typography.title2)
-                    .foregroundStyle(.primary)
-
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "pencil")
-                        .imageScale(.small)
-                    Text("Start writing to save this note")
-                }
-                .font(DesignTokens.Typography.eyebrow)
-                .foregroundStyle(.tertiary)
-                .tracking(0.5)
+        NoteEditorView(
+            text: $bodyText,
+            noteStore: .shared,
+            onNavigate: onNavigate
+        )
+        .overlay(alignment: .topLeading) {
+            if bodyText.isEmpty {
+                // Offsets match the web editor's `.cm-content` padding (2.5rem 1.75rem).
+                Text(placeholder)
+                    .font(.system(size: 17))
+                    .foregroundStyle(DesignTokens.Palette.textTertiary)
+                    .padding(.top, 40)
+                    .padding(.leading, 28)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, DesignTokens.Spacing.xxxl)
-            .padding(.top, DesignTokens.Spacing.lg)
-            .padding(.bottom, DesignTokens.Spacing.md)
-
-            Divider()
-
-            NoteEditorView(
-                text: $bodyText,
-                noteStore: .shared,
-                onNavigate: onNavigate
-            )
-            .padding(.vertical, DesignTokens.Spacing.md)
         }
+        .padding(.vertical, DesignTokens.Spacing.xs)
         .onChange(of: bodyText) { _, newValue in
             guard !hasCreated else { return }
             guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
